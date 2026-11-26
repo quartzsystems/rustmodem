@@ -1,0 +1,53 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+[workspace]
+resolver = "3"
+members = [
+    # Modem: the engine trait every softmodem implements, and the null engine.
+    "modem/engine",
+    # DTE: what the host sees on the COM port.
+    "dte/at",
+    "dte/serial",
+    # Service: the pool, its configuration, its messages and its control API.
+    "service/msg",
+    "service/config",
+    "service/ctlproto",
+    "service/ctlsrv",
+    "service/pool",
+    "service/svc",
+    # Tools: the command-line client.
+    "tools/ctl",
+]
+# The fuzz targets build with cargo-fuzz on a nightly toolchain and keep
+# their own lockfile.
+exclude = ["tools/fuzz"]
+
+[workspace.package]
+# Kept equal to the VERSION file; ci/version.sh checks it.
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+authors = ["Quartz Systems"]
+publish = false
+
+[workspace.dependencies]
+# The workspace's own crates.
+engine = { path = "modem/engine" }
+at = { path = "dte/at" }
+serial = { path = "dte/serial" }
+msg = { path = "service/msg" }
+config = { path = "service/config" }
+ctlproto = { path = "service/ctlproto" }
+ctlsrv = { path = "service/ctlsrv" }
+pool = { path = "service/pool" }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+panic = "abort"

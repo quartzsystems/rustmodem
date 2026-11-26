@@ -1,0 +1,56 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+# cargo-deny configuration for rustmodem. rustmodem is MIT and written
+# in-house: nothing copyleft may appear anywhere in the dependency graph.
+
+[graph]
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "0BSD",
+    "CC0-1.0",
+    "Unlicense",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# The workspace's own crates are path dependencies with no version.
+allow-wildcard-paths = true
+highlight = "all"
+deny = [
+    # Build helpers that exist only to compile or bind C.
+    { crate = "cc", reason = "no C code is compiled into rustmodem" },
+    { crate = "cmake", reason = "no C code is compiled into rustmodem" },
+    { crate = "bindgen", reason = "no C bindings are generated in rustmodem" },
+    { crate = "pkg-config", reason = "no system C libraries are linked into rustmodem" },
+    { crate = "vcpkg", reason = "no system C libraries are linked into rustmodem" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

@@ -1,0 +1,55 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows (everything)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show
+      - name: Licence headers
+        shell: bash
+        run: ci/headers.sh
+      - name: Version
+        shell: bash
+        run: ci/version.sh
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: Deny
+        run: cargo deny check
+      - name: Test
+        run: cargo test --workspace
+      - name: Release build
+        run: cargo build --release -p svc -p ctl
+
+  linux:
+    name: Linux (pure crates)
+    runs-on: ubuntu-latest
+    env:
+      PURE: -p engine -p at -p serial -p msg -p config -p ctlproto -p pool
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy $PURE --all-targets -- -D warnings
+      - name: Test
+        run: cargo test $PURE

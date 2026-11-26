@@ -1,0 +1,6 @@
+/target/
+/tools/fuzz/target/
+/tools/fuzz/corpus/
+/tools/fuzz/artifacts/
+/tools/fuzz/coverage/
+*.log
