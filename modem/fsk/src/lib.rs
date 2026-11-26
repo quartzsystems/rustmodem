@@ -35,7 +35,7 @@ mod modulator;
 
 pub use demodulator::{Demodulated, Demodulator};
 pub use framing::{Framed, StartStopReceiver, StartStopTransmitter, TX_CAPACITY};
-pub use modulator::Modulator;
+pub use modulator::{Modulator, TRANSMIT_DELAY_SAMPLES};
 
 use g711::Law;
 

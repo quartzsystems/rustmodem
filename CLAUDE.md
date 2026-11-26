@@ -204,8 +204,8 @@ The pure crates on Linux (CI does this; WSL works locally):
 
 ```
 cargo fmt --check
-cargo clippy -p g711 -p dspkit -p tones -p chansim -p fsk -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p glyph -p model --all-targets -- -D warnings
-cargo test -p g711 -p dspkit -p tones -p chansim -p fsk -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p glyph -p model
+cargo clippy -p g711 -p dspkit -p tones -p chansim -p fsk -p v8 -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p glyph -p model --all-targets -- -D warnings
+cargo test -p g711 -p dspkit -p tones -p chansim -p fsk -p v8 -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p glyph -p model
 cargo clippy -p ctlsrv --all-targets -- -D warnings
 cargo clippy -p svc --lib --test '*' -- -D warnings
 cargo test -p ctlsrv
@@ -236,8 +236,8 @@ run, look at each, and commit them. `RM_BLESS=1` writes the pictures of the
 machine at hand as goldens, `RM_SCREENSHOTS=strict` fails on a difference
 anywhere, and `RM_SCREENSHOTS=skip` takes no pictures.
 
-The fuzz targets, `at_input`, `sdp_parse`, `rtp_packet`, `sip_message` and
-`fsk_demod`
+The fuzz targets, `at_input`, `sdp_parse`, `rtp_packet`, `sip_message`,
+`fsk_demod` and `v8_decode`
 (nightly toolchain and cargo-fuzz, on Linux or WSL):
 
 ```

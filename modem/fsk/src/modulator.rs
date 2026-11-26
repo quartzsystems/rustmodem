@@ -12,6 +12,9 @@ use g711::Law;
 
 use crate::{BAND_BETA, BAND_MARGIN_HZ, BAND_TAPS, BIT_RATE, Tones};
 
+/// How long the transmit filter delays the signal, in samples: 8 ms.
+pub const TRANSMIT_DELAY_SAMPLES: u32 = (BAND_TAPS as u32 - 1) / 2;
+
 /// A frequency-shift keying modulator with a continuous phase.
 ///
 /// One oscillator makes the signal, and a bit changes its frequency and
@@ -75,6 +78,17 @@ impl Modulator {
         self.into_bit += BIT_RATE;
         self.band
             .process(self.amplitude * self.oscillator.next_sine())
+    }
+
+    /// A sample with nothing new going in: what is left in the transmit
+    /// filter of the bits already sent. The filter delays the signal by
+    /// [`TRANSMIT_DELAY_SAMPLES`], so a modem that is to stop sending
+    /// calls this, and not `next_sample`, for twice that many samples
+    /// after its last bit has ended. Until it has, the end of its signal
+    /// has not gone out.
+    #[inline]
+    pub fn flush_sample(&mut self) -> f32 {
+        self.band.process(0.0)
     }
 
     /// The bit being sent.

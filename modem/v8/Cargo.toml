@@ -1,0 +1,24 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+[package]
+name = "v8"
+description = "ITU-T V.8 call establishment: CM, JM and CJ (pure, sans-I/O)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+chansim.workspace = true
+dspkit.workspace = true
+fsk.workspace = true
+g711.workspace = true
+tones.workspace = true
+
+[lints]
+workspace = true

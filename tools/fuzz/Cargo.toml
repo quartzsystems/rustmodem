@@ -27,6 +27,7 @@ rtp = { path = "../../voip/rtp" }
 sip = { path = "../../voip/sip" }
 g711 = { path = "../../dsp/g711" }
 fsk = { path = "../../modem/fsk" }
+v8 = { path = "../../modem/v8" }
 alloccount = { path = "../alloccount" }
 
 [[bin]]
@@ -60,6 +61,13 @@ bench = false
 [[bin]]
 name = "sip_message"
 path = "fuzz_targets/sip_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "v8_decode"
+path = "fuzz_targets/v8_decode.rs"
 test = false
 doc = false
 bench = false

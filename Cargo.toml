@@ -13,6 +13,7 @@ members = [
     # Modem: the modulations, and the engine trait every softmodem
     # implements with its engines.
     "modem/fsk",
+    "modem/v8",
     "modem/engine",
     # DTE: what the host sees on the COM port.
     "dte/at",
@@ -87,7 +88,9 @@ png = "0.18.1"
 # The workspace's own crates.
 g711 = { path = "dsp/g711" }
 dspkit = { path = "dsp/dspkit" }
+tones = { path = "dsp/tones" }
 chansim = { path = "dsp/chansim" }
+fsk = { path = "modem/fsk" }
 alloccount = { path = "tools/alloccount" }
 engine = { path = "modem/engine" }
 at = { path = "dte/at" }
@@ -132,6 +135,9 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.fsk]
+opt-level = 3
+
+[profile.dev.package.v8]
 opt-level = 3
 
 [profile.release]
