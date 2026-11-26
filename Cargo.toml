@@ -22,6 +22,7 @@ members = [
     "ui/model",
     "ui/glyph",
     "ui/win32",
+    "ui/manager",
     # Tools: the command-line client and the demo service.
     "tools/ctl",
     "tools/demosvc",

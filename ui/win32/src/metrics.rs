@@ -10,7 +10,8 @@
 //! given up for the system's text colour when a high-contrast theme is on.
 
 use windows::Win32::Graphics::Gdi::{
-    COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor, SYS_COLOR_INDEX,
+    COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HOTLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor,
+    SYS_COLOR_INDEX,
 };
 use windows::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
@@ -69,6 +70,12 @@ pub fn window_background() -> Colour {
 /// The colour of disabled text.
 pub fn gray_text() -> Colour {
     system_colour(COLOR_GRAYTEXT)
+}
+
+/// The colour of a link: the system's own accent for text that stands
+/// out from the rest.
+pub fn hot_light() -> Colour {
+    system_colour(COLOR_HOTLIGHT)
 }
 
 /// The colour of dialog and button faces.
@@ -150,6 +157,6 @@ mod tests {
         assert_eq!(chosen(red), expected);
         // Text can be read on its background.
         assert_ne!(window_text(), window_background());
-        let _ = (gray_text(), face());
+        let _ = (gray_text(), face(), hot_light());
     }
 }

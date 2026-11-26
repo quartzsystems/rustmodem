@@ -176,6 +176,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
+name = "manager"
+version = "0.0.1"
+dependencies = [
+ "ctlproto",
+ "ctlsrv",
+ "glyph",
+ "model",
+ "msg",
+ "pipe",
+ "serde",
+ "serde_json",
+ "win32",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

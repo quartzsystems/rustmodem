@@ -341,7 +341,7 @@ fn the_columns_are_the_ones_the_handoff_lists() {
     assert_eq!(
         described,
         [
-            ("#", 30, true),
+            ("#", 48, true),
             ("COM port", 70, false),
             ("SIP", 60, false),
             ("Hunt group", 80, false),

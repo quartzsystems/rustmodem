@@ -276,13 +276,15 @@ mod tests {
     }
 
     #[test]
-    fn every_id_is_well_formed_and_in_a_phase_0_range() {
+    fn every_id_is_well_formed_and_in_a_range_that_is_in_use() {
         for entry in entries() {
             assert!(is_well_formed_id(&entry.id), "{} is malformed", entry.id);
             let number: u32 = entry.id[3..].parse().unwrap();
+            // Service and configuration, lines and AT, the control API,
+            // serial, and from phase 1 the manager.
             assert!(
-                (1..=3999).contains(&number),
-                "{} is outside the phase 0 ranges",
+                (1..=4999).contains(&number),
+                "{} is outside the ranges in use",
                 entry.id
             );
         }

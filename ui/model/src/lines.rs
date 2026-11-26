@@ -104,7 +104,9 @@ impl Column {
     /// column takes what is left of the grid; this is the least it gets.
     pub fn default_width(self) -> i32 {
         match self {
-            Column::Number => 30,
+            // The handoff gives 30, which is the number alone: the state
+            // image is at the start of the row and takes 16 of them.
+            Column::Number => 48,
             Column::Port => 70,
             Column::Sip => 60,
             Column::HuntGroup => 80,

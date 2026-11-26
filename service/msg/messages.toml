@@ -19,6 +19,7 @@
 #   1000-1999  lines and AT
 #   2000-2999  control API
 #   3000-3999  serial
+#   4000-4999  manager
 #
 # The rest is left for later phases.
 
@@ -477,4 +478,99 @@ severity = "info"
 vars = 1
 text = "Serial port &1 opened."
 cause = "The service opened the port for its line."
+recovery = "No action is needed."
+
+# ---------------------------------------------------------------------------
+# 4000-4999: manager
+# ---------------------------------------------------------------------------
+
+[RMD4001]
+severity = "error"
+vars = 2
+text = "The service did not answer &1 within &2 seconds."
+cause = "The request was sent and no answer came back. The service may be busy, or stopping."
+recovery = "Check that the service is running, then try again."
+
+[RMD4002]
+severity = "error"
+vars = 2
+text = "File &1 could not be written: &2"
+cause = "The folder does not exist, the file is open in another program, or this user is not allowed to write there."
+recovery = "Choose another name or folder, or close the program that has the file open, then try again."
+
+[RMD4003]
+severity = "error"
+vars = 3
+text = "Service &1 could not be &2: &3"
+cause = "The Windows service control manager refused the request. The service may not be installed, or the manager is not running as an administrator."
+recovery = "Install the service from the File menu if it is not installed, and try again as an administrator."
+
+[RMD4004]
+severity = "error"
+vars = 1
+text = "The manager could not be started again as an administrator: &1"
+cause = "Windows did not start the elevated copy of the manager. The request for administrator rights may have been declined."
+recovery = "Choose the command again and accept the request, or start the manager from an elevated prompt."
+
+[RMD4005]
+severity = "error"
+vars = 2
+text = "Program &1 could not be run: &2"
+cause = "The service program is installed beside the manager and was not found there, or could not be started."
+recovery = "Check that rustmodem-svc.exe is in the same folder as the manager, then try again."
+
+[RMD4006]
+severity = "error"
+vars = 2
+text = "Serial port &1 could not be opened: &2"
+cause = "The port does not exist on this computer, or another program has it open."
+recovery = "Choose another port, or close the program that has the port open, then try again."
+
+[RMD4007]
+severity = "error"
+vars = 2
+text = "Serial port &1 stopped working: &2"
+cause = "Windows reported an error reading from or writing to the port. The port may have been removed."
+recovery = "Open the port again."
+
+[RMD4008]
+severity = "error"
+vars = 3
+text = "&1 must be a whole number from &2 to &3."
+cause = "The field holds something that is not a number, or a number outside what it takes."
+recovery = "Correct the field and try again."
+
+[RMD4009]
+severity = "error"
+vars = 1
+text = "&1 must not be empty."
+cause = "The field has to be filled in."
+recovery = "Fill in the field and try again."
+
+[RMD4010]
+severity = "info"
+vars = 2
+text = "Service &1 was &2."
+cause = "The Windows service control manager carried out the request."
+recovery = "No action is needed."
+
+[RMD4011]
+severity = "info"
+vars = 1
+text = "Changes to the settings take effect when the service next starts."
+cause = "The settings were written to &1. The log level, the log directory and the control pipe are read when the service starts."
+recovery = "Restart the service now, or later from the File menu."
+
+[RMD4012]
+severity = "error"
+vars = 2
+text = "The service program reported a problem: &2"
+cause = "&1 ran and ended with an error."
+recovery = "Read the message, correct what it names, and try again."
+
+[RMD4013]
+severity = "info"
+vars = 1
+text = "&1"
+cause = "The service program ran and ended without an error."
 recovery = "No action is needed."

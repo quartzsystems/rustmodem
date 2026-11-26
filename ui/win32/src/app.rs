@@ -20,7 +20,9 @@ use windows::core::w;
 use crate::menu::Accelerators;
 use crate::window::{Hwnd, dialog_windows};
 
-/// The application. Make one before any window.
+/// The application. Make one before any window. Copying it copies
+/// nothing: it stands for the set-up having been done.
+#[derive(Clone, Copy)]
 pub struct App {
     _private: (),
 }
