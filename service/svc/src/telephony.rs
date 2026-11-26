@@ -15,12 +15,12 @@ use ctlproto::{Event as ControlEvent, SipTrace, TraceDirection};
 use ctlsrv::Hub;
 use media::{CaptureEvent, CaptureWriter, ThreadedRunner};
 use msg::{Message, message};
-use pipe::Event;
 use pool::{CallRouter, LineId, MediaRunner};
 use telephony::{
     Direction, Observer, RouterParts, Settings, SipRouter, TelephonyHandle, UdpTransport,
     system_random,
 };
+use tokio::sync::Notify;
 
 use crate::VERSION;
 use crate::logger::{self, Logger};
@@ -86,12 +86,12 @@ pub fn start(
     log_dir: &Path,
     logger: &Logger,
     hub: &Hub,
-    wake: &Arc<Event>,
+    wake: &Arc<Notify>,
 ) -> Result<Parts, Message> {
     let listen = config.sip.listen.to_string();
     let waker = {
         let wake = Arc::clone(wake);
-        Arc::new(move || wake.set())
+        Arc::new(move || wake.notify_one())
     };
     let transport = UdpTransport::bind(config.sip.listen, waker.clone())
         .map_err(|error| message("RMD5002", &[&listen, &error.to_string()]))?;

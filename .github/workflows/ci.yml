@@ -65,6 +65,17 @@ jobs:
         run: cargo clippy $PURE --all-targets -- -D warnings
       - name: Test
         run: cargo test $PURE
+      # The control server and the service's runner are on Tokio, so they
+      # are not pure, but neither needs Windows. The service's program
+      # does: only its library and the tests of that are built here.
+      - name: Clippy (control server and runner)
+        run: |
+          cargo clippy -p ctlsrv --all-targets -- -D warnings
+          cargo clippy -p svc --lib --test '*' -- -D warnings
+      - name: Test (control server and runner)
+        run: |
+          cargo test -p ctlsrv
+          cargo test -p svc --lib --test '*'
 
   fuzz:
     name: Fuzz (${{ matrix.target }}, 10 minutes)

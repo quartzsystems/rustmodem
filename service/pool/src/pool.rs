@@ -181,6 +181,23 @@ impl Pool {
         self.measure_rate();
     }
 
+    /// When [`Pool::service`] is next due, on the monotonic clock of
+    /// [`Now`], in milliseconds. Whoever drives the pool sleeps until then
+    /// at the longest, and calls sooner when something arrives: a
+    /// command, octets from a port, a datagram, an event from a call.
+    ///
+    /// It is the pool's next tick, [`TICK_MS`] after the last. Everything
+    /// the pool times is looked at in a turn of its loop and so is seen by
+    /// then: the timers of the interpreters, which are the S-registers,
+    /// and the engines an inline runner carries are stepped by the tick
+    /// itself; the router, which has the ring cadence, the ring timeout
+    /// and the SIP retransmissions and registrations, is asked what it
+    /// has at every turn; and so is a port that is to be opened again.
+    /// Before the first turn it is now.
+    pub fn next_deadline(&self) -> u64 {
+        self.next_tick_ms.unwrap_or(self.now.mono_ms)
+    }
+
     /// The RTP octets there have been, in the calls that are over and in
     /// those in progress.
     fn rtp_octets(&self) -> u64 {

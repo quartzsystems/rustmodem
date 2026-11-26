@@ -15,12 +15,12 @@ use windows::Win32::System::Threading::{
 use windows::core::PCWSTR;
 
 /// The most handles one wait can take (`MAXIMUM_WAIT_OBJECTS`).
-pub const MAX_WAIT_HANDLES: usize = 64;
+const MAX_WAIT_HANDLES: usize = 64;
 
 /// An event. One made with [`Event::new`] is manual-reset: once set it
-/// stays set. The service uses one as its stop signal, which every waiting
-/// thread can see. One made with [`Event::auto`] is reset by the wait it
-/// ends: the service uses one to wake its pool's thread.
+/// stays set. Overlapped I/O on a pipe signals one when it is done. One
+/// made with [`Event::auto`] is reset by the wait it ends: the service
+/// wakes the thread of a serial port with one.
 pub struct Event(HANDLE);
 
 // SAFETY: an event handle may be used from any thread at once; the kernel
@@ -54,23 +54,10 @@ impl Event {
         let _ = unsafe { SetEvent(self.0) };
     }
 
-    /// Whether the event is set.
-    pub fn is_set(&self) -> bool {
-        self.wait(Duration::ZERO)
-    }
-
     /// Waits for the event. Returns whether it is set.
     pub fn wait(&self, timeout: Duration) -> bool {
         // SAFETY: `self.0` is an event handle this object owns.
         unsafe { WaitForSingleObject(self.0, millis(timeout)) == WAIT_OBJECT_0 }
-    }
-
-    /// Waits for the event with no time limit.
-    pub fn wait_forever(&self) {
-        // SAFETY: `self.0` is an event handle this object owns.
-        unsafe {
-            WaitForSingleObject(self.0, u32::MAX);
-        }
     }
 
     /// The handle, for Win32 calls that take one.

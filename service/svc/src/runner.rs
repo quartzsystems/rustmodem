@@ -2,30 +2,31 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! Starting and stopping what the service runs: the log, the pool on its
-//! one thread, and on the runtime the control server on the named pipe and
-//! the refresh of the lines' bindings.
+//! Starting and stopping what the service runs: the log, and on the
+//! runtime the task that owns the pool, the control server on the named
+//! pipe and the refresh of the lines' bindings.
 
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::thread::JoinHandle as ThreadHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use config::{Backend, ConfigFile, LineConfig};
 use ctlproto::{Event as ControlEvent, LogLevel, ServiceMode};
-use ctlsrv::{Hub, Limits, PoolRequests, Server, ServerParts};
+use ctlsrv::{Hub, Limits, Server, ServerParts};
 use msg::{Message, message};
-use pipe::{Event, MAX_WAIT_HANDLES, PipeListener, PipeSecurity, wait_any};
+use pipe::{PipeListener, PipeSecurity};
 use pool::{
     CallRouter, EventSink, InlineRunner, MediaRunner, Now, NullSwitch, Pool, PoolParts,
-    SerialFactory, TICK_MS,
+    SerialFactory,
 };
 use serial::{Com0comBackend, SerialBackend};
+use svc::bridge::BridgedPorts;
+use svc::pooltask::{LINGER, PoolClock, PoolTask};
 use svc::shutdown::{Shutdown, Stopping};
 use tokio::runtime::Handle;
-use tokio::sync::mpsc::error::TryRecvError;
-use tokio::task::JoinHandle as TaskHandle;
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 
 use crate::logger::{self, DEFAULT_MAX_BYTES, Logger};
 use crate::ports::SystemPorts;
@@ -43,11 +44,6 @@ const BINDING_REFRESH: Duration = Duration::from_secs(30);
 
 /// The name of the call records file in the log directory.
 const CALLS_FILE: &str = "calls.jsonl";
-
-/// How long the pool's thread goes on after the lines are down, for the
-/// calls to be cleared and the registrations given up on the network. It
-/// is well inside the time the service control manager allows a stop.
-const LINGER: Duration = Duration::from_secs(3);
 
 /// Opens the serial ports of the lines.
 struct Ports;
@@ -100,10 +96,9 @@ impl RunMode {
 pub struct Running {
     mode: RunMode,
     runtime: Handle,
-    stop: Arc<Event>,
-    pool: Option<ThreadHandle<()>>,
-    control: TaskHandle<()>,
-    bindings: TaskHandle<()>,
+    pool: JoinHandle<()>,
+    control: JoinHandle<()>,
+    bindings: JoinHandle<()>,
     logger: Logger,
 }
 
@@ -187,17 +182,16 @@ fn start_inner(
         logger.message(SOURCE, problem);
     }
 
-    // What stops the pool's thread: `Running::stop` sets it.
-    let stop = Arc::new(Event::new().map_err(|e| fail(message("RMD0003", &[&e.to_string()])))?);
     let listener = {
         // The pipe is registered with the runtime's I/O driver.
         let _on_runtime = runtime.enter();
         PipeListener::bind(&config.control.pipe, PipeSecurity::AdministratorsOnly).map_err(fail)?
     };
 
-    // What wakes the pool's thread between its ticks: a media thread with
-    // something to report, or a SIP message that has arrived.
-    let wake = Arc::new(Event::auto().map_err(|e| fail(message("RMD0003", &[&e.to_string()])))?);
+    // What wakes the pool's task between its ticks: a serial port's
+    // thread with something from its host, a media thread with something
+    // to report, or a SIP message that has arrived.
+    let wake = Arc::new(Notify::new());
     let mut sip_failed = None;
     let (router, media): (Box<dyn CallRouter>, Box<dyn MediaRunner>) = if config.sip.enabled {
         match telephony::start(&config, &log_dir, &logger, &hub, &wake) {
@@ -218,7 +212,8 @@ fn start_inner(
     let mut pool = Pool::new(PoolParts {
         router,
         media,
-        serial: Box::new(Ports),
+        // Each port has a thread, which the pool does not see.
+        serial: Box::new(BridgedPorts::new(Box::new(Ports), Arc::clone(&wake))),
         engines: Box::new(pool::engine_for),
         sink: Box::new(Sink {
             logger: logger.clone(),
@@ -237,7 +232,7 @@ fn start_inner(
             ],
         ),
     );
-    // The lines are added before the pool has a thread and a clock of its
+    // The lines are added before the pool has a task and a clock of its
     // own; they are logged with the time now.
     pool.set_now(Now {
         mono_ms: 0,
@@ -283,11 +278,14 @@ fn start_inner(
     });
     let binding_server = server.clone();
 
-    let pool_stop = Arc::clone(&stop);
-    let pool_thread = std::thread::Builder::new()
-        .name("pool".to_string())
-        .spawn(move || run_pool(pool, requests, pool_stop, wake))
-        .map_err(|e| fail(message("RMD0003", &[&e.to_string()])))?;
+    let pool_task = PoolTask {
+        pool,
+        requests,
+        wake,
+        clock: PoolClock::Running(Arc::new(logger::unix_ms)),
+        linger: LINGER,
+    };
+    let pool = runtime.spawn(pool_task.run(shutdown.subscribe()));
     let control = runtime.spawn(accept_clients(
         server,
         listener,
@@ -302,8 +300,7 @@ fn start_inner(
     Ok(Running {
         mode,
         runtime: runtime.clone(),
-        stop,
-        pool: Some(pool_thread),
+        pool,
         control,
         bindings,
         logger,
@@ -316,13 +313,10 @@ impl Running {
     /// The pool does this well inside the service stop timeout. The
     /// shutdown signal has been sent by now, and the tasks are ending.
     /// This waits, so it is not called on one of the runtime's threads.
-    pub fn stop(mut self) {
-        self.stop.set();
-        if let Some(thread) = self.pool.take() {
-            let _ = thread.join();
-        }
-        let (control, bindings) = (self.control, self.bindings);
+    pub fn stop(self) {
+        let (pool, control, bindings) = (self.pool, self.control, self.bindings);
         self.runtime.block_on(async {
+            let _ = pool.await;
             let _ = control.await;
             let _ = bindings.await;
         });
@@ -330,48 +324,6 @@ impl Running {
         self.logger.message(SOURCE, &stopped);
         self.logger.flush();
         self.mode.report(&stopped);
-    }
-}
-
-/// The pool's thread: one turn of the loop at least every tick, and sooner
-/// when a serial port has something or `wake` is set.
-fn run_pool(mut pool: Pool, mut requests: PoolRequests, stop: Arc<Event>, wake: Arc<Event>) {
-    let started = Instant::now();
-    let now = || Now {
-        mono_ms: started.elapsed().as_millis() as u64,
-        unix_ms: logger::unix_ms(),
-    };
-    let mut handles = Vec::with_capacity(MAX_WAIT_HANDLES);
-    'turns: while !stop.is_set() {
-        loop {
-            match requests.try_recv() {
-                Ok(request) => request.run(&mut pool),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break 'turns,
-            }
-        }
-        pool.service(now());
-
-        // Sleep until the next tick, a port's event, or the stop signal.
-        handles.clear();
-        handles.push(stop.raw());
-        handles.push(wake.raw());
-        handles.extend(
-            pool.wait_handles()
-                .iter()
-                .filter_map(|handle| handle.raw())
-                .take(MAX_WAIT_HANDLES - 2),
-        );
-        let into_tick = started.elapsed().as_millis() as u64 % TICK_MS;
-        wait_any(&handles, Duration::from_millis(TICK_MS - into_tick));
-    }
-    pool.shutdown(now());
-    // The lines are down. What the router has sent to say so, a BYE for
-    // each call and the end of each registration, is answered by the far
-    // ends in their own time; it is given a little.
-    let until = Instant::now() + LINGER;
-    while pool.linger(now()) && Instant::now() < until {
-        wake.wait(Duration::from_millis(TICK_MS));
     }
 }
 

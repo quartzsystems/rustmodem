@@ -12,6 +12,9 @@
 //!   thread while it writes on another, as the manager does. It blocks,
 //!   as `std::io` does, and its two [`Halves`] are closed with a
 //!   [`Closer`].
+//! - [`Event`] and [`wait_any`] are the Win32 event and the wait on
+//!   handles. The client's halves wait with them, and so does the thread
+//!   the service gives each serial port.
 //!
 //! This is a crate of its own because the Win32 calls need `unsafe`, which
 //! `ctlsrv` and the programs that use the pipe forbid or keep to
@@ -34,6 +37,6 @@ pub use blocking::{Closer, Halves};
 #[cfg(windows)]
 pub use client::PipeClient;
 #[cfg(windows)]
-pub use event::{Event, MAX_WAIT_HANDLES, wait_any};
+pub use event::{Event, wait_any};
 #[cfg(all(windows, feature = "server"))]
 pub use listener::{PipeConnection, PipeListener, PipeSecurity};
