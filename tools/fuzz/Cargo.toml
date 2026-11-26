@@ -24,6 +24,7 @@ libfuzzer-sys = "0.4.13"
 at = { path = "../../dte/at" }
 sdp = { path = "../../voip/sdp" }
 rtp = { path = "../../voip/rtp" }
+sip = { path = "../../voip/sip" }
 
 [[bin]]
 name = "at_input"
@@ -42,6 +43,13 @@ bench = false
 [[bin]]
 name = "sdp_parse"
 path = "fuzz_targets/sdp_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sip_message"
+path = "fuzz_targets/sip_message.rs"
 test = false
 doc = false
 bench = false
