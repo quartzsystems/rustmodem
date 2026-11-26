@@ -219,13 +219,26 @@ pub enum UnknownCommand {
 }
 
 /// The per-line settings the interpreter is created with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AtConfig {
     /// What to answer to an unknown command.
     pub unknown_command: UnknownCommand,
     /// The factory value of S0: rings before auto-answer, 0 for off. A
     /// stored profile has its own S0, which wins.
     pub auto_answer_rings: u8,
+    /// The name of the line's modem engine, which `I4` reports: `NULL`,
+    /// `ECHO`.
+    pub engine: &'static str,
+}
+
+impl Default for AtConfig {
+    fn default() -> Self {
+        AtConfig {
+            unknown_command: UnknownCommand::default(),
+            auto_answer_rings: 0,
+            engine: "NULL",
+        }
+    }
 }
 
 /// The longest command line body accepted, in characters after the `AT`

@@ -10,7 +10,7 @@
 use std::collections::VecDeque;
 
 use at::{AtConfig, AtInterpreter, Mode, ModemSignals, Profile};
-use config::{LineConfig, UnknownCommand};
+use config::{EngineKind, LineConfig, UnknownCommand};
 use ctlproto::{CallInfo, CallRecord, ConnectInfo, Counters, Direction, EndReason, LineInfo};
 use ctlproto::{ErrorInfo, LineState};
 use engine::ModemEngine;
@@ -178,5 +178,9 @@ pub(crate) fn at_config(config: &LineConfig) -> AtConfig {
             UnknownCommand::Error => at::UnknownCommand::Error,
         },
         auto_answer_rings: config.auto_answer_rings,
+        engine: match config.engine {
+            EngineKind::Null => "NULL",
+            EngineKind::Echo => "ECHO",
+        },
     }
 }

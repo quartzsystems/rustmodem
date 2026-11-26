@@ -15,8 +15,9 @@ use crate::{Action, HangupCause, Output, Profile, ResultCode, Trace, UnknownComm
 /// What `I0` reports: the product code.
 const PRODUCT_CODE: &str = "rustmodem";
 
-/// What `I4` reports: the capability line.
-const CAPABILITIES: &str = "NULL MODEM,V.250,+MS,+ES,+DS";
+/// What `I4` reports after the name of the line's engine: the rest of
+/// the capability line.
+const CAPABILITIES: &str = "MODEM,V.250,+MS,+ES,+DS";
 
 /// What executing one command means for the rest of the line.
 enum Next {
@@ -162,7 +163,8 @@ impl AtInterpreter {
                     Next::Continue
                 }
                 Some(4) => {
-                    self.info(&[CAPABILITIES], out);
+                    let line = format!("{} {CAPABILITIES}", self.config.engine);
+                    self.info(&[&line], out);
                     Next::Continue
                 }
                 Some(_) => Next::Continue,

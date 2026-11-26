@@ -56,6 +56,7 @@ fuzz_target!(|data: &[u8]| {
             UnknownCommand::Error
         },
         auto_answer_rings: (settings >> 1) & 3,
+        ..AtConfig::default()
     };
     let mut interpreter = AtInterpreter::new(config);
     let mut out = Vec::new();

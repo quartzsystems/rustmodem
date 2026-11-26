@@ -126,5 +126,14 @@ impl ProfileStore for MemoryProfiles {
     }
 }
 
-/// Makes the modem engine of a line.
-pub type EngineFactory = Box<dyn FnMut(LineId) -> Box<dyn ModemEngine> + Send>;
+/// Makes the modem engine of a line, from the line's configuration.
+pub type EngineFactory = Box<dyn FnMut(&LineConfig) -> Box<dyn ModemEngine> + Send>;
+
+/// The engine a line's `engine` setting asks for: the null engine or the
+/// echo engine.
+pub fn engine_for(line: &LineConfig) -> Box<dyn ModemEngine> {
+    match line.engine {
+        config::EngineKind::Null => Box::new(engine::NullEngine::new(Default::default())),
+        config::EngineKind::Echo => Box::new(engine::EchoEngine::new()),
+    }
+}

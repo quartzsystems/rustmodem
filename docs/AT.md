@@ -107,7 +107,7 @@ reports 1.
 | `H`, `H0` | Hang up, if off hook. `H1` returns `OK` and does nothing. Above 1 is an error | 6.3.6 |
 | `I`, `I0` | Print the product code, `rustmodem` | 6.1.3 |
 | `I3` | Print `rustmodem <version>` | |
-| `I4` | Print the capability line, `NULL MODEM,V.250,+MS,+ES,+DS` | |
+| `I4` | Print the capability line, `NULL MODEM,V.250,+MS,+ES,+DS`. It starts with the name of the line's engine: `NULL`, or `ECHO` for a line with `engine = "echo"` | |
 | `I1`, `I2`, `I5`..`I9` | Nothing; `OK`. Above 9 is an error | |
 | `L0`..`L3` | Speaker volume. Stored, no effect | 6.3.13 |
 | `M0`..`M3` | Speaker mode. Stored, no effect | 6.3.14 |

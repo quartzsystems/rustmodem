@@ -14,7 +14,6 @@ use std::time::{Duration, Instant};
 use config::{Backend, ConfigFile, LineConfig};
 use ctlproto::{Event as ControlEvent, LogLevel, ServiceMode};
 use ctlsrv::{Hub, Limits, Listener, Server, ServerParts};
-use engine::{NullConfig, NullEngine};
 use msg::{Message, message};
 use pipe::{Event, MAX_WAIT_HANDLES, PipeListener, PipeSecurity, wait_any};
 use pool::{
@@ -186,7 +185,7 @@ fn start_inner(
         router: Box::new(NullSwitch::new()),
         media: Box::new(InlineRunner::new()),
         serial: Box::new(Ports),
-        engines: Box::new(|_| Box::new(NullEngine::new(NullConfig::default()))),
+        engines: Box::new(pool::engine_for),
         sink: Box::new(Sink {
             logger: logger.clone(),
             hub: hub.clone(),

@@ -19,7 +19,7 @@ use serial::{ModemSignals, SerialEvent, SerialOperation, WaitHandle};
 
 use crate::handle::Command;
 use crate::line::{ActiveCall, Line, at_config};
-use crate::media::{MediaEndpoint, MediaEvent, MediaRunner};
+use crate::media::{MediaEndpoint, MediaEvent, MediaRunner, MediaStats};
 use crate::router::{CallRouter, LineDirectory, LineId, RouterEvent};
 use crate::stats::Tallies;
 use crate::{
@@ -452,7 +452,7 @@ impl Pool {
         let id = self.lines[index].id();
         let engine = match self.lines[index].engine.take() {
             Some(engine) => engine,
-            None => (self.engines)(id),
+            None => (self.engines)(&self.lines[index].config),
         };
         match self.media.start(id, engine, endpoint, originate) {
             Ok(call) => {
@@ -929,6 +929,13 @@ impl Pool {
         self.tallies.snapshot(self.lines_in_use())
     }
 
+    /// The statistics of the media of a line's call, when the line has a
+    /// call connected and its media runner keeps any.
+    pub fn media_stats(&self, id: LineId) -> Option<MediaStats> {
+        let index = self.index_of(id)?;
+        self.lines[index].media.as_ref()?.stats()
+    }
+
     fn lines_in_use(&self) -> u32 {
         self.lines.iter().filter(|line| line.call.is_some()).count() as u32
     }
@@ -988,7 +995,7 @@ impl Pool {
         for wanted in &config.lines {
             match self.index_of(wanted.id) {
                 None => {
-                    let engine = (self.engines)(wanted.id);
+                    let engine = (self.engines)(wanted);
                     let stored = self.profiles.load(wanted.id);
                     let mut line = Line::new(wanted.clone(), engine, stored);
                     line.binding = self.binding_of(wanted);
@@ -1013,6 +1020,15 @@ impl Pool {
             // The port changes, or the line goes out of service: the call
             // ends and the port is released.
             self.take_down(index);
+        }
+        if self.lines[index].config.engine != wanted.engine {
+            // Another engine: the call the old one is carrying ends, and
+            // the line gets the new one.
+            let reason = self.operator_reason;
+            self.reject(index, reason);
+            self.with_interpreter(index, |interpreter, out| interpreter.operator_hangup(out));
+            self.settle();
+            self.lines[index].engine = Some((self.engines)(wanted));
         }
         let binding = self.binding_of(wanted);
         let line = &mut self.lines[index];

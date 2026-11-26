@@ -338,6 +338,7 @@ proptest! {
         let config = AtConfig {
             unknown_command: if refuse_unknown { UnknownCommand::Error } else { UnknownCommand::Ok },
             auto_answer_rings: s0,
+            ..AtConfig::default()
         };
         let mut interpreter = AtInterpreter::new(config);
         prop_assert!(interpreter.check_invariants().is_ok());

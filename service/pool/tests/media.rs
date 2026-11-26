@@ -208,7 +208,7 @@ impl World {
         let engines = {
             let journal = Arc::clone(&journal);
             let mut made = 0;
-            Box::new(move |_line: LineId| {
+            Box::new(move |_line: &config::LineConfig| {
                 made += 1;
                 Box::new(LoopEngine {
                     id: made,

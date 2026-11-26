@@ -10,14 +10,19 @@
 //! back the bytes it has demodulated. Every softmodem of the later phases
 //! implements [`ModemEngine`].
 //!
-//! Phase 0 has one implementation, [`NullEngine`], which is a stand-in and
-//! not a modem: it frames the data bytes straight into the octet stream.
+//! There are two implementations so far, and neither is a modem.
+//! [`NullEngine`] frames the data bytes straight into the octet stream:
+//! two of them joined by a path that alters no octet carry data, and one
+//! altered octet shows as wrong data or a lost carrier. [`EchoEngine`]
+//! sends back what it receives, for trying a telephone path by ear.
 
 #![forbid(unsafe_code)]
 
+mod echo;
 mod info;
 mod null;
 
+pub use echo::{ECHO_CARRIER, EchoEngine};
 pub use info::ConnectInfo;
 pub use null::{IDLE_OCTET, NullConfig, NullEngine, SILENCE_OCTET};
 
