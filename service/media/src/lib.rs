@@ -38,11 +38,13 @@
 //! [`receive_within`] are that wait, for anything else in the service that
 //! reads a UDP socket with a time limit.
 
+mod capture;
 mod endpoint;
 mod os;
 mod threaded;
 mod ticker;
 
+pub use capture::{CAPTURE_RING, CaptureEvent, CaptureMeta, CaptureTap, CaptureWriter};
 pub use endpoint::{Negotiation, RtpEndpoint, RtpParams, RtpPorts};
 pub use os::{prepare_socket, receive_within};
 pub use threaded::{ThreadedRunner, Waker};

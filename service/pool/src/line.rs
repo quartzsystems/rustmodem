@@ -98,6 +98,8 @@ pub(crate) struct Line {
     /// What the host side of the port is bound to, when the pool has been
     /// told.
     pub binding: Option<String>,
+    /// The packets of the line's calls are to be captured.
+    pub capture: bool,
 }
 
 impl Line {
@@ -121,6 +123,7 @@ impl Line {
             counters: Counters::default(),
             call: None,
             binding: None,
+            capture: false,
         }
     }
 

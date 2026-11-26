@@ -33,6 +33,8 @@ pub struct RtpEndpoint {
     pub sequence: u16,
     /// The first timestamp we send, random.
     pub timestamp: u32,
+    /// The SIP Call-ID of the call, for its capture.
+    pub call_id: String,
 }
 
 /// What a call's media thread has to know of the negotiation, in one

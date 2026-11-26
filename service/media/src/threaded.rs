@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 use engine::ModemEngine;
 use pool::{LineId, MediaCall, MediaEndpoint, MediaPort, MediaRunner, media_pair};
 
+use crate::capture::{CaptureMeta, CaptureTap, CaptureWriter};
 use crate::endpoint::RtpEndpoint;
 use crate::os;
 use crate::ticker::{Clock, MAX_DATAGRAM, Received, Ticker, Transport};
@@ -41,6 +42,8 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 struct Job {
     engine: Box<dyn ModemEngine>,
     endpoint: RtpEndpoint,
+    /// Where the call's packets are offered when its capture is on.
+    capture: Option<CaptureTap>,
     port: MediaPort,
     originate: bool,
     stop: Arc<AtomicBool>,
@@ -68,6 +71,9 @@ pub struct ThreadedRunner {
     idle: Vec<usize>,
     calls: Vec<Carried>,
     waker: Waker,
+    /// The thread that writes captures. It is dropped after the media
+    /// threads have ended, when every capture is complete.
+    capture: Option<CaptureWriter>,
 }
 
 impl ThreadedRunner {
@@ -75,11 +81,29 @@ impl ThreadedRunner {
     /// More are made if more calls come than that. `waker` is called from
     /// a media thread when it has an event for the pool.
     pub fn new(threads: usize, waker: Waker) -> io::Result<ThreadedRunner> {
+        ThreadedRunner::build(threads, waker, None)
+    }
+
+    /// A runner whose calls can be captured: `writer` writes the files.
+    pub fn with_capture(
+        threads: usize,
+        waker: Waker,
+        writer: CaptureWriter,
+    ) -> io::Result<ThreadedRunner> {
+        ThreadedRunner::build(threads, waker, Some(writer))
+    }
+
+    fn build(
+        threads: usize,
+        waker: Waker,
+        capture: Option<CaptureWriter>,
+    ) -> io::Result<ThreadedRunner> {
         let mut runner = ThreadedRunner {
             workers: Vec::with_capacity(threads),
             idle: Vec::with_capacity(threads),
             calls: Vec::with_capacity(threads),
             waker,
+            capture,
         };
         for _ in 0..threads {
             let index = runner.spawn()?;
@@ -142,9 +166,21 @@ impl MediaRunner for ThreadedRunner {
         let (call, port) = media_pair();
         let stop = Arc::new(AtomicBool::new(false));
         let (done, engine_back) = sync_channel(1);
+        // The ring of the call's capture is made now, whether or not the
+        // capture is on: it can be turned on in the middle of the call.
+        let capture = self.capture.as_ref().map(|writer| {
+            let negotiation = endpoint.params.get();
+            writer.tap(CaptureMeta {
+                line,
+                call_id: endpoint.call_id.clone(),
+                payload_type: negotiation.payload_type,
+                ptime_ms: (negotiation.frames * 10) as u8,
+            })
+        });
         let job = Job {
             engine,
             endpoint,
+            capture,
             port,
             originate,
             stop: Arc::clone(&stop),
@@ -200,6 +236,7 @@ fn carry(job: Job, waker: &Waker) -> Box<dyn ModemEngine> {
     let Job {
         mut engine,
         endpoint,
+        capture,
         mut port,
         originate,
         stop,
@@ -221,6 +258,7 @@ fn carry(job: Job, waker: &Waker) -> Box<dyn ModemEngine> {
         endpoint.ssrc,
         endpoint.sequence,
         endpoint.timestamp,
+        capture,
     );
     let _scheduling = os::ProAudio::enter();
 

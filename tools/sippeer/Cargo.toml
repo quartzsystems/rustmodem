@@ -12,8 +12,18 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
+engine.workspace = true
+rtp.workspace = true
 sdp.workspace = true
 sip.workspace = true
+
+[lib]
+name = "sippeer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rustmodem-sippeer"
+path = "src/main.rs"
 
 [lints]
 workspace = true

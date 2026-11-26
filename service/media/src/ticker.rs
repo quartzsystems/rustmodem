@@ -16,8 +16,10 @@ use std::sync::Arc;
 
 use engine::ModemEngine;
 use pool::{MediaEvent, MediaPort, MediaShared, MediaStats};
+use rtp::capture::Kind;
 use rtp::{FRAME, HEADER_LEN, RtpPacket, RtpReceiver, RtpSender, Verdict};
 
+use crate::capture::CaptureTap;
 use crate::endpoint::{Negotiation, RtpParams};
 
 /// The longest datagram a call's socket reads. An RTP packet of G.711 is
@@ -124,6 +126,14 @@ pub struct Ticker {
     histogram: [u32; BUCKETS],
     ticks: u64,
     since_publish: u32,
+    /// Where the call's packets are offered when its capture is on.
+    capture: Option<CaptureTap>,
+    /// Whether this turn's packets are captured. It is read once a turn,
+    /// so that an arrival and what is sent for it are captured together or
+    /// not at all.
+    capturing: bool,
+    /// When the call's media began: the zero of a capture's clock.
+    began_us: u64,
 }
 
 impl Ticker {
@@ -136,6 +146,7 @@ impl Ticker {
         ssrc: u32,
         sequence: u16,
         timestamp: u32,
+        capture: Option<CaptureTap>,
     ) -> Ticker {
         let applied = params.raw();
         let Negotiation {
@@ -167,6 +178,9 @@ impl Ticker {
             histogram: [0; BUCKETS],
             ticks: 0,
             since_publish: 0,
+            capture,
+            capturing: false,
+            began_us: now_us,
         }
     }
 
@@ -218,6 +232,7 @@ impl Ticker {
             return false;
         }
         let now = clock.now_us();
+        self.capturing = self.capture.is_some() && port.shared().capture();
         self.apply_params(now);
 
         if let Received::Datagram { len, from } = received {
@@ -226,6 +241,14 @@ impl Ticker {
                 self.stray += 1;
             } else if let Ok(packet) = RtpPacket::parse(&buffer[..len.min(buffer.len())]) {
                 self.heard_us = now;
+                if self.capturing
+                    && let Some(tap) = &mut self.capture
+                {
+                    // Every packet from the far end, whatever is made of
+                    // it: late and doubled ones are part of what happened.
+                    let nanos = now.saturating_sub(self.began_us) * 1000;
+                    tap.offer(Kind::Received, nanos, &packet.header, packet.payload);
+                }
                 let arrival = (now / SAMPLE_US) as u32;
                 if let Verdict::Deliver {
                     fill_frames,
@@ -307,6 +330,17 @@ impl Ticker {
             // one that gave no address has nowhere to be sent to.
             if !self.held && !self.remote.ip().is_unspecified() {
                 transport.send(&self.packet[..HEADER_LEN + len], self.remote);
+                if self.capturing
+                    && let Some(tap) = &mut self.capture
+                {
+                    let nanos = began.saturating_sub(self.began_us) * 1000;
+                    tap.offer(
+                        Kind::Sent,
+                        nanos,
+                        &header,
+                        &self.packet[HEADER_LEN..HEADER_LEN + len],
+                    );
+                }
             }
             self.filled = 0;
         }
@@ -369,7 +403,7 @@ impl Ticker {
             },
             tick_max_us: self.tick_max_us,
             overruns: self.overruns,
-            capture_dropped: 0,
+            capture_dropped: self.capture.as_ref().map_or(0, CaptureTap::dropped),
         }
     }
 

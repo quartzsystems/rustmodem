@@ -34,6 +34,7 @@ fn endpoint(
         ssrc: u32::from(remote.port()),
         sequence: 7,
         timestamp: 9000,
+        call_id: format!("call-{}", remote.port()),
     })
 }
 

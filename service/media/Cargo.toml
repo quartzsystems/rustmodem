@@ -15,6 +15,7 @@ publish.workspace = true
 engine.workspace = true
 pool.workspace = true
 rtp.workspace = true
+rtrb.workspace = true
 
 [target."cfg(windows)".dependencies]
 windows = { workspace = true, features = [

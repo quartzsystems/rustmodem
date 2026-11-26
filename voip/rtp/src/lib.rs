@@ -15,9 +15,13 @@
 //! and the far end's packets are the only clock that knows that count:
 //! [`RtpReceiver`] turns each arriving packet into the frames the tick loop
 //! must run, filling what was lost and dropping what came twice or late.
+//!
+//! [`capture`] is the file a call's packets can be recorded in, and the
+//! check of one: whether the call was sample-exact.
 
 #![forbid(unsafe_code)]
 
+pub mod capture;
 mod packet;
 mod receiver;
 mod sender;

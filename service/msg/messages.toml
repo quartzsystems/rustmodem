@@ -731,3 +731,38 @@ vars = 1
 text = "The media of the call on line &1 could not be started."
 cause = "The call connected and its media could not be carried. The call was ended."
 recovery = "Look at the service log for earlier messages. If there are none, report the problem to Quartz Systems."
+
+[RMD6003]
+severity = "error"
+vars = 2
+text = "Capture file &1 could not be read: &2"
+cause = "The file does not exist, or the program is not allowed to read it."
+recovery = "Check the path. Capture files are in the captures directory under the log directory, or in media.capture_dir."
+
+[RMD6004]
+severity = "error"
+vars = 2
+text = "File &1 is not a call capture that can be read: &2"
+cause = "The file is not a capture, was written by a later version of rustmodem, or was cut off or damaged."
+recovery = "Name a .rmcap file that rustmodem wrote. A capture that was cut off while the service ran can be read once the call has ended."
+
+[RMD6005]
+severity = "error"
+vars = 2
+text = "File &1 could not be written: &2"
+cause = "The directory does not exist, the program is not allowed to write there, or the disk is full."
+recovery = "Name a file in a directory that can be written to."
+
+[RMD6006]
+severity = "info"
+vars = 2
+text = "The call on line &1 is being captured to &2."
+cause = "Call capture is on for the line. Every RTP packet the call receives and sends is written to the file."
+recovery = "No action is needed. Check the capture with: rustmodemctl capture check <file>"
+
+[RMD6007]
+severity = "warning"
+vars = 3
+text = "The capture of the call on line &1 could not be written to &2: &3"
+cause = "The capture directory could not be made or the file could not be written. The call is not affected; its capture is given up."
+recovery = "Correct media.capture_dir or the permissions of the directory, or free space on the disk."

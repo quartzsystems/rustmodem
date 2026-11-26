@@ -738,6 +738,12 @@ impl SipRouter {
             ssrc: (numbers >> 32) as u32,
             sequence: numbers as u16,
             timestamp: (numbers >> 16) as u32,
+            call_id: self.calls[index]
+                .invite
+                .headers
+                .call_id()
+                .unwrap_or_default()
+                .to_owned(),
         }))
     }
 

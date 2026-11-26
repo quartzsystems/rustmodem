@@ -21,6 +21,13 @@ Usage:
   rustmodemctl [OPTIONS] ports
   rustmodemctl [OPTIONS] log [--last N]
   rustmodemctl [OPTIONS] watch          prints events until interrupted
+  rustmodemctl [--json] capture check <file>
+  rustmodemctl capture wav <file> <out.wav>
+
+The capture commands read a call capture file and ask nothing of the
+service. capture check exits with 0 only when the call lost nothing,
+resynchronised nothing and slipped nothing; capture wav writes the call as
+a two-channel WAV file, received on the left and sent on the right.
 
 Options:
   --pipe NAME    the control pipe; default rustmodem-control
@@ -68,6 +75,10 @@ pub enum Command {
     Log(Option<u32>),
     /// `watch`
     Watch,
+    /// `capture check <file>`; the file is the first of the paths.
+    CaptureCheck,
+    /// `capture wav <file> <out.wav>`; the files are the paths.
+    CaptureWav,
     /// `--help`
     Help,
     /// `--version`
@@ -85,6 +96,8 @@ pub struct Options {
     pub verbose: bool,
     /// What to ask the service.
     pub command: Command,
+    /// The files a capture command names.
+    pub paths: Vec<String>,
 }
 
 /// Reads the arguments after the program name. An argument that is not
@@ -127,6 +140,7 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Options, Message> {
         None => Ok(command),
     };
     let name = words.first().map(String::as_str);
+    let mut paths = Vec::new();
     let command = match name {
         Some("--help") => Command::Help,
         Some("--version") => Command::Version,
@@ -144,6 +158,21 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Options, Message> {
         Some("ports") => alone(&words, Command::Ports)?,
         Some("log") => alone(&words, Command::Log(last))?,
         Some("watch") => alone(&words, Command::Watch)?,
+        Some("capture") => match &words[1..] {
+            [check, file] if check == "check" => {
+                paths.push(file.clone());
+                Command::CaptureCheck
+            }
+            [wav, file, out] if wav == "wav" => {
+                paths.extend([file.clone(), out.clone()]);
+                Command::CaptureWav
+            }
+            [] => return Err(refuse("capture")),
+            [first, ..] if first != "check" && first != "wav" => return Err(refuse(first)),
+            // The right word with the wrong number of files.
+            [first] => return Err(refuse(first)),
+            [.., last] => return Err(refuse(last)),
+        },
         Some(other) => return Err(refuse(other)),
         None => Command::Help,
     };
@@ -156,6 +185,7 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Options, Message> {
         json,
         verbose,
         command,
+        paths,
     })
 }
 
@@ -190,6 +220,12 @@ mod tests {
         assert_eq!(command(&["log"]), Command::Log(None));
         assert_eq!(command(&["log", "--last", "50"]), Command::Log(Some(50)));
         assert_eq!(command(&["watch"]), Command::Watch);
+        let check = parse_words(&["capture", "check", "a.rmcap", "--json"]).unwrap();
+        assert_eq!((check.command, check.json), (Command::CaptureCheck, true));
+        assert_eq!(check.paths, ["a.rmcap"]);
+        let wav = parse_words(&["capture", "wav", r"C:\caps\a.rmcap", "a.wav"]).unwrap();
+        assert_eq!(wav.command, Command::CaptureWav);
+        assert_eq!(wav.paths, [r"C:\caps\a.rmcap", "a.wav"]);
         assert_eq!(command(&["--help"]), Command::Help);
         assert_eq!(command(&["lines", "--help"]), Command::Help);
         assert_eq!(command(&["--version"]), Command::Version);
@@ -206,6 +242,7 @@ mod tests {
                 json: true,
                 verbose: true,
                 command: Command::Lines,
+                paths: Vec::new(),
             }
         );
         let options = parse_words(&["lines"]).unwrap();
@@ -231,6 +268,12 @@ mod tests {
             &["log", "7"],
             &["--frob", "lines"],
             &["watch", "now"],
+            &["capture"],
+            &["capture", "check"],
+            &["capture", "check", "a", "b"],
+            &["capture", "wav", "a"],
+            &["capture", "wav", "a", "b", "c"],
+            &["capture", "play", "a"],
         ] {
             let problem = parse_words(words).unwrap_err();
             assert_eq!(problem.id, "RMD0009", "{words:?}");

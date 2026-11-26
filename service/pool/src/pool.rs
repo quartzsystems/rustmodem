@@ -456,6 +456,7 @@ impl Pool {
         };
         match self.media.start(id, engine, endpoint, originate) {
             Ok(call) => {
+                call.set_capture(self.lines[index].capture);
                 self.lines[index].media = Some(call);
                 true
             }
@@ -927,6 +928,24 @@ impl Pool {
     /// The statistics since the pool started.
     pub fn stats(&self) -> Stats {
         self.tallies.snapshot(self.lines_in_use())
+    }
+
+    /// Turns the capture of a line's calls on or off: of the call it has
+    /// now, from this moment, and of every call after it. A line whose
+    /// media runner keeps no captures is not changed by it.
+    pub fn set_capture(&mut self, id: LineId, on: bool) -> Result<(), Message> {
+        let index = self.index(id)?;
+        let line = &mut self.lines[index];
+        line.capture = on;
+        if let Some(call) = &line.media {
+            call.set_capture(on);
+        }
+        Ok(())
+    }
+
+    /// Whether the capture of a line's calls is on.
+    pub fn capture(&self, id: LineId) -> Result<bool, Message> {
+        self.index(id).map(|index| self.lines[index].capture)
     }
 
     /// The statistics of the media of a line's call, when the line has a

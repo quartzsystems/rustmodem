@@ -58,7 +58,7 @@ fn table(columns: &[Column], rows: &[Vec<String>]) -> String {
 }
 
 /// Label and value lines, the values aligned.
-fn fields(pairs: &[(&str, String)]) -> String {
+pub fn fields(pairs: &[(&str, String)]) -> String {
     let width = pairs
         .iter()
         .map(|(label, _)| label.len())

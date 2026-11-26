@@ -16,6 +16,7 @@
 #![forbid(unsafe_code)]
 
 mod args;
+mod capture;
 mod client;
 mod output;
 #[cfg(test)]
@@ -59,6 +60,26 @@ fn main() -> ExitCode {
         Command::Version => {
             println!("rustmodemctl {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
+        }
+        // The capture commands read a file and need no service.
+        Command::CaptureCheck | Command::CaptureWav => {
+            let stdout = io::stdout();
+            let mut out = stdout.lock();
+            let outcome = match (options.command, options.paths.as_slice()) {
+                (Command::CaptureCheck, [file]) => capture::run_check(file, options.json, &mut out),
+                (_, [file, wav]) => capture::run_wav(file, wav, &mut out).map(|()| true),
+                _ => Ok(true),
+            };
+            return match outcome {
+                Ok(true) => ExitCode::SUCCESS,
+                // The capture was read, and the call in it was not clean.
+                Ok(false) => ExitCode::from(EXIT_API),
+                Err(problem) => {
+                    let error = ErrorInfo::from(problem);
+                    eprint!("{}", output::error(&error, options.verbose));
+                    ExitCode::from(EXIT_API)
+                }
+            };
         }
         _ => {}
     }
@@ -126,7 +147,7 @@ fn run<R: BufRead, W: Write>(
         }
         Command::Watch => watch(client, json, out, watch_limit),
         // Handled before a connection is made.
-        Command::Help | Command::Version => Ok(()),
+        Command::Help | Command::Version | Command::CaptureCheck | Command::CaptureWav => Ok(()),
     }
 }
 
