@@ -12,8 +12,8 @@ use windows::Win32::UI::Controls::{
     ICC_TAB_CLASSES, ICC_UPDOWN_CLASS, INITCOMMONCONTROLSEX, InitCommonControlsEx,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetMessageW, IsDialogMessageW, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage,
-    TranslateAcceleratorW, TranslateMessage, WM_QUIT,
+    DispatchMessageW, GetMessageW, IsChild, IsDialogMessageW, MSG, PM_REMOVE, PeekMessageW,
+    PostQuitMessage, TranslateAcceleratorW, TranslateMessage, WM_QUIT,
 };
 use windows::core::w;
 
@@ -113,7 +113,11 @@ fn handle(message: &MSG, main: HWND, accelerators: Option<&Accelerators>) {
     // the handles are windows of this thread or stale, and each of these
     // calls does nothing for a handle that is not a window.
     unsafe {
+        // The accelerators are the main window's: a key pressed in another
+        // window of the thread, such as a modeless dialog, is that
+        // window's own.
         if let Some(accelerators) = accelerators
+            && (message.hwnd == main || IsChild(main, message.hwnd).as_bool())
             && TranslateAcceleratorW(main, accelerators.handle(), message) != 0
         {
             return;

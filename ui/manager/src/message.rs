@@ -82,12 +82,6 @@ pub fn show(owner: Option<Hwnd>, error: &ErrorInfo) {
     task_dialog(owner, &dialog(error));
 }
 
-/// Shows the message that the pipe does not admit this user. Returns
-/// whether the user chose to start again as an administrator.
-pub fn show_denied(owner: Option<Hwnd>, error: &ErrorInfo) -> bool {
-    task_dialog(owner, &denied_dialog(error)) == ID_ELEVATE
-}
-
 #[cfg(test)]
 mod tests {
     use msg::message;

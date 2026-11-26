@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use manager::{Clock, Opened, Options};
+use manager::{Clock, Hooks, Opened, Options};
 use win32::App;
 
 /// The moment the frozen demo service stands still at, in Unix
@@ -101,15 +101,25 @@ impl Bench {
     /// frozen demo service's moment, nothing remembered from other runs,
     /// and nothing written for later ones.
     pub fn open(pipe: &str) -> Bench {
+        Bench::open_with(pipe, Hooks::default())
+    }
+
+    /// As [`Bench::open`], with something in place of the dialogs that
+    /// would wait for a person.
+    pub fn open_with(pipe: &str, hooks: Hooks) -> Bench {
         let app = App::new();
-        let opened = manager::open(Options {
-            pipe: pipe.to_string(),
-            clock: Clock::fixed(FROZEN_NOW_MS),
-            settings_key: None,
-            size: Some(SIZE),
-            machine: "TESTBENCH".to_string(),
-            arguments: vec!["--pipe".to_string(), pipe.to_string()],
-        })
+        let opened = manager::open(
+            app,
+            Options {
+                pipe: pipe.to_string(),
+                action: None,
+                clock: Clock::fixed(FROZEN_NOW_MS),
+                settings_key: None,
+                size: Some(SIZE),
+                machine: "TESTBENCH".to_string(),
+                hooks,
+            },
+        )
         .expect("the window opens");
         Bench { app, opened }
     }

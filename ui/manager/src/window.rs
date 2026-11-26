@@ -21,9 +21,10 @@
 //! it.
 
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
-use std::rc::Rc;
-use std::time::Instant;
+use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
+use std::rc::{Rc, Weak};
+use std::time::{Duration, Instant};
 
 use ctlproto::{
     Call, CallList, CallsQuery, ErrorInfo, EventSelection, LineInfo, LineList, LineRef, LogTail,
@@ -34,14 +35,17 @@ use msg::message;
 use serde_json::Value;
 use win32::metrics::{self, scale};
 use win32::{
-    Accelerators, App, Event, Handler, Hwnd, Key, MenuHighlight, Reply, UiReceiver, UiSender,
-    Window, WindowOptions, channel, relaunch_elevated,
+    Accelerators, App, Event, FileFilter, Handler, Hwnd, Key, MenuHighlight, ModelessDialog, Reply,
+    TaskButtons, TaskDialog, TaskIcon, UiReceiver, UiSender, Window, WindowOptions, channel, id,
+    relaunch_elevated, task_dialog,
 };
 
+use crate::actions;
 use crate::args::Args;
 use crate::clock::Clock;
+use crate::dialogs;
 use crate::link::{Incoming, Link, Tagged};
-use crate::message as dialogs;
+use crate::message as messages;
 use crate::requests::{Purpose, Requests, read};
 use crate::settings::{self, Saved};
 use crate::view::{self, View, ids};
@@ -59,11 +63,48 @@ const KEY_DELETE: u16 = 0x2E;
 /// The Windows error for "the user said no".
 const ERROR_CANCELLED: i32 = 1223;
 
+/// The command the window sends itself when it has opened with a service
+/// command on its command line. Below the ids of the commands, above
+/// those of the controls.
+const ID_START_ACTION: u16 = 990;
+
+/// How long the window sleeps between looks while it waits for an answer
+/// with a dialog up.
+const WAIT_STEP: Duration = Duration::from_millis(5);
+
+/// Told that a dialog is up: its name and its window.
+pub type DialogHook = Rc<dyn Fn(&str, Hwnd)>;
+
+/// Answers a task dialog: given what would be shown, the id of a button.
+pub type TaskHook = Rc<dyn Fn(&TaskDialog) -> u16>;
+
+/// Answers a file or folder dialog: given its title, the path chosen.
+pub type FileHook = Rc<dyn Fn(&str) -> Option<PathBuf>>;
+
+/// What a test puts in place of the things that would stop it: the
+/// system's dialogs, which wait for a person.
+#[derive(Clone, Default)]
+pub struct Hooks {
+    /// Told when a dialog of the manager is up, with the dialog's name
+    /// and its window. For the settings the window is the first page of
+    /// the property sheet, whose parent is the sheet. The test closes
+    /// the dialog when it has seen enough of it.
+    pub dialog: Option<DialogHook>,
+    /// Stands in for a task dialog: given what would be shown, answers
+    /// with the id of the button that was pressed.
+    pub task: Option<TaskHook>,
+    /// Stands in for the file and folder dialogs: given the title,
+    /// answers with the path that was chosen.
+    pub file: Option<FileHook>,
+}
+
 /// How the manager is started.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Options {
     /// The name of the control pipe to connect to.
     pub pipe: String,
+    /// The service command to carry out once the window is open.
+    pub action: Option<Command>,
     /// The clock. The screenshot tests stop it.
     pub clock: Clock,
     /// Where under `HKEY_CURRENT_USER` what is remembered is kept, or
@@ -74,8 +115,8 @@ pub struct Options {
     pub size: Option<(i32, i32)>,
     /// The name of this computer, for the title.
     pub machine: String,
-    /// The arguments that start the manager the same way again.
-    pub arguments: Vec<String>,
+    /// What a test puts in place of the system's dialogs.
+    pub hooks: Hooks,
 }
 
 impl Options {
@@ -83,11 +124,12 @@ impl Options {
     pub fn from_args(args: &Args) -> Options {
         Options {
             pipe: args.pipe.clone(),
+            action: args.action,
             clock: Clock::system(),
             settings_key: Some(settings::KEY.to_string()),
             size: None,
             machine: std::env::var("COMPUTERNAME").unwrap_or_else(|_| "localhost".to_string()),
-            arguments: args.arguments(),
+            hooks: Hooks::default(),
         }
     }
 }
@@ -109,6 +151,8 @@ struct Update {
     /// A second went by: durations and the clock moved.
     tick: bool,
     prompts: Vec<Prompt>,
+    /// The answers something is waiting for, by its number.
+    waited: Vec<(u32, Result<Value, ErrorInfo>)>,
 }
 
 impl Default for Update {
@@ -119,6 +163,7 @@ impl Default for Update {
             stats: false,
             tick: false,
             prompts: Vec::new(),
+            waited: Vec::new(),
         }
     }
 }
@@ -132,6 +177,10 @@ impl Update {
             _ => RowChange::Reset,
         };
     }
+}
+
+fn lost(reason: &str) -> ErrorInfo {
+    ErrorInfo::from(message("RMD2009", &[reason]))
 }
 
 /// The model, the connection and the requests that are waiting.
@@ -170,14 +219,24 @@ impl State {
         }
     }
 
+    /// Forgets the requests that are waiting: their connection is gone.
+    /// What waits for one of them is told so.
+    fn drop_requests(&mut self, update: &mut Update, reason: &ErrorInfo) {
+        for purpose in self.requests.abandon() {
+            if let Purpose::Waited(token) = purpose {
+                update.waited.push((token, Err(reason.clone())));
+            }
+        }
+    }
+
     /// Starts connecting to the pipe, in place of any connection there
     /// is.
-    fn connect(&mut self) {
+    fn connect(&mut self, update: &mut Update) {
         let Some(sender) = self.sender.clone() else {
             return;
         };
         self.epoch += 1;
-        self.requests.clear();
+        self.drop_requests(update, &lost("the manager is connecting again"));
         self.denied_shown = false;
         self.notice = None;
         self.model.disconnected(None);
@@ -187,10 +246,10 @@ impl State {
     }
 
     /// Closes the connection and stops trying to connect.
-    fn disconnect(&mut self) {
+    fn disconnect(&mut self, update: &mut Update) {
         self.link = None;
         self.epoch += 1;
-        self.requests.clear();
+        self.drop_requests(update, &lost("the manager disconnected"));
         self.notice = None;
         self.model.disconnected(None);
     }
@@ -241,11 +300,11 @@ impl State {
                 }
             }
             Incoming::Connected => {
-                self.requests.clear();
+                self.drop_requests(update, &lost("the connection was made again"));
                 self.request(Call::ServiceInfo, Purpose::Service);
             }
             Incoming::Failed { error, denied } => {
-                self.requests.clear();
+                self.drop_requests(update, &error);
                 if denied && !self.denied_shown {
                     self.denied_shown = true;
                     update.prompts.push(Prompt::Denied(error.clone()));
@@ -253,7 +312,7 @@ impl State {
                 self.model.disconnected(Some(error));
             }
             Incoming::Lost(error) => {
-                self.requests.clear();
+                self.drop_requests(update, &error);
                 // A reason that is already there says more than that the
                 // connection then closed.
                 if !matches!(
@@ -292,6 +351,11 @@ impl State {
 
     /// Takes in the answer to a request, or its failure.
     fn answer(&mut self, purpose: Purpose, result: Result<Value, ErrorInfo>, update: &mut Update) {
+        if let Purpose::Waited(token) = purpose {
+            // What waits for it reads it.
+            update.waited.push((token, result));
+            return;
+        }
         let outcome = result.and_then(|value| self.accept(purpose, value, update));
         match outcome {
             Ok(()) => {
@@ -344,7 +408,7 @@ impl State {
                 }
                 update.stats = true;
             }
-            Purpose::Subscribe => {}
+            Purpose::Subscribe | Purpose::Waited(_) => {}
             Purpose::Lines => {
                 let list: LineList = read(value)?;
                 update.rows(self.model.lines_listed(list.lines));
@@ -367,6 +431,7 @@ impl State {
                 let line: LineInfo = read(value)?;
                 update.rows(self.model.line_updated(line));
             }
+            Purpose::Remove(id) => update.rows(self.model.line_removed(id)),
             Purpose::Reload => {
                 // The lines may be others now, and the service says when
                 // it loaded its configuration.
@@ -401,14 +466,24 @@ impl State {
 
 /// The main window.
 pub struct Manager {
+    app: App,
+    /// This manager, for the dialogs it opens to keep.
+    me: Weak<Manager>,
     options: Options,
     state: RefCell<State>,
     view: RefCell<Option<View>>,
+    window: Cell<Option<Hwnd>>,
     receiver: RefCell<Option<UiReceiver<Tagged>>>,
     /// What is waiting to be shown in a dialog.
     prompts: RefCell<VecDeque<Prompt>>,
     /// A dialog of the prompts is up.
     prompting: Cell<bool>,
+    /// The answers that have come for what is waiting for them.
+    waited: RefCell<HashMap<u32, Result<Value, ErrorInfo>>>,
+    /// The number of the last thing that waited.
+    tokens: Cell<u32>,
+    /// The AT console, while it is open.
+    console: RefCell<Option<ModelessDialog>>,
 }
 
 /// The main window, once it is open.
@@ -423,18 +498,25 @@ pub struct Opened {
 
 /// Opens the main window and starts connecting. The window is made at
 /// the size and place it had last time, and shown.
-pub fn open(options: Options) -> Option<Opened> {
+pub fn open(app: App, options: Options) -> Option<Opened> {
     let saved = settings::load(options.settings_key.as_deref());
     let dpi = metrics::system_dpi();
     let (width, height) = options.size.unwrap_or(view::DEFAULT_SIZE);
     let fixed_size = options.size.is_some();
-    let manager = Rc::new(Manager {
+    let start_action = options.action.is_some();
+    let manager = Rc::new_cyclic(|me| Manager {
+        app,
+        me: me.clone(),
         state: RefCell::new(State::new(&options)),
         options,
         view: RefCell::new(None),
+        window: Cell::new(None),
         receiver: RefCell::new(None),
         prompts: RefCell::new(VecDeque::new()),
         prompting: Cell::new(false),
+        waited: RefCell::new(HashMap::new()),
+        tokens: Cell::new(0),
+        console: RefCell::new(None),
     });
     let window = Window::create(
         WindowOptions {
@@ -451,6 +533,10 @@ pub fn open(options: Options) -> Option<Opened> {
     if fixed_size || !window.set_placement(&saved.placement) {
         window.set_visible(true);
     }
+    if start_action {
+        // Once the window is up and the loop is running.
+        window.command(ID_START_ACTION);
+    }
     let accelerators = Accelerators::new(&[
         (Key::Ctrl('R'), Command::ReloadConfig.id()),
         (Key::Ctrl('N'), Command::NewLine.id()),
@@ -463,8 +549,106 @@ pub fn open(options: Options) -> Option<Opened> {
     })
 }
 
+/// What carries a command out.
+type Action = fn(&Rc<Manager>, Hwnd, Command);
+
+/// What carries a command out, or `None` for a command a later phase
+/// brings. Every command is listed: one that is added and not given its
+/// place here does not build.
+fn action(command: Command) -> Option<Action> {
+    let action: Action = match command {
+        Command::Connect => |manager, window, _| manager.connect_dialog(window),
+        Command::Disconnect => |manager, window, _| {
+            manager.change(window, |state, update| state.disconnect(update));
+        },
+        Command::ReloadConfig => |manager, window, _| {
+            manager.change(window, |state, _| {
+                state.request(Call::ConfigReload, Purpose::Reload);
+            });
+        },
+        Command::ExportStatistics => |manager, window, _| {
+            actions::export_statistics(manager, window);
+        },
+        Command::ExportLog => |manager, window, _| actions::export_log(manager, window),
+        Command::ServiceStart
+        | Command::ServiceStop
+        | Command::ServiceRestart
+        | Command::ServiceInstall
+        | Command::ServiceUninstall => |manager, window, command| {
+            actions::service_command(manager, window, command, false);
+        },
+        Command::Exit => |_, window, _| window.close(),
+
+        Command::Answer | Command::HangUp | Command::Reset | Command::Enable | Command::Disable => {
+            |manager, window, command| {
+                manager.change(window, |state, _| state.line_command(command));
+            }
+        }
+        Command::NewLine => |manager, window, _| dialogs::line::new_line(manager, window),
+        Command::EditLine => |manager, window, _| {
+            if let Some(line) = manager.selected_line() {
+                dialogs::line::edit_line(manager, window, line);
+            }
+        },
+        Command::RemoveLine => |manager, window, _| manager.remove_line(window),
+
+        Command::AtConsole => |manager, window, _| manager.open_console(window),
+
+        Command::ShowAll | Command::ShowOnCall | Command::ShowIdle | Command::ShowNotReady => {
+            |manager, window, command| {
+                if let Some(filter) = filter_of(command) {
+                    manager.change(window, |state, update| {
+                        update.rows(state.model.lines.set_filter(filter));
+                    });
+                }
+            }
+        }
+        Command::CallHistory => |manager, window, _| dialogs::history::show(manager, window),
+        Command::ViewToolbar => |manager, window, _| {
+            manager.toggle(window, |view| view.set_toolbar_shown(!view.toolbar_shown()));
+        },
+        Command::ViewStatusBar => |manager, window, _| {
+            manager.toggle(window, |view| view.set_status_shown(!view.status_shown()));
+        },
+        Command::Refresh => |manager, window, _| {
+            manager.change(window, |state, _| state.refresh());
+        },
+
+        Command::Settings => |manager, window, _| {
+            if let Some(settings) = dialogs::sheet::show(manager, window) {
+                actions::offer_restart(manager, window, &settings);
+            }
+        },
+        Command::PortsAndDrivers => |manager, window, _| dialogs::ports::show(manager, window),
+        Command::About => |manager, window, _| dialogs::about::show(manager, window),
+
+        // What later phases bring. The model never lets these be chosen,
+        // and says why in the status bar.
+        // BLOCKED(phase2): everything under the SIP menu, and call
+        // capture, come with telephony.
+        Command::Reregister
+        | Command::TrunkPeers
+        | Command::HuntGroups
+        | Command::Routes
+        | Command::SipTrace
+        | Command::CallCapture => return None,
+        // BLOCKED(phase3): the rate cap, line diagnostics and the
+        // loopback self-test come with the first modulation.
+        Command::RateCap | Command::LineDiagnostics | Command::LoopbackTest => return None,
+    };
+    Some(action)
+}
+
+/// Whether the manager has something that carries a command out. A
+/// command without is one a later phase brings: the model never lets it
+/// be chosen.
+pub fn has_handler(command: Command) -> bool {
+    action(command).is_some()
+}
+
 impl Manager {
-    /// Reads the model. For tests, which look at what the window knows.
+    /// Reads the model. For the dialogs, and for tests, which look at
+    /// what the window knows.
     pub fn with_model<R>(&self, read: impl FnOnce(&Model) -> R) -> R {
         read(&self.state.borrow().model)
     }
@@ -474,7 +658,183 @@ impl Manager {
         self.state.borrow().requests.len()
     }
 
+    /// The name of the pipe the manager connects to.
+    pub fn pipe(&self) -> String {
+        self.state.borrow().pipe.clone()
+    }
+
+    /// The window of the AT console, while it is open.
+    pub fn console_window(&self) -> Option<Hwnd> {
+        self.console
+            .borrow()
+            .as_ref()
+            .map(ModelessDialog::hwnd)
+            .filter(|window| window.exists())
+    }
+
+    pub(crate) fn hooks(&self) -> &Hooks {
+        &self.options.hooks
+    }
+
+    pub(crate) fn clock(&self) -> Clock {
+        self.options.clock
+    }
+
+    // ----------------------------------------------------------------------
+    // What the dialogs use
+    // ----------------------------------------------------------------------
+
+    /// Shows a task dialog and returns the id of the button pressed.
+    pub(crate) fn task(&self, owner: Option<Hwnd>, dialog: &TaskDialog) -> u16 {
+        match &self.options.hooks.task {
+            Some(hook) => hook(dialog),
+            None => task_dialog(owner, dialog),
+        }
+    }
+
+    /// Shows an `RMD` message over a window and waits until the user has
+    /// closed it.
+    pub(crate) fn show_error(&self, owner: Hwnd, error: &ErrorInfo) {
+        self.task(Some(owner), &messages::dialog(error));
+    }
+
+    /// Asks where to save a file.
+    pub(crate) fn save_path(
+        &self,
+        owner: Hwnd,
+        title: &str,
+        file_name: &str,
+        extension: &str,
+        filters: &[FileFilter],
+    ) -> Option<PathBuf> {
+        match &self.options.hooks.file {
+            Some(hook) => hook(title),
+            None => win32::save_file(Some(owner), title, file_name, extension, filters),
+        }
+    }
+
+    /// Asks for a folder.
+    pub(crate) fn pick_folder(&self, owner: Hwnd, title: &str) -> Option<PathBuf> {
+        match &self.options.hooks.file {
+            Some(hook) => hook(title),
+            None => win32::pick_folder(Some(owner), title),
+        }
+    }
+
+    /// Runs the window's events until `done` has something to give, with
+    /// `owner` taking no input in the meantime. Returns `None` if the
+    /// program was told to end first.
+    fn wait<T>(&self, owner: Hwnd, mut done: impl FnMut() -> Option<T>) -> Option<T> {
+        let focus = win32::focused();
+        let was_enabled = owner.enabled();
+        owner.set_enabled(false);
+        let result = loop {
+            if let Some(result) = done() {
+                break Some(result);
+            }
+            let running = match self.window.get() {
+                Some(main) => self.app.pump(main, None),
+                None => false,
+            };
+            if !running {
+                // The loop that is waiting for the program to end is the
+                // one outside this one: tell it again.
+                App::quit(0);
+                break None;
+            }
+            std::thread::sleep(WAIT_STEP);
+        };
+        if was_enabled {
+            owner.set_enabled(true);
+            // A window that took no input has lost the focus.
+            if let Some(focus) = focus.filter(|focus| focus.exists()) {
+                focus.focus();
+            }
+        }
+        result
+    }
+
+    /// Asks the service something and waits for the answer, with `owner`
+    /// taking no input in the meantime. The window goes on taking what
+    /// the service says. A request with no answer fails as any other
+    /// does, after ten seconds.
+    pub(crate) fn call<T: serde::de::DeserializeOwned>(
+        &self,
+        owner: Hwnd,
+        call: Call,
+    ) -> Result<T, ErrorInfo> {
+        let token = self.tokens.get() + 1;
+        self.tokens.set(token);
+        {
+            let Ok(mut state) = self.state.try_borrow_mut() else {
+                return Err(lost("the manager is busy"));
+            };
+            if !state.model.connected() {
+                return Err(lost("the manager is not connected"));
+            }
+            state.request(call, Purpose::Waited(token));
+        }
+        let answer = self.wait(owner, || self.waited.borrow_mut().remove(&token));
+        answer
+            .unwrap_or_else(|| Err(lost("the manager is closing")))
+            .and_then(read)
+    }
+
+    /// Does something that takes a while on a thread of its own and
+    /// waits for it, with `owner` taking no input in the meantime.
+    /// Returns `None` if it did not finish.
+    pub(crate) fn wait_for<T: Send + 'static>(
+        &self,
+        owner: Hwnd,
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> Option<T> {
+        let mut thread = Some(std::thread::spawn(work));
+        self.wait(owner, || {
+            if thread.as_ref().is_some_and(|thread| thread.is_finished()) {
+                // A thread that panicked gives nothing.
+                thread.take().map(|thread| thread.join().ok())
+            } else {
+                None
+            }
+        })
+        .flatten()
+    }
+
+    /// The service answered a dialog with a line as it is now.
+    pub(crate) fn line_changed(&self, line: LineInfo) {
+        if let Some(window) = self.window.get() {
+            self.change(window, |state, update| {
+                update.rows(state.model.line_updated(line));
+            });
+        }
+    }
+
+    /// Starts the manager again with administrator rights, to carry out
+    /// `action` if there is one, and closes this one once the other has
+    /// started.
+    pub(crate) fn restart_elevated(&self, window: Hwnd, action: Option<Command>) {
+        let arguments = Args {
+            pipe: self.pipe(),
+            action,
+        }
+        .arguments();
+        match relaunch_elevated(Some(window), &arguments) {
+            Ok(()) => window.close(),
+            // The user was asked and said no.
+            Err(e) if e.raw_os_error() == Some(ERROR_CANCELLED) => {}
+            Err(e) => {
+                let error = ErrorInfo::from(message("RMD4004", &[&e.to_string()]));
+                self.show_error(window, &error);
+            }
+        }
+    }
+
+    // ----------------------------------------------------------------------
+    // The window
+    // ----------------------------------------------------------------------
+
     fn create(&self, window: Hwnd) {
+        self.window.set(Some(window));
         let saved = settings::load(self.options.settings_key.as_deref());
         let view = View::create(window, &saved);
         {
@@ -484,7 +844,7 @@ impl Manager {
             let (sender, receiver) = channel::<Tagged>(window);
             *self.receiver.borrow_mut() = Some(receiver);
             state.sender = Some(sender);
-            state.connect();
+            state.connect(&mut Update::default());
         }
         if !win32::is_elevated()
             && let Some(menu) = win32::Menu::of_window(window)
@@ -551,6 +911,9 @@ impl Manager {
     /// Brings the controls up to date, and then shows what there is to
     /// show in a dialog.
     fn apply(&self, window: Hwnd, update: Update) {
+        if !update.waited.is_empty() {
+            self.waited.borrow_mut().extend(update.waited);
+        }
         if let (Ok(state), Ok(view)) = (self.state.try_borrow(), self.view.try_borrow())
             && let Some(view) = view.as_ref()
         {
@@ -594,29 +957,16 @@ impl Manager {
             let next = self.prompts.borrow_mut().pop_front();
             match next {
                 None => break,
-                Some(Prompt::Error(error)) => dialogs::show(Some(window), &error),
+                Some(Prompt::Error(error)) => self.show_error(window, &error),
                 Some(Prompt::Denied(error)) => {
-                    if dialogs::show_denied(Some(window), &error) {
-                        self.restart_elevated(window);
+                    let dialog = messages::denied_dialog(&error);
+                    if self.task(Some(window), &dialog) == messages::ID_ELEVATE {
+                        self.restart_elevated(window, None);
                     }
                 }
             }
         }
         self.prompting.set(false);
-    }
-
-    /// Starts the manager again with administrator rights, and closes
-    /// this one once the other has started.
-    fn restart_elevated(&self, window: Hwnd) {
-        match relaunch_elevated(Some(window), &self.options.arguments) {
-            Ok(()) => window.close(),
-            // The user was asked and said no.
-            Err(e) if e.raw_os_error() == Some(ERROR_CANCELLED) => {}
-            Err(e) => {
-                let error = ErrorInfo::from(message("RMD4004", &[&e.to_string()]));
-                self.prompts.borrow_mut().push_back(Prompt::Error(error));
-            }
-        }
     }
 
     /// Takes in everything the link has said.
@@ -647,64 +997,76 @@ impl Manager {
         if !available {
             return;
         }
-        match command {
-            Command::Exit => window.close(),
-            Command::Disconnect => self.change(window, |state, _| state.disconnect()),
-            Command::ReloadConfig => self.change(window, |state, _| {
-                state.request(Call::ConfigReload, Purpose::Reload);
-            }),
-            Command::Answer
-            | Command::HangUp
-            | Command::Reset
-            | Command::Enable
-            | Command::Disable => self.change(window, |state, _| state.line_command(command)),
-            Command::ShowAll | Command::ShowOnCall | Command::ShowIdle | Command::ShowNotReady => {
-                if let Some(filter) = filter_of(command) {
-                    self.change(window, |state, update| {
-                        update.rows(state.model.lines.set_filter(filter));
-                    });
-                }
-            }
-            Command::ViewToolbar => self.toggle(window, |view| {
-                view.set_toolbar_shown(!view.toolbar_shown());
-            }),
-            Command::ViewStatusBar => self.toggle(window, |view| {
-                view.set_status_shown(!view.status_shown());
-            }),
-            Command::Refresh => self.change(window, |state, _| state.refresh()),
-
-            // The dialogs, which the next work package brings.
-            Command::Connect
-            | Command::ExportStatistics
-            | Command::ExportLog
-            | Command::ServiceStart
-            | Command::ServiceStop
-            | Command::ServiceRestart
-            | Command::ServiceInstall
-            | Command::ServiceUninstall
-            | Command::NewLine
-            | Command::EditLine
-            | Command::RemoveLine
-            | Command::AtConsole
-            | Command::CallHistory
-            | Command::Settings
-            | Command::PortsAndDrivers
-            | Command::About => {}
-
-            // What later phases bring. The model never lets these be
-            // chosen, and says why in the status bar.
-            // BLOCKED(phase2): everything under the SIP menu, and call
-            // capture.
-            Command::Reregister
-            | Command::TrunkPeers
-            | Command::HuntGroups
-            | Command::Routes
-            | Command::SipTrace
-            | Command::CallCapture => {}
-            // BLOCKED(phase3): the rate cap, line diagnostics and the
-            // loopback self-test.
-            Command::RateCap | Command::LineDiagnostics | Command::LoopbackTest => {}
+        if let (Some(action), Some(manager)) = (action(command), self.me.upgrade()) {
+            action(&manager, window, command);
         }
+    }
+
+    /// The selected line, as the model has it now.
+    fn selected_line(&self) -> Option<LineInfo> {
+        self.state
+            .try_borrow()
+            .ok()?
+            .model
+            .lines
+            .selected()
+            .cloned()
+    }
+
+    /// Connect to service: asks for the pipe and connects to it.
+    fn connect_dialog(self: &Rc<Self>, window: Hwnd) {
+        let pipe = self.pipe();
+        if let Some(pipe) = dialogs::connect::show(self, window, &pipe) {
+            self.change(window, |state, update| {
+                state.pipe = pipe;
+                state.connect(update);
+            });
+        }
+    }
+
+    /// Remove line: asks first, naming the line.
+    fn remove_line(&self, window: Hwnd) {
+        let Some(line) = self.selected_line() else {
+            return;
+        };
+        let id = line.id;
+        let named = match &line.name {
+            Some(name) => format!("line {id} ({name})"),
+            None => format!("line {id}"),
+        };
+        let dialog = TaskDialog {
+            title: "Remove line".to_string(),
+            instruction: format!("Remove {named}?"),
+            content: format!(
+                "The line on {} is taken out of the service and out of its configuration file, \
+                 and its stored profile is deleted.",
+                line.port
+            ),
+            expanded: String::new(),
+            icon: TaskIcon::Warning,
+            buttons: TaskButtons::YES_NO,
+            links: Vec::new(),
+            default: Some(id::NO),
+        };
+        if self.task(Some(window), &dialog) == id::YES {
+            self.change(window, |state, _| {
+                state.request(Call::LinesRemove(LineRef { id }), Purpose::Remove(id));
+            });
+        }
+    }
+
+    /// AT console: opens it, or brings the one that is open to the
+    /// front.
+    fn open_console(self: &Rc<Self>, window: Hwnd) {
+        if let Some(console) = self.console_window() {
+            console.bring_to_front();
+            return;
+        }
+        // The one that was closed goes before the new one is made.
+        let closed = self.console.borrow_mut().take();
+        drop(closed);
+        let console = dialogs::console::open(self, window);
+        *self.console.borrow_mut() = console;
     }
 
     /// Shows or hides a bar and places everything again.
@@ -768,6 +1130,8 @@ impl Handler for Manager {
             }
             Event::Destroy => {
                 window.kill_timer(TICK);
+                let console = self.console.borrow_mut().take();
+                drop(console);
                 if let Ok(mut state) = self.state.try_borrow_mut() {
                     state.link = None;
                 }
@@ -825,6 +1189,15 @@ impl Handler for Manager {
                     self.change(window, |state, update| {
                         update.rows(state.model.lines.set_filter(filter));
                     });
+                }
+                Reply::Handled
+            }
+            Event::Command {
+                id: ID_START_ACTION,
+                ..
+            } => {
+                if let (Some(command), Some(manager)) = (self.options.action, self.me.upgrade()) {
+                    actions::service_command(&manager, window, command, true);
                 }
                 Reply::Handled
             }

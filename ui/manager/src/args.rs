@@ -5,9 +5,15 @@
 //! The manager's command line.
 //!
 //! ```text
-//! rustmodem-gui [--pipe NAME] [--demo]
+//! rustmodem-gui [--pipe NAME] [--demo] [start|stop|restart|install|uninstall]
 //! ```
+//!
+//! The last argument names a service command. It is how the manager hands
+//! a command that needs administrator rights to the copy of itself it
+//! starts with them: that copy opens its window and carries the command
+//! out.
 
+use model::Command;
 use msg::{Message, message};
 
 /// The control pipe of the service, when none is named.
@@ -21,12 +27,15 @@ pub const DEMO_PIPE: &str = "rustmodem-demo";
 pub struct Args {
     /// The name of the control pipe to connect to.
     pub pipe: String,
+    /// The service command to carry out once the window is open.
+    pub action: Option<Command>,
 }
 
 impl Default for Args {
     fn default() -> Self {
         Args {
             pipe: DEFAULT_PIPE.to_string(),
+            action: None,
         }
     }
 }
@@ -44,7 +53,11 @@ impl Args {
                     _ => return Err(message("RMD0009", &["--pipe"])),
                 },
                 "--demo" => args.pipe = DEMO_PIPE.to_string(),
-                other => return Err(message("RMD0009", &[other])),
+                other => match Command::from_argument(other) {
+                    // One command, and nothing after it.
+                    Some(command) if args.action.is_none() => args.action = Some(command),
+                    _ => return Err(message("RMD0009", &[other])),
+                },
             }
         }
         Ok(args)
@@ -53,11 +66,14 @@ impl Args {
     /// The arguments that say the same again: what the manager gives the
     /// copy of itself it starts with administrator rights.
     pub fn arguments(&self) -> Vec<String> {
-        if self.pipe == DEFAULT_PIPE {
-            Vec::new()
-        } else {
-            vec!["--pipe".to_string(), self.pipe.clone()]
+        let mut arguments = Vec::new();
+        if self.pipe != DEFAULT_PIPE {
+            arguments.extend(["--pipe".to_string(), self.pipe.clone()]);
         }
+        if let Some(argument) = self.action.and_then(Command::argument) {
+            arguments.push(argument.to_string());
+        }
+        arguments
     }
 }
 
@@ -87,13 +103,31 @@ mod tests {
     }
 
     #[test]
+    fn a_service_command_can_be_named() {
+        assert_eq!(parse(&[]).unwrap().action, None);
+        for (word, command) in [
+            ("start", Command::ServiceStart),
+            ("stop", Command::ServiceStop),
+            ("restart", Command::ServiceRestart),
+            ("install", Command::ServiceInstall),
+            ("uninstall", Command::ServiceUninstall),
+        ] {
+            let args = parse(&["--pipe", "mine", word]).unwrap();
+            assert_eq!(args.action, Some(command), "{word}");
+            assert_eq!(args.pipe, "mine");
+            assert_eq!(args.arguments(), ["--pipe", "mine", word]);
+        }
+    }
+
+    #[test]
     fn what_is_not_understood_is_refused_by_name() {
         for (words, named) in [
             (&["--pipe"][..], "--pipe"),
             (&["--pipe", ""][..], "--pipe"),
             (&["--pipe", "--demo"][..], "--pipe"),
             (&["--verbose"][..], "--verbose"),
-            (&["start"][..], "start"),
+            (&["reload"][..], "reload"),
+            (&["start", "stop"][..], "stop"),
         ] {
             let problem = parse(words).unwrap_err();
             assert_eq!(problem.id, "RMD0009", "{words:?}");
@@ -103,7 +137,13 @@ mod tests {
 
     #[test]
     fn the_arguments_given_back_parse_to_the_same() {
-        for words in [&[][..], &["--demo"][..], &["--pipe", "mine"][..]] {
+        for words in [
+            &[][..],
+            &["--demo"][..],
+            &["--pipe", "mine"][..],
+            &["restart"][..],
+            &["--demo", "install"][..],
+        ] {
             let args = parse(words).unwrap();
             assert_eq!(Args::parse(args.arguments()).unwrap(), args);
         }

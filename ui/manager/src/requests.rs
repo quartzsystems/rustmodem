@@ -38,13 +38,22 @@ pub enum Purpose {
     Line(Command),
     /// `config.reload`.
     Reload,
+    /// `lines.remove`, of the line with this id.
+    Remove(u16),
+    /// A request something is waiting for the answer to, with the number
+    /// it knows the request by: a dialog, which goes on only once it has
+    /// the answer.
+    Waited(u32),
 }
 
 impl Purpose {
     /// Whether the user asked for this, and so is told when it fails.
     /// What the manager asks for by itself fails into the status bar.
     pub fn asked_for(self) -> bool {
-        matches!(self, Purpose::Line(_) | Purpose::Reload)
+        matches!(
+            self,
+            Purpose::Line(_) | Purpose::Reload | Purpose::Remove(_)
+        )
     }
 }
 
@@ -120,8 +129,12 @@ impl Requests {
     }
 
     /// Forgets every request: the connection they were sent on is gone.
-    pub fn clear(&mut self) {
-        self.pending.clear();
+    /// Returns what the requests were for, oldest first.
+    pub fn abandon(&mut self) -> Vec<Purpose> {
+        self.pending
+            .drain(..)
+            .map(|request| request.purpose)
+            .collect()
     }
 }
 
@@ -217,8 +230,9 @@ mod tests {
         let now = Instant::now();
         let mut requests = Requests::new();
         let sent = request_of(&requests.begin(&Call::LinesList, Purpose::Lines, now));
-        requests.clear();
+        assert_eq!(requests.abandon(), vec![Purpose::Lines]);
         assert!(requests.is_empty());
+        assert!(requests.abandon().is_empty());
         assert_eq!(requests.answered(sent.id), None);
         // The ids go on: an answer to an old request is never taken for
         // the answer to a new one.
@@ -230,6 +244,7 @@ mod tests {
     fn only_what_the_user_asked_for_is_reported_to_them() {
         assert!(Purpose::Line(Command::HangUp).asked_for());
         assert!(Purpose::Reload.asked_for());
+        assert!(Purpose::Remove(3).asked_for());
         for purpose in [
             Purpose::Service,
             Purpose::Subscribe,
@@ -237,6 +252,8 @@ mod tests {
             Purpose::Stats,
             Purpose::LogTail,
             Purpose::Calls,
+            // What waits for this is told by its answer.
+            Purpose::Waited(1),
         ] {
             assert!(!purpose.asked_for(), "{purpose:?}");
         }

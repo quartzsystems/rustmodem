@@ -37,7 +37,9 @@ use windows::Win32::UI::Controls::{
     TBN_GETINFOTIPW, TCN_SELCHANGE,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled, SetFocus};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    EnableWindow, GetFocus, IsWindowEnabled, SetFocus,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_DBLCLKS, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
     EnumChildWindows, GWLP_USERDATA, GetClassNameW, GetClientRect, GetDlgItem, GetParent,
@@ -650,6 +652,19 @@ impl Hwnd {
         unsafe { SetWindowPlacement(self.0, &placement) }.is_ok()
     }
 
+    /// Puts the program's icon, at the size of a large icon, in an icon
+    /// control: one made with [`crate::DialogTemplate::icon`]. A program
+    /// with no icon in its resources shows none.
+    pub fn show_program_icon(self) {
+        /// STM_SETICON: gives a static control of the icon style its icon.
+        const STM_SETICON: u32 = 0x0170;
+        if let Some(icon) = program_icon(false) {
+            // The icon is shared with the window class and is not the
+            // control's to destroy.
+            self.send(STM_SETICON, icon.0 as usize, 0);
+        }
+    }
+
     /// The name of the window's class.
     pub fn class_name(self) -> String {
         let mut buffer = [0u16; 128];
@@ -657,6 +672,13 @@ impl Hwnd {
         let length = unsafe { GetClassNameW(self.0, &mut buffer) }.max(0) as usize;
         from_wide(&buffer[..length.min(buffer.len())])
     }
+}
+
+/// The window or control of this thread that has the keyboard focus.
+pub fn focused() -> Option<Hwnd> {
+    // SAFETY: the call takes nothing and returns a handle or null.
+    let window = unsafe { GetFocus() };
+    (!window.is_invalid()).then_some(Hwnd(window))
 }
 
 /// How a top-level window is made.

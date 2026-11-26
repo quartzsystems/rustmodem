@@ -20,7 +20,7 @@ pub const CALL_COLUMNS: [(&str, i32, bool); 8] = [
     ("Direction", 70, false),
     ("Number", 90, false),
     ("Duration", 60, true),
-    ("Reason", 110, false),
+    ("Reason", 130, false),
     ("Rate", 100, false),
     ("Bytes TX/RX", 110, true),
 ];

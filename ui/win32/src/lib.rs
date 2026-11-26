@@ -101,5 +101,6 @@ pub use statusbar::StatusBar;
 pub use taskdialog::{TaskButtons, TaskDialog, TaskIcon, task_dialog};
 pub use toolbar::{ToolButton, Toolbar};
 pub use window::{
-    Colour, Event, Handler, Hwnd, MenuHighlight, Rect, Reply, Window, WindowOptions, code, id,
+    Colour, Event, Handler, Hwnd, MenuHighlight, Rect, Reply, Window, WindowOptions, code, focused,
+    id,
 };

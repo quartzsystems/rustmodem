@@ -16,6 +16,8 @@
 //! - `link` is the threads that own the pipe.
 //! - `view` is the controls of the main window, and `window` is what
 //!   happens in it.
+//! - `dialogs` is the dialogs, and `actions` is what the manager does
+//!   outside the control API: exports, and the Windows service.
 //!
 //! Everything from Win32 comes through the safe wrappers of the `win32`
 //! crate; there is no `unsafe` here.
@@ -26,7 +28,11 @@ pub mod args;
 pub mod requests;
 
 #[cfg(windows)]
+mod actions;
+#[cfg(windows)]
 mod clock;
+#[cfg(windows)]
+mod dialogs;
 #[cfg(windows)]
 mod link;
 #[cfg(windows)]
@@ -41,9 +47,15 @@ mod window;
 #[cfg(windows)]
 pub use clock::Clock;
 #[cfg(windows)]
+pub use dialogs::line::ids as line_ids;
+#[cfg(windows)]
+pub use dialogs::sheet::ids as settings_ids;
+#[cfg(windows)]
 pub use view::ids;
 #[cfg(windows)]
-pub use window::{Manager, Opened, Options, open};
+pub use window::{
+    DialogHook, FileHook, Hooks, Manager, Opened, Options, TaskHook, has_handler, open,
+};
 
 /// Runs the manager: reads the command line, opens the window, and stays
 /// until the window is closed. Returns the exit code of the program.
@@ -57,7 +69,7 @@ pub fn main() -> i32 {
             return 2;
         }
     };
-    let Some(opened) = open(Options::from_args(&args)) else {
+    let Some(opened) = open(app, Options::from_args(&args)) else {
         return 1;
     };
     app.run(opened.window, Some(&opened.accelerators))
