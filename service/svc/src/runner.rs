@@ -267,6 +267,10 @@ fn start_inner(
             })
         },
         cpu: cpu::meter(),
+        capture_dir: config
+            .sip
+            .enabled
+            .then(|| telephony::capture_dir(&config, &log_dir)),
     });
     let binding_server = server.clone();
 

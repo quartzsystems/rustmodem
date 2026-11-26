@@ -66,7 +66,7 @@ const AMBER: Colour = Colour::rgb(176, 96, 0);
 /// The widths of the status bar's parts after the message, at 96 DPI:
 /// the connection, SIP, how many lines answer, RTP, the processor, and
 /// the clock with the room the size grip takes.
-const STATUS_PARTS: [i32; 6] = [150, 64, 124, 64, 64, 66];
+const STATUS_PARTS: [i32; 6] = [150, 136, 124, 104, 84, 66];
 
 /// The widths of the two statistics panels, at 96 DPI.
 const CALLS_PANEL: i32 = 264;
@@ -119,6 +119,13 @@ pub struct View {
     available: RefCell<Vec<Option<bool>>>,
     /// The texts of the status bar's parts as last set.
     status_texts: RefCell<Vec<String>>,
+    /// The hunt groups the filter lists, after its own entries.
+    groups_shown: RefCell<Vec<String>>,
+}
+
+/// What the filter calls the entry of a hunt group.
+fn group_entry(group: &str) -> String {
+    format!("Hunt group: {group}")
 }
 
 fn images(glyphs: &[Glyph], dpi: u32) -> ImageList {
@@ -306,6 +313,7 @@ impl View {
             rates_shown: Cell::new(None),
             available: RefCell::new(vec![None; Command::ALL.len()]),
             status_texts: RefCell::new(Vec::new()),
+            groups_shown: RefCell::new(Vec::new()),
         };
         view.apply_fonts(window);
         view.set_toolbar_shown(saved.toolbar);
@@ -353,9 +361,22 @@ impl View {
         self.status
     }
 
-    /// The filter the combo box of the toolbar shows.
-    pub fn chosen_filter(&self) -> Option<Filter> {
-        self.filter.selected().and_then(Filter::at)
+    /// What the combo box of the toolbar shows: a filter, or after the
+    /// filters a hunt group, to which the grid is narrowed with every
+    /// line of it shown.
+    pub fn chosen_filter(&self) -> Option<(Filter, Option<String>)> {
+        let index = self.filter.selected()?;
+        match Filter::at(index) {
+            Some(filter) => Some((filter, None)),
+            None => {
+                let group = self
+                    .groups_shown
+                    .borrow()
+                    .get(index - Filter::ALL.len())
+                    .cloned()?;
+                Some((Filter::All, Some(group)))
+            }
+        }
     }
 
     /// Whether the toolbar is shown.
@@ -733,7 +754,26 @@ impl View {
             menu.set_checked(Command::ViewToolbar.id(), self.toolbar_shown.get());
             menu.set_checked(Command::ViewStatusBar.id(), self.status_shown.get());
         }
-        let filter = model.lines.filter().index();
+        // The filter lists the hunt groups there are after its own
+        // entries.
+        let groups = model.lines.groups();
+        if *self.groups_shown.borrow() != groups {
+            self.filter.clear();
+            for entry in Filter::ALL {
+                self.filter.add(entry.title());
+            }
+            for group in &groups {
+                self.filter.add(&group_entry(group));
+            }
+            *self.groups_shown.borrow_mut() = groups.clone();
+        }
+        let filter = match model.lines.group() {
+            Some(group) => groups
+                .iter()
+                .position(|name| name == group)
+                .map_or(0, |index| Filter::ALL.len() + index),
+            None => model.lines.filter().index(),
+        };
         if self.filter.selected() != Some(filter) {
             self.filter.select(Some(filter));
         }

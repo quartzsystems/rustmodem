@@ -514,6 +514,10 @@ pub struct ServiceInfo {
     pub config_loaded_ms: u64,
     /// How the service is being run.
     pub mode: ServiceMode,
+    /// The directory call captures are written to, when the service can
+    /// capture calls: one on the service's computer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_dir: Option<String>,
 }
 
 /// The result of `lines.list`.

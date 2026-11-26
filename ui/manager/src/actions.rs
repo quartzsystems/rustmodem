@@ -47,7 +47,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Writes `text` to the file the user chooses. A file that cannot be
 /// written is message `RMD4002`.
-fn export(
+pub(crate) fn export(
     manager: &Manager,
     owner: Hwnd,
     title: &str,

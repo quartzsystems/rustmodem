@@ -15,7 +15,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use ctlproto::{Direction, LineInfo, LineState};
+use ctlproto::{Direction, LineInfo, LineState, RegistrationState, SipMode};
 
 use crate::format::{EMPTY, duration, grouped};
 
@@ -311,6 +311,68 @@ pub enum StateColour {
     Red,
 }
 
+/// Whether a line's registration to its PBX has failed.
+pub fn registration_failed(line: &LineInfo) -> bool {
+    line.sip
+        .registration
+        .as_ref()
+        .is_some_and(|registration| registration.state == RegistrationState::Failed)
+}
+
+/// The image at the start of a line's row: that of its state, except that
+/// a line that waits for calls and whose registration has failed has the
+/// red one, because no call will come to it.
+pub fn row_image(line: &LineInfo) -> usize {
+    let look = StateLook::of(line);
+    if look == StateLook::Idle && registration_failed(line) {
+        StateLook::PortError.image()
+    } else {
+        look.image()
+    }
+}
+
+/// What the tip of a line's SIP cell says: how the line is reached, and
+/// for a line that registers, how its registration stands. `None` for a
+/// line of a service with no SIP.
+pub fn sip_tip(line: &LineInfo) -> Option<String> {
+    match line.sip.mode {
+        SipMode::None => None,
+        SipMode::Trunk => {
+            Some("Reached by the trunk: calls come from the trusted peers.".to_string())
+        }
+        SipMode::Registered => {
+            let who = format!(
+                "Extension {} of {}",
+                line.sip.extension.as_deref().unwrap_or(EMPTY),
+                line.sip.server.as_deref().unwrap_or(EMPTY)
+            );
+            Some(match &line.sip.registration {
+                None => format!("{who}: not registering."),
+                Some(registration) => match (&registration.error, registration.expires_in_s) {
+                    (Some(error), _) => format!("{who}: registration failed. {error}"),
+                    (None, Some(left)) => format!(
+                        "{who}: {}, {left} s left.",
+                        registration_text(registration.state)
+                    ),
+                    (None, None) => {
+                        format!("{who}: {}.", registration_text(registration.state))
+                    }
+                },
+            })
+        }
+    }
+}
+
+/// A registration state, for people.
+pub fn registration_text(state: RegistrationState) -> &'static str {
+    match state {
+        RegistrationState::Unregistered => "not registered",
+        RegistrationState::Registering => "registering",
+        RegistrationState::Registered => "registered",
+        RegistrationState::Failed => "registration failed",
+    }
+}
+
 /// What a change to the table did to the rows of the grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowChange {
@@ -335,6 +397,8 @@ pub enum RowChange {
 pub struct LineTable {
     lines: BTreeMap<u16, LineInfo>,
     filter: Filter,
+    /// The hunt group the grid is narrowed to, if it is.
+    group: Option<String>,
     sort: SortOrder,
     /// The ids of the lines the grid shows, in the order it shows them.
     rows: Vec<u16>,
@@ -354,9 +418,18 @@ fn cell_text(line: &LineInfo, column: Column, now_ms: u64) -> String {
     match column {
         Column::Number => line.id.to_string(),
         Column::Port => line.port.clone(),
-        // BLOCKED(phase2): the registration and the hunt group of a line
-        // come with SIP.
-        Column::Sip | Column::HuntGroup => empty(),
+        Column::Sip => match line.sip.mode {
+            SipMode::None => empty(),
+            SipMode::Trunk => "trunk".to_string(),
+            SipMode::Registered => line.sip.extension.clone().unwrap_or_else(empty),
+        },
+        Column::HuntGroup => {
+            if line.hunt_groups.is_empty() {
+                empty()
+            } else {
+                line.hunt_groups.join(", ")
+            }
+        }
         Column::State => StateLook::of(line).text().to_string(),
         Column::CallingParty => match &line.call {
             Some(call) if call.direction == Direction::Incoming => call.number.clone(),
@@ -388,9 +461,14 @@ fn cell_text(line: &LineInfo, column: Column, now_ms: u64) -> String {
         ),
         // BLOCKED(phase3): retrains are counted by a real modem engine.
         Column::Retrains => empty(),
-        // BLOCKED(phase4): errors are counted by the error-control
-        // protocol.
-        Column::Errors => empty(),
+        // What went wrong with the RTP of the call in progress: packets
+        // lost and late, and streams started again.
+        // BLOCKED(phase4): the errors the error-control protocol counts
+        // are added to these.
+        Column::Errors => match line.call.as_ref().and_then(|call| call.media.as_ref()) {
+            Some(media) => grouped(media.lost + media.late + media.resync),
+            None => empty(),
+        },
         Column::Binding => line.binding.clone().unwrap_or_else(empty),
     }
 }
@@ -525,6 +603,48 @@ impl LineTable {
         self.filter
     }
 
+    /// The hunt group the grid is narrowed to, if it is.
+    pub fn group(&self) -> Option<&str> {
+        self.group.as_deref()
+    }
+
+    /// The names of the hunt groups the lines are in, in order of name.
+    pub fn groups(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .lines
+            .values()
+            .flat_map(|line| line.hunt_groups.iter().cloned())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// Whether the grid shows a line: the filter lets it through, and it
+    /// is in the hunt group the grid is narrowed to.
+    fn admits(&self, line: &LineInfo) -> bool {
+        self.filter.admits(line)
+            && self
+                .group
+                .as_ref()
+                .is_none_or(|group| line.hunt_groups.contains(group))
+    }
+
+    /// Narrows the grid to the lines of a hunt group, or widens it again.
+    pub fn set_group(&mut self, group: Option<String>) -> RowChange {
+        if self.group == group {
+            return RowChange::None;
+        }
+        let before = self.rows.clone();
+        self.group = group;
+        self.rebuild();
+        if self.rows == before {
+            RowChange::None
+        } else {
+            RowChange::Reset
+        }
+    }
+
     /// How the grid is sorted.
     pub fn sort(&self) -> SortOrder {
         self.sort
@@ -602,7 +722,7 @@ impl LineTable {
         let mut shown: Vec<&LineInfo> = self
             .lines
             .values()
-            .filter(|line| self.filter.admits(line))
+            .filter(|line| self.admits(line))
             .collect();
         shown.sort_by(|a, b| compare(a, b, self.sort));
         self.rows = shown.into_iter().map(|line| line.id).collect();
@@ -622,6 +742,15 @@ impl LineTable {
             .is_some_and(|id| !self.lines.contains_key(&id))
         {
             self.selected = None;
+        }
+        // A hunt group that is gone narrows the grid to nothing: the grid
+        // is widened again.
+        if self
+            .group
+            .as_ref()
+            .is_some_and(|group| !self.groups().contains(group))
+        {
+            self.group = None;
         }
         self.rebuild();
         if unchanged && self.rows == before {
@@ -643,7 +772,7 @@ impl LineTable {
         if let Some(row) = old_row {
             self.rows.remove(row);
         }
-        let new_row = self.filter.admits(&line).then(|| self.position(&line));
+        let new_row = self.admits(&line).then(|| self.position(&line));
         if let Some(row) = new_row {
             self.rows.insert(row, id);
         }

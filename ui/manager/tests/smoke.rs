@@ -39,7 +39,7 @@ const CONNECT: Duration = Duration::from_secs(30);
 
 /// The dialogs, by the commands that open them and the names they are
 /// known to the test by.
-const DIALOGS: [(Command, &str); 7] = [
+const DIALOGS: [(Command, &str); 11] = [
     (Command::Connect, "connect"),
     (Command::NewLine, "new-line"),
     (Command::EditLine, "edit-line"),
@@ -47,6 +47,10 @@ const DIALOGS: [(Command, &str); 7] = [
     (Command::Settings, "settings"),
     (Command::PortsAndDrivers, "ports"),
     (Command::About, "about"),
+    (Command::TrunkPeers, "trunk-peers"),
+    (Command::HuntGroups, "hunt-groups"),
+    (Command::Routes, "routes"),
+    (Command::CallCapture, "capture"),
 ];
 
 /// What of a line stays put between one moment and the next while calls
@@ -90,6 +94,22 @@ fn round(bench: &Bench, list: ListView, opened: &RefCell<Vec<String>>) {
     console.end_dialog(id::CANCEL);
     bench.pump();
     assert!(!console.exists());
+
+    // So does the SIP trace.
+    bench.choose(Command::SipTrace);
+    let trace = bench
+        .opened
+        .manager
+        .trace_window()
+        .expect("the trace is open");
+    bench.run_for(Duration::from_millis(350));
+    assert_eq!(
+        opened.borrow().last().map(String::as_str),
+        Some("sip-trace")
+    );
+    trace.end_dialog(id::CANCEL);
+    bench.pump();
+    assert!(!trace.exists());
 
     // Remove line asks first; the answer is no.
     bench.choose(Command::RemoveLine);

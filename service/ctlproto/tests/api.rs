@@ -303,6 +303,8 @@ fn sample(name: &str, full: bool) -> Value {
             uptime_ms: 60_000,
             config_loaded_ms: 1_800_000_000_000,
             mode: ServiceMode::Service,
+            capture_dir: full
+                .then(|| r"C:\ProgramData\Quartz Systems\rustmodem\logs\captures".to_string()),
         }),
         "Settings" => to_value(&settings()),
         "ServiceSettings" => to_value(&settings().service),

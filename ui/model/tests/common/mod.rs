@@ -97,6 +97,7 @@ pub fn service(mode: ServiceMode, lines: u32, uptime_s: u64) -> ServiceInfo {
         uptime_ms: uptime_s * 1000,
         config_loaded_ms: START_MS,
         mode,
+        capture_dir: None,
     }
 }
 

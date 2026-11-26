@@ -30,6 +30,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use config::{Config, HuntGroup, Route, Strategy, Target};
 use pool::{Now, Pool, TICK_MS, UNOBTAINABLE_DELAY_MS};
 use serial::MemoryHost;
 
@@ -46,6 +47,41 @@ pub const DISABLED_LINE: u16 = 7;
 
 /// The line whose port will not open.
 pub const BROKEN_LINE: u16 = 8;
+
+/// Gives the frozen configuration its hunt groups and routes, so that
+/// the window has some to show: the first four lines are a group, the
+/// lines after them another, a number goes to line 1 alone and the rest
+/// of its exchange to the first group. The service has no SIP and no
+/// call comes by them. With fewer lines there is what the lines allow.
+pub fn arrange(config: &mut Config) {
+    let ids: Vec<u16> = config.lines.iter().map(|line| line.id).collect();
+    let (first, rest) = ids.split_at(ids.len().min(4));
+    if first.is_empty() {
+        return;
+    }
+    config.hunt_groups.push(HuntGroup {
+        name: "dialup".to_string(),
+        pilot: "5551000".to_string(),
+        lines: first.to_vec(),
+        strategy: Strategy::RoundRobin,
+    });
+    if !rest.is_empty() {
+        config.hunt_groups.push(HuntGroup {
+            name: "night".to_string(),
+            pilot: "5552000".to_string(),
+            lines: rest.to_vec(),
+            strategy: Strategy::FirstIdle,
+        });
+    }
+    config.routes.push(Route {
+        called: "5551234".to_string(),
+        target: Target::Line(first[0]),
+    });
+    config.routes.push(Route {
+        called: "555*".to_string(),
+        target: Target::Group("dialup".to_string()),
+    });
+}
 
 /// How long a host waits for its modem to act on a command line.
 const COMMAND_MS: u64 = 2 * TICK_MS;

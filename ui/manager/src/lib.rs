@@ -47,17 +47,29 @@ mod window;
 #[cfg(windows)]
 pub use clock::Clock;
 #[cfg(windows)]
+pub use dialogs::capture::ids as capture_ids;
+#[cfg(windows)]
+pub use dialogs::groups::{editor as group_ids, ids as groups_ids};
+#[cfg(windows)]
 pub use dialogs::line::ids as line_ids;
 #[cfg(windows)]
+pub use dialogs::peers::ids as peers_ids;
+#[cfg(windows)]
+pub use dialogs::routes::{editor as route_ids, ids as routes_ids};
+#[cfg(windows)]
 pub use dialogs::sheet::ids as settings_ids;
+#[cfg(windows)]
+pub use dialogs::telephony::ids as telephony_ids;
+#[cfg(windows)]
+pub use dialogs::trace::ids as trace_ids;
 #[cfg(windows)]
 pub use message::{denied_dialog, dialog as message_dialog};
 #[cfg(windows)]
 pub use view::ids;
 #[cfg(windows)]
 pub use window::{
-    DialogHook, FileHook, Hooks, Manager, Opened, Options, PortsHook, TaskHook, TaskWatchHook,
-    has_handler, open,
+    DialogHook, FileHook, FolderHook, Hooks, Manager, Opened, Options, PortsHook, TaskHook,
+    TaskWatchHook, has_handler, open,
 };
 
 /// Runs the manager: reads the command line, opens the window, and stays

@@ -639,6 +639,13 @@ text = "&1"
 cause = "The service program ran and ended without an error."
 recovery = "No action is needed."
 
+[RMD4014]
+severity = "error"
+vars = 2
+text = "Folder &1 could not be opened: &2"
+cause = "The folder does not exist yet, because no call has been captured, or it is on another computer than the one the manager runs on."
+recovery = "Turn capture on for a line and wait for a call on it. The folder is on the computer the service runs on."
+
 # ---------------------------------------------------------------------------
 # 5000-5999: telephony
 # ---------------------------------------------------------------------------

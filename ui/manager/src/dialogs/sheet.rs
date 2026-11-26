@@ -5,10 +5,10 @@
 //! Settings: the settings of the service that are not lines, as a
 //! property sheet.
 //!
-//! There are two pages now, Service and Control. A later phase adds a
-//! page by adding to [`pages`]: each page is a template, and a handler
-//! that fills it from the settings, says what the user changed, and is
-//! asked to apply it.
+//! There are four pages: Service, Control, and from `telephony.rs` SIP
+//! and Media. A later phase adds a page by adding to [`pages`]: each
+//! page is a template, and a handler that fills it from the settings,
+//! says what the user changed, and is asked to apply it.
 //!
 //! OK and Apply send `config.set` with what was changed and nothing else.
 //! The service checks it; if it refuses, its message is shown and the
@@ -24,7 +24,7 @@ use ctlproto::{
 use win32::controls::Combo;
 use win32::{DialogTemplate, Event, Handler, Hwnd, Reply, code, property_sheet};
 
-use super::{must_not_be_empty, watch, watched};
+use super::{must_not_be_empty, telephony, watch, watched};
 use crate::window::Manager;
 
 /// The ids of the controls of the pages.
@@ -74,16 +74,16 @@ fn control_template() -> DialogTemplate {
 
 /// What the pages share: the settings as the service last gave them, and
 /// whether a change needs the service started again.
-struct Shared {
-    manager: Rc<Manager>,
-    settings: RefCell<Settings>,
+pub(super) struct Shared {
+    pub(super) manager: Rc<Manager>,
+    pub(super) settings: RefCell<Settings>,
     restart: Cell<bool>,
 }
 
 impl Shared {
     /// Sends a change. On a refusal the message is shown over the sheet
     /// and the page is told to stay.
-    fn apply(&self, page: Hwnd, change: SettingsChange) -> Reply {
+    pub(super) fn apply(&self, page: Hwnd, change: SettingsChange) -> Reply {
         let sheet = page.parent().unwrap_or(page);
         match self
             .manager
@@ -103,7 +103,7 @@ impl Shared {
         }
     }
 
-    fn refuse(&self, page: Hwnd, error: &ErrorInfo) -> Reply {
+    pub(super) fn refuse(&self, page: Hwnd, error: &ErrorInfo) -> Reply {
         self.manager
             .show_error(page.parent().unwrap_or(page), error);
         Reply::Value(1)
@@ -276,6 +276,22 @@ fn pages(shared: &Rc<Shared>) -> Vec<(String, DialogTemplate, Rc<dyn Handler>)> 
             "Control".to_string(),
             control_template(),
             Rc::new(ControlPage {
+                shared: Rc::clone(shared),
+                filled: Cell::new(false),
+            }),
+        ),
+        (
+            "SIP".to_string(),
+            telephony::sip_template(),
+            Rc::new(telephony::SipPage {
+                shared: Rc::clone(shared),
+                filled: Cell::new(false),
+            }),
+        ),
+        (
+            "Media".to_string(),
+            telephony::media_template(),
+            Rc::new(telephony::MediaPage {
                 shared: Rc::clone(shared),
                 filled: Cell::new(false),
             }),

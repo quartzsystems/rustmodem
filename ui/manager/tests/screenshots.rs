@@ -52,7 +52,7 @@ mod shots {
     use std::time::Duration;
 
     use ctlproto::ErrorInfo;
-    use manager::{Hooks, ids, line_ids, settings_ids};
+    use manager::{Hooks, groups_ids, ids, line_ids, routes_ids, settings_ids};
     use model::{Command, ConnectionState};
     use win32::controls::Combo;
     use win32::{App, Hwnd, Image, ListView, TaskDialog, capture, id};
@@ -340,19 +340,47 @@ mod shots {
                         return;
                     }
                     let sheet = window.parent();
+                    // Whether this view has had its picture taken: a
+                    // list says that it is up again once its editor has
+                    // closed.
+                    let again = camera.taken.borrow().iter().any(|(taken, _)| taken == name);
                     match (name, sheet) {
+                        // Each page of the settings says so when it is
+                        // up; the next is chosen then, and after the
+                        // last the sheet is closed.
                         ("settings", Some(sheet)) => {
                             camera.take(name, sheet);
-                            // The second page too: it says so when it is
-                            // up, and the sheet is closed then.
                             sheet.select_page(1);
                         }
                         ("settings-control", Some(sheet)) => {
                             camera.take(name, sheet);
+                            sheet.select_page(2);
+                        }
+                        ("settings-sip", Some(sheet)) => {
+                            camera.take(name, sheet);
+                            sheet.select_page(3);
+                        }
+                        ("settings-media", Some(sheet)) => {
+                            camera.take(name, sheet);
                             sheet.command(id::CANCEL);
                         }
-                        _ => {
+                        // The lists of the SIP menu: the list, then the
+                        // editor of its first entry, and when the list is
+                        // up again it is closed.
+                        ("hunt-groups", _) if !again => {
+                            ListView::of(window.item(groups_ids::LIST)).select(Some(0));
                             camera.take(name, window);
+                            window.command(groups_ids::EDIT);
+                        }
+                        ("routes", _) if !again => {
+                            ListView::of(window.item(routes_ids::LIST)).select(Some(0));
+                            camera.take(name, window);
+                            window.command(routes_ids::EDIT);
+                        }
+                        _ => {
+                            if !again {
+                                camera.take(name, window);
+                            }
                             close(name, window);
                         }
                     }
@@ -420,7 +448,12 @@ mod shots {
             Command::Settings,
             Command::PortsAndDrivers,
             Command::About,
+            Command::TrunkPeers,
+            Command::HuntGroups,
+            Command::Routes,
+            Command::CallCapture,
             Command::AtConsole,
+            Command::SipTrace,
         ] {
             let before = camera.taken.borrow().len();
             bench.choose(command);

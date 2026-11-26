@@ -11,12 +11,18 @@
 //! request of its own going.
 
 pub mod about;
+pub mod capture;
 pub mod connect;
 pub mod console;
+pub mod groups;
 pub mod history;
 pub mod line;
+pub mod peers;
 pub mod ports;
+pub mod routes;
 pub mod sheet;
+pub mod telephony;
+pub mod trace;
 
 use ctlproto::ErrorInfo;
 use msg::message;

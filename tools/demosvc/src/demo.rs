@@ -72,13 +72,17 @@ fn starting_config(options: &Options) -> Config {
             line
         })
         .collect();
-    Config {
+    let mut config = Config {
         control: ControlConfig {
             pipe: options.pipe.clone(),
         },
         lines,
         ..Config::default()
+    };
+    if options.script == Script::Frozen {
+        frozen::arrange(&mut config);
     }
+    config
 }
 
 /// Runs the demo service until the process is ended. Returns only if it
@@ -136,6 +140,7 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
     // Over SIP the lines run the engines their configuration names, on
     // the media threads; otherwise they run the demo engine, which shows
     // the rates and protocols of later phases, on the pool's clock.
+    let sip_on = far_end.is_some();
     let mut callers = None;
     let (router, media, engines): (Box<dyn CallRouter>, Box<dyn MediaRunner>, EngineFactory) =
         match far_end {
@@ -232,6 +237,7 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
         // directory is in effect as soon as it is set.
         apply_service: Arc::new(|_| Ok(true)),
         cpu: ctlsrv::no_cpu_meter(),
+        capture_dir: sip_on.then(|| directory.join(sip::CAPTURES)),
     });
 
     log(SOURCE, &message("RMD0001", &[crate::VERSION]));

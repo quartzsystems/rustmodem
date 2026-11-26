@@ -277,8 +277,14 @@ impl Command {
             Command::NewLine => "Adds a line to the service.",
             Command::EditLine => "Changes the selected line's name, port and settings.",
             Command::RemoveLine => "Removes the selected line from the service.",
-            Command::Reregister => "Registers the trunks with their SIP servers again.",
-            Command::TrunkPeers => "Lists the SIP trunks the service takes calls from.",
+            Command::Reregister => {
+                "Registers the selected line with its PBX again, or with no line selected, \
+                 every line that registers."
+            }
+            Command::TrunkPeers => {
+                "Says which addresses may send calls to the service, and where the lines' \
+                 own calls go."
+            }
             Command::HuntGroups => "Arranges the lines into groups that share numbers.",
             Command::Routes => "Says which numbers ring which lines and hunt groups.",
             Command::SipTrace => "Shows the SIP messages the service sends and receives.",
@@ -302,7 +308,9 @@ impl Command {
                 "Lists the serial ports of the service's computer, with their pairs and modems."
             }
             Command::LoopbackTest => "Calls one line from another and checks what comes through.",
-            Command::CallCapture => "Records the audio and the signalling of calls to files.",
+            Command::CallCapture => {
+                "Records every RTP packet of the calls of chosen lines to files."
+            }
             Command::About => "Shows the version of the manager.",
         }
     }
@@ -312,14 +320,6 @@ impl Command {
     /// reason.
     pub fn blocked(self) -> Option<u8> {
         match self {
-            // BLOCKED(phase2): everything under the SIP menu, and call
-            // capture, come with telephony.
-            Command::Reregister
-            | Command::TrunkPeers
-            | Command::HuntGroups
-            | Command::Routes
-            | Command::SipTrace
-            | Command::CallCapture => Some(2),
             // BLOCKED(phase3): the rate cap, line diagnostics and the
             // loopback self-test come with the first modulation.
             Command::RateCap | Command::LineDiagnostics | Command::LoopbackTest => Some(3),
@@ -331,7 +331,6 @@ impl Command {
     pub fn blocked_reason(self) -> Option<String> {
         let phase = self.blocked()?;
         let what = match phase {
-            2 => "telephony (SIP and RTP)",
             3 => "the first modulation",
             _ => "a later phase",
         };
@@ -726,15 +725,9 @@ mod tests {
         assert_eq!(
             blocked,
             [
-                (Command::Reregister, 2),
-                (Command::TrunkPeers, 2),
-                (Command::HuntGroups, 2),
-                (Command::Routes, 2),
-                (Command::SipTrace, 2),
                 (Command::RateCap, 3),
                 (Command::LineDiagnostics, 3),
                 (Command::LoopbackTest, 3),
-                (Command::CallCapture, 2),
             ]
         );
         for (command, phase) in blocked {
@@ -742,6 +735,9 @@ mod tests {
             assert!(reason.contains(&format!("phase {phase}")), "{reason}");
         }
         assert_eq!(Command::Answer.blocked_reason(), None);
+        // What came with telephony is built.
+        assert_eq!(Command::Reregister.blocked_reason(), None);
+        assert_eq!(Command::CallCapture.blocked_reason(), None);
     }
 
     #[test]

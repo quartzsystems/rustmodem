@@ -150,6 +150,7 @@ impl Service {
                 },
             ]),
             cpu: ctlsrv::no_cpu_meter(),
+            capture_dir: None,
         });
         let binding_server = server.clone();
         let (listener, connector) = memory::listener();

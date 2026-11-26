@@ -71,6 +71,7 @@ enum Class {
 const CLASS_BUTTON: u16 = 0x0080;
 const CLASS_EDIT: u16 = 0x0081;
 const CLASS_STATIC: u16 = 0x0082;
+const CLASS_LISTBOX: u16 = 0x0083;
 const CLASS_COMBO: u16 = 0x0085;
 
 /// Static control styles; see `controls`.
@@ -247,6 +248,21 @@ impl DialogTemplate {
         )
     }
 
+    /// A single-line edit control that shows a dot for each character
+    /// typed: for a password.
+    pub fn password(self, id: u16, x: i16, y: i16, w: i16, h: i16) -> DialogTemplate {
+        // ES_PASSWORD.
+        let style = ES_AUTOHSCROLL as u32 | 0x0020 | WS_TABSTOP.0;
+        self.item(
+            Class::System(CLASS_EDIT),
+            id,
+            (x, y, w, h),
+            "",
+            style,
+            WS_EX_CLIENTEDGE.0,
+        )
+    }
+
     /// An edit control that takes digits only.
     pub fn number(self, id: u16, x: i16, y: i16, w: i16, h: i16) -> DialogTemplate {
         let style = (ES_AUTOHSCROLL | ES_NUMBER) as u32 | WS_TABSTOP.0;
@@ -393,6 +409,32 @@ impl DialogTemplate {
             style | WS_TABSTOP.0 | WS_BORDER.0,
             0,
         )
+    }
+
+    /// A list view in report mode that keeps its own rows and has a check
+    /// box on each. Put a [`crate::CheckList`] on it with `CheckList::of`
+    /// when the dialog starts.
+    pub fn check_list(self, id: u16, x: i16, y: i16, w: i16, h: i16) -> DialogTemplate {
+        let style = LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS;
+        self.item(
+            Class::Named(unsafe_free_name(WC_LISTVIEWW)),
+            id,
+            (x, y, w, h),
+            "",
+            style | WS_TABSTOP.0 | WS_BORDER.0,
+            0,
+        )
+    }
+
+    /// A list box: entries of one line, in the order they are added, one
+    /// of them chosen. Choosing one is a command with the code
+    /// [`crate::code::LIST_SELECTED`], and a double click one with
+    /// [`crate::code::LIST_DOUBLE_CLICK`].
+    pub fn list_box(self, id: u16, x: i16, y: i16, w: i16, h: i16) -> DialogTemplate {
+        // LBS_NOTIFY, and LBS_NOINTEGRALHEIGHT so that the box is the
+        // height the template gives it.
+        let style = 0x0001 | 0x0100 | WS_VSCROLL.0 | WS_TABSTOP.0 | WS_BORDER.0;
+        self.item(Class::System(CLASS_LISTBOX), id, (x, y, w, h), "", style, 0)
     }
 
     /// A read-only rich edit control, for a log or a terminal.

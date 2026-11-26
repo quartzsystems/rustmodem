@@ -680,6 +680,12 @@ pub const TYPES: &[TypeDoc] = &[
                 "When the configuration was last loaded, in milliseconds since the Unix epoch.",
             ),
             required("mode", "ServiceMode", "How the service is being run."),
+            optional(
+                "capture_dir",
+                "string",
+                "The directory call captures are written to, on the service's computer. \
+                 Absent when the service has no SIP and so captures nothing.",
+            ),
         ],
     },
     TypeDoc {

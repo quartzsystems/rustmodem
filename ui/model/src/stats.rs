@@ -4,17 +4,12 @@
 
 //! The two statistics panels: what each row says.
 
-use ctlproto::{ServiceInfo, Stats};
+use ctlproto::{ListenerState, ServiceInfo, Stats};
 
 use crate::format::{EMPTY, TimeZone, csv_row, duration, grouped, percentages, uptime};
 
 /// How many connect rates the panel has room for.
 pub const RATE_ROWS: usize = 5;
-
-/// The softmodem engine of this phase.
-/// BLOCKED(phase3): the service reports the engine once there is more
-/// than the null one.
-const ENGINE: &str = "null";
 
 /// One row of the connect rates: a label, how much of the bar is filled,
 /// and the same as text.
@@ -94,9 +89,15 @@ impl StatsView {
         }
     }
 
-    /// The panels for what the service reports. `now_ms` is the time now,
-    /// for the uptime.
-    pub fn new(stats: &Stats, info: &ServiceInfo, now_ms: u64, zone: &dyn TimeZone) -> StatsView {
+    /// The panels for what the service reports. `engines` is the engines
+    /// the lines run, and `now_ms` the time now, for the uptime.
+    pub fn new(
+        stats: &Stats,
+        info: &ServiceInfo,
+        engines: &str,
+        now_ms: u64,
+        zone: &dyn TimeZone,
+    ) -> StatsView {
         let length = |ms: u64| {
             // With no connected call ended yet there is no length to
             // give.
@@ -172,12 +173,27 @@ impl StatsView {
                 EMPTY.to_string()
             },
             named(&stats.protocols),
-            ENGINE.to_string(),
-            // BLOCKED(phase2): the codec, the jitter and the packet loss
-            // come with RTP.
-            EMPTY.to_string(),
-            EMPTY.to_string(),
-            EMPTY.to_string(),
+            if engines.is_empty() {
+                EMPTY.to_string()
+            } else {
+                engines.to_string()
+            },
+            // A service with no SIP has no RTP to say anything of.
+            if stats.codec.is_empty() {
+                EMPTY.to_string()
+            } else {
+                format!("{} / {} ms", stats.codec, stats.ptime_ms)
+            },
+            if stats.sip.listener == ListenerState::Listening {
+                format!("{:.1} / {:.1} ms", stats.jitter_ms_avg, stats.jitter_ms_max)
+            } else {
+                EMPTY.to_string()
+            },
+            if stats.sip.listener == ListenerState::Listening {
+                format!("{:.2} %", stats.packet_loss_percent)
+            } else {
+                EMPTY.to_string()
+            },
         ];
         StatsView {
             calls: CALL_LABELS.iter().copied().zip(values).collect(),

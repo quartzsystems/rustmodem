@@ -40,6 +40,9 @@ pub enum Purpose {
     Reload,
     /// `lines.remove`, of the line with this id.
     Remove(u16),
+    /// Something the user asked for whose answer says only that it was
+    /// done: `sip.reregister`.
+    Asked,
     /// A request something is waiting for the answer to, with the number
     /// it knows the request by: a dialog, which goes on only once it has
     /// the answer.
@@ -52,7 +55,7 @@ impl Purpose {
     pub fn asked_for(self) -> bool {
         matches!(
             self,
-            Purpose::Line(_) | Purpose::Reload | Purpose::Remove(_)
+            Purpose::Line(_) | Purpose::Reload | Purpose::Remove(_) | Purpose::Asked
         )
     }
 }

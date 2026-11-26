@@ -104,6 +104,22 @@ pub fn relaunch_elevated(owner: Option<Hwnd>, arguments: &[String]) -> io::Resul
     })
 }
 
+/// Opens a folder in Explorer, as a double click on it would.
+pub fn open_folder(owner: Option<Hwnd>, folder: &std::path::Path) -> io::Result<()> {
+    let folder = wide(&folder.display().to_string());
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        hwnd: owner.map(|owner| owner.0).unwrap_or_default(),
+        lpVerb: w!("open"),
+        lpFile: pcwstr(&folder),
+        nShow: SW_SHOWNORMAL.0,
+        ..SHELLEXECUTEINFOW::default()
+    };
+    // SAFETY: `info` is a whole SHELLEXECUTEINFOW with its size filled in,
+    // and the string it points at outlives the call.
+    unsafe { ShellExecuteExW(&mut info) }.map_err(io::Error::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

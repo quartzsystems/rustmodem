@@ -105,6 +105,7 @@ fn events_keep_the_model_current_and_say_what_they_changed() {
             rows: RowChange::Changed(1),
             log: false,
             calls: false,
+            trace: false,
         }
     );
     // The call events themselves change nothing the window shows: the
@@ -120,6 +121,7 @@ fn events_keep_the_model_current_and_say_what_they_changed() {
             rows: RowChange::None,
             log: false,
             calls: true,
+            trace: false,
         }
     );
     assert_eq!(model.calls.len(), 1);
@@ -129,6 +131,7 @@ fn events_keep_the_model_current_and_say_what_they_changed() {
             rows: RowChange::None,
             log: true,
             calls: false,
+            trace: false,
         }
     );
     assert_eq!(
@@ -249,11 +252,16 @@ const ALWAYS: [Command; 15] = [
 ];
 
 /// The commands that need the service and nothing more.
-const WITH_SERVICE: [Command; 8] = [
+const WITH_SERVICE: [Command; 13] = [
     Command::Disconnect,
     Command::ReloadConfig,
     Command::ExportStatistics,
     Command::NewLine,
+    Command::TrunkPeers,
+    Command::HuntGroups,
+    Command::Routes,
+    Command::SipTrace,
+    Command::CallCapture,
     Command::CallHistory,
     Command::Refresh,
     Command::Settings,
@@ -446,9 +454,15 @@ fn the_status_bar_describes_a_command_or_says_why_it_cannot_be_chosen() {
         "Resets the selected line: hangs up and returns its modem to its stored profile."
     );
     assert_eq!(model.help(Command::Answer), "Line 1 is not ringing.");
+    // What came with telephony says what it does, or why not now.
+    assert!(
+        model
+            .help(Command::TrunkPeers)
+            .starts_with("Says which addresses")
+    );
     assert_eq!(
-        model.help(Command::TrunkPeers),
-        "Not available yet: this comes with telephony (SIP and RTP), in phase 2."
+        model.help(Command::Reregister),
+        "Line 1 does not register to a PBX."
     );
     assert_eq!(
         model.help(Command::LineDiagnostics),
@@ -475,27 +489,39 @@ fn the_filter_has_a_command_in_the_view_menu() {
 
 #[test]
 fn the_status_bar_has_the_connection_sip_answering_rtp_cpu_and_the_clock() {
-    let model = connected_model(vec![
+    let mut model = connected_model(vec![
         line(1, LineState::Idle),
         line_with_call(2, LineState::Online, call(Direction::Incoming, "1", 0)),
         line(3, LineState::NotReady),
         line(4, LineState::Disabled),
         broken_line(5),
     ]);
-    // 08:24:57 UTC.
+    // 08:24:57 UTC. Until the statistics have come, nothing is known of
+    // SIP, RTP or the processor.
     let parts = model.status_parts(START_MS + 1_497_170, &Utc);
     assert_eq!(
         parts,
         [
             "Service: connected",
-            "SIP: off",
+            "SIP: \u{2014}",
             "Answering: 2 / 5",
             "RTP: \u{2014}",
             "CPU: \u{2014}",
             "08:24",
         ]
     );
-    let mut model = model;
+    // A service with no SIP.
+    model.stats_received(Stats::default());
+    let parts = model.status_parts(START_MS + 1_497_170, &Utc);
+    assert_eq!(
+        parts[1..5],
+        [
+            "SIP: off",
+            "Answering: 2 / 5",
+            "RTP: \u{2014}",
+            "CPU: 0.0 %"
+        ]
+    );
     model.disconnected(None);
     let parts = model.status_parts(START_MS, &Utc);
     assert_eq!(parts[0], "Service: not connected");
@@ -609,7 +635,7 @@ fn the_connect_rates_fit_in_five_rows_and_always_add_up() {
             connects,
             ..Stats::default()
         };
-        StatsView::new(&stats, &info, START_MS, &Utc)
+        StatsView::new(&stats, &info, "null", START_MS, &Utc)
     };
     // The null engine: one group, of which nothing is known.
     let one = view(vec![tally(0, "", 4)]);
@@ -678,7 +704,7 @@ fn later_engines_fill_in_retrains_and_error_correction() {
         ],
         ..Stats::default()
     };
-    let view = StatsView::new(&stats, &info, START_MS, &Utc);
+    let view = StatsView::new(&stats, &info, "null", START_MS, &Utc);
     assert_eq!(view.carrier[0].1, "1,234");
     assert_eq!(view.carrier[1].1, "LAPM (and 1 more)");
     let one = Stats {
@@ -689,7 +715,7 @@ fn later_engines_fill_in_retrains_and_error_correction() {
         ..Stats::default()
     };
     assert_eq!(
-        StatsView::new(&one, &info, START_MS, &Utc).carrier[1].1,
+        StatsView::new(&one, &info, "null", START_MS, &Utc).carrier[1].1,
         "LAPM"
     );
 }
@@ -699,12 +725,12 @@ fn the_configuration_shows_its_date_once_it_was_not_loaded_today() {
     let mut info = service(ServiceMode::Service, 1, 0);
     info.config_loaded_ms = START_MS + 3_600_000;
     let stats = Stats::default();
-    let same_day = StatsView::new(&stats, &info, START_MS + 7_200_000, &Utc);
+    let same_day = StatsView::new(&stats, &info, "null", START_MS + 7_200_000, &Utc);
     assert_eq!(same_day.calls[11].1, "09:00:00");
-    let next_day = StatsView::new(&stats, &info, START_MS + 26 * 3_600_000, &Utc);
+    let next_day = StatsView::new(&stats, &info, "null", START_MS + 26 * 3_600_000, &Utc);
     assert_eq!(next_day.calls[11].1, "2027-01-15 09:00:00");
     // Three days, four hours, twelve minutes and seven seconds.
-    let long = StatsView::new(&stats, &info, START_MS + 274_327_000, &Utc);
+    let long = StatsView::new(&stats, &info, "null", START_MS + 274_327_000, &Utc);
     assert_eq!(long.calls[10].1, "3d 04:12:07");
 }
 
@@ -719,7 +745,7 @@ fn the_statistics_export_as_csv() {
         connects: vec![tally(2400, "V.22bis", 2), tally(1200, "V.22", 1)],
         ..Stats::default()
     };
-    let csv = StatsView::new(&stats, &info, START_MS + 60_000, &Utc).csv();
+    let csv = StatsView::new(&stats, &info, "null", START_MS + 60_000, &Utc).csv();
     let lines: Vec<&str> = csv.split("\r\n").collect();
     assert_eq!(lines[0], "Statistic,Value");
     // A value with a comma in it is quoted.
@@ -921,6 +947,9 @@ fn every_cell_of_the_call_history() {
             "Host dropped DTR",
             "2400 V.22bis",
             "48,000 / 16,000",
+            EMPTY,
+            EMPTY,
+            EMPTY,
         ]
     );
     assert_eq!(
@@ -934,6 +963,9 @@ fn every_cell_of_the_call_history() {
             "Caller gave up",
             EMPTY,
             "0 / 0",
+            EMPTY,
+            EMPTY,
+            EMPTY,
         ]
     );
     assert_eq!(history.cell(5, 0, &Utc), "");
@@ -949,7 +981,10 @@ fn every_cell_of_the_call_history() {
             "Duration",
             "Reason",
             "Rate",
-            "Bytes TX/RX"
+            "Bytes TX/RX",
+            "Codec",
+            "Lost",
+            "Slips"
         ]
     );
     // Every reason has words of its own.
@@ -963,15 +998,16 @@ fn every_cell_of_the_call_history() {
     let lines: Vec<&str> = csv.split("\r\n").collect();
     assert_eq!(
         lines[0],
-        "Time,Line,Direction,Number,Connected seconds,Reason,Rate,Carrier,Bytes TX,Bytes RX"
+        "Time,Line,Direction,Number,Connected seconds,Reason,Rate,Carrier,Bytes TX,Bytes RX,\
+         Codec,Lost,Late,Duplicate,Resync,Slips"
     );
     assert_eq!(
         lines[1],
-        "2027-01-15 08:02:00,3,outgoing,2,727,dtr,2400,V.22bis,48000,16000"
+        "2027-01-15 08:02:00,3,outgoing,2,727,dtr,2400,V.22bis,48000,16000,,,,,,"
     );
     assert_eq!(
         lines[2],
-        "2027-01-15 08:01:00,1,incoming,5550100,,abandoned,,,0,0"
+        "2027-01-15 08:01:00,1,incoming,5550100,,abandoned,,,0,0,,,,,,"
     );
     assert_eq!(lines.len(), 4);
 }

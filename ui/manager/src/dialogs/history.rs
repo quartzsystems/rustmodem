@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use model::CALL_COLUMNS;
 use win32::metrics::scale;
-use win32::{Align, Column, DialogTemplate, Event, Handler, Hwnd, ListView, Reply};
+use win32::{Align, Colour, Column, DialogTemplate, Event, Handler, Hwnd, ListView, Reply};
 
 use super::{watch, watched};
 use crate::actions;
@@ -17,12 +17,16 @@ use crate::window::Manager;
 const ID_LIST: u16 = 300;
 const ID_EXPORT: u16 = 301;
 
+/// The colour of a row whose call lost packets or slipped: the red of a
+/// port error in the grid.
+const MARKED: Colour = Colour::rgb(192, 0, 0);
+
 /// The timer that brings the list up to date while the dialog is open.
 const REFRESH: usize = 1;
 
 fn template() -> DialogTemplate {
-    DialogTemplate::new("Call history", 480, 230)
-        .list_view(ID_LIST, 7, 7, 466, 195)
+    DialogTemplate::new("Call history", 570, 230)
+        .list_view(ID_LIST, 7, 7, 556, 195)
         .button(ID_EXPORT, 7, 209, 60, 14, "&Export\u{2026}")
         .close_button()
 }
@@ -76,6 +80,18 @@ impl Handler for History {
             }
             Event::Command { id: ID_EXPORT, .. } => {
                 actions::export_calls(&self.manager, dialog);
+                Reply::Handled
+            }
+            Event::ListCellColour {
+                id: ID_LIST,
+                row,
+                colour,
+                ..
+            } => {
+                // A call that lost packets or slipped is marked.
+                if self.manager.with_model(|model| model.calls.marked(row)) {
+                    *colour = Some(MARKED);
+                }
                 Reply::Handled
             }
             Event::ListCell {

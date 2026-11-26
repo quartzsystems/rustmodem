@@ -664,6 +664,7 @@ The result of `service.info`.
 | `uptime_ms` | integer | yes | How long the service has been running, in milliseconds. |
 | `config_loaded_ms` | integer | yes | When the configuration was last loaded, in milliseconds since the Unix epoch. |
 | `mode` | ServiceMode | yes | How the service is being run. |
+| `capture_dir` | string | no | The directory call captures are written to, on the service's computer. Absent when the service has no SIP and so captures nothing. |
 
 ### LineList
 

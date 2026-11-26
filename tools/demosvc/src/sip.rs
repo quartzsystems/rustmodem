@@ -41,6 +41,9 @@ const SOURCE: &str = "SIP";
 /// The tag of the capture writer in log lines.
 const MEDIA_SOURCE: &str = "RTP";
 
+/// The name of the capture directory under the demo service's own.
+pub const CAPTURES: &str = "captures";
+
 /// The number that calls the hunt group.
 const PILOT: &str = "5551000";
 
@@ -274,7 +277,7 @@ pub fn start(
     let listening = message("RMD5001", &[&transport.local().to_string()]);
     let (capture_hub, capture_clock) = (hub.clone(), Arc::clone(clock));
     let writer = CaptureWriter::new(
-        directory.join("captures"),
+        directory.join(CAPTURES),
         Box::new(move |event| {
             let said = match event {
                 CaptureEvent::Started { line, path } => {

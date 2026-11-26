@@ -26,9 +26,11 @@ pub mod format;
 mod lines;
 mod log;
 mod stats;
+mod trace;
 
 use ctlproto::{
-    CallRecord, ErrorInfo, Event, LineInfo, LineState, LogEvent, ServiceInfo, ServiceMode, Stats,
+    CallRecord, ErrorInfo, Event, LineInfo, LineState, ListenerState, LogEvent, ServiceInfo,
+    ServiceMode, SipMode, Stats,
 };
 
 pub use calls::{CALL_COLUMNS, CALL_LIMIT, CallHistory, reason_text};
@@ -36,9 +38,11 @@ pub use commands::{Availability, Command, MenuEntry, lines_menu, menu_bar, toolb
 pub use format::{EMPTY, TimeZone, Utc, WallTime};
 pub use lines::{
     Column, Filter, LineTable, RowChange, SortOrder, StateColour, StateLook, on_a_call,
+    registration_failed, registration_text, row_image, sip_tip,
 };
 pub use log::{LOG_LIMIT, LogBuffer, LogClass, LogLine};
 pub use stats::{CALL_LABELS, CARRIER_LABELS, RATE_ROWS, RateRow, StatsView};
+pub use trace::{TRACE_LIMIT, TraceBuffer, entry as trace_entry};
 
 /// The title of the manager's window.
 pub const TITLE: &str = "RustModem Manager";
@@ -68,6 +72,8 @@ pub struct Changes {
     pub log: bool,
     /// The call history has a new call.
     pub calls: bool,
+    /// The SIP trace has a new message.
+    pub trace: bool,
 }
 
 impl Changes {
@@ -76,6 +82,7 @@ impl Changes {
         rows: RowChange::None,
         log: false,
         calls: false,
+        trace: false,
     };
 
     fn rows(rows: RowChange) -> Changes {
@@ -97,6 +104,8 @@ pub struct Model {
     pub log: LogBuffer,
     /// The ended calls.
     pub calls: CallHistory,
+    /// The SIP messages that passed while the trace window was open.
+    pub trace: TraceBuffer,
     /// The lines reported by events since the manager connected and
     /// before the answer to its first `lines.list`: they are newer than
     /// the answer may be, and are applied on top of it.
@@ -118,6 +127,7 @@ impl Model {
             stats: None,
             log: LogBuffer::new(),
             calls: CallHistory::new(),
+            trace: TraceBuffer::new(),
             early_lines: None,
         }
     }
@@ -240,9 +250,10 @@ impl Model {
             },
             // The line's own event carries its registration.
             Event::SipRegistration(_) => Changes::NONE,
-            // BLOCKED(phase2): the SIP trace window takes these; it comes
-            // with the manager's SIP menu in the next work package.
-            Event::SipTrace(_) => Changes::NONE,
+            Event::SipTrace(message) => Changes {
+                trace: self.trace.push(message),
+                ..Changes::NONE
+            },
         }
     }
 
@@ -270,8 +281,18 @@ impl Model {
 
     /// The statistics panels. `now_ms` is the time now.
     pub fn stats_view(&self, now_ms: u64, zone: &dyn TimeZone) -> StatsView {
+        // The engines the lines run, each once, in order of name.
+        let mut engines: Vec<&str> = self
+            .lines
+            .lines()
+            .map(|line| line.engine.as_str())
+            .collect();
+        engines.sort_unstable();
+        engines.dedup();
         match (&self.stats, self.service()) {
-            (Some(stats), Some(info)) => StatsView::new(stats, info, now_ms, zone),
+            (Some(stats), Some(info)) => {
+                StatsView::new(stats, info, &engines.join(", "), now_ms, zone)
+            }
             _ => StatsView::empty(),
         }
     }
@@ -305,16 +326,35 @@ impl Model {
         } else {
             format!("Answering: {EMPTY}")
         };
+        let stats = self.stats.as_ref().filter(|_| self.connected());
+        let sip = match stats.map(|stats| stats.sip) {
+            None => format!("SIP: {EMPTY}"),
+            Some(sip) => match sip.listener {
+                ListenerState::Off => "SIP: off".to_string(),
+                ListenerState::Failed => "SIP: not listening".to_string(),
+                // With lines that register, how many of them have.
+                ListenerState::Listening if sip.registering > 0 => {
+                    format!("SIP: {} / {} registered", sip.registered, sip.registering)
+                }
+                ListenerState::Listening => "SIP: listening".to_string(),
+            },
+        };
+        let rtp = match stats {
+            Some(stats) if stats.sip.listener == ListenerState::Listening => {
+                format!("RTP: {} kbit/s", stats.rtp_kbps)
+            }
+            _ => format!("RTP: {EMPTY}"),
+        };
+        let cpu = match stats {
+            Some(stats) => format!("CPU: {:.1} %", stats.cpu_percent),
+            None => format!("CPU: {EMPTY}"),
+        };
         [
             connection.to_string(),
-            // BLOCKED(phase2): the state of SIP and of RTP come with
-            // telephony.
-            "SIP: off".to_string(),
+            sip,
             answering,
-            format!("RTP: {EMPTY}"),
-            // BLOCKED(phase9): the service does not report its processor
-            // time.
-            format!("CPU: {EMPTY}"),
+            rtp,
+            cpu,
             zone.wall(now_ms).clock(),
         ]
     }
@@ -369,6 +409,11 @@ impl Model {
             | Command::Settings
             | Command::PortsAndDrivers
             | Command::CallHistory
+            | Command::TrunkPeers
+            | Command::HuntGroups
+            | Command::Routes
+            | Command::SipTrace
+            | Command::CallCapture
             | Command::ExportStatistics => {
                 if self.connected() {
                     Enabled
@@ -424,16 +469,30 @@ impl Model {
                 }
             }),
 
+            // The selected line, or with none selected every line that
+            // registers.
+            Command::Reregister => {
+                if !self.connected() {
+                    return not_connected();
+                }
+                match self.lines.selected() {
+                    Some(line) if line.sip.mode == SipMode::Registered => Enabled,
+                    Some(line) => Disabled(format!("Line {} does not register to a PBX.", line.id)),
+                    None if self
+                        .lines
+                        .lines()
+                        .any(|line| line.sip.mode == SipMode::Registered) =>
+                    {
+                        Enabled
+                    }
+                    None => Disabled("No line registers to a PBX.".to_string()),
+                }
+            }
+
             // The commands that are not built yet were answered above.
-            Command::Reregister
-            | Command::TrunkPeers
-            | Command::HuntGroups
-            | Command::Routes
-            | Command::SipTrace
-            | Command::RateCap
-            | Command::LineDiagnostics
-            | Command::LoopbackTest
-            | Command::CallCapture => Disabled("Not available yet.".to_string()),
+            Command::RateCap | Command::LineDiagnostics | Command::LoopbackTest => {
+                Disabled("Not available yet.".to_string())
+            }
         }
     }
 

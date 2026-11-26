@@ -121,6 +121,9 @@ pub struct ServerParts {
     pub apply_service: ApplyService,
     /// Measures the processor time of the service, for `stats.get`.
     pub cpu: CpuMeter,
+    /// Where call captures are written, for `service.info`; `None` for a
+    /// service that captures nothing.
+    pub capture_dir: Option<PathBuf>,
 }
 
 struct Shared {
@@ -143,6 +146,7 @@ struct Shared {
     at_start: AtStart,
     apply_service: ApplyService,
     cpu: CpuMeter,
+    capture_dir: Option<PathBuf>,
     clock: Clock,
     started_ms: u64,
     config_loaded_ms: AtomicU64,
@@ -184,6 +188,7 @@ impl Server {
                 at_start: AtStart::of(parts.config.config()),
                 apply_service: parts.apply_service,
                 cpu: parts.cpu,
+                capture_dir: parts.capture_dir,
                 config_loaded_ms: AtomicU64::new(started_ms),
                 config: Mutex::new(parts.config),
                 config_path: parts.config_path,
@@ -395,6 +400,10 @@ impl Server {
                     uptime_ms: (shared.clock)().saturating_sub(shared.started_ms),
                     config_loaded_ms: shared.config_loaded_ms.load(Ordering::Relaxed),
                     mode: shared.mode,
+                    capture_dir: shared
+                        .capture_dir
+                        .as_ref()
+                        .map(|directory| directory.display().to_string()),
                 })
             }
             Call::LinesList => value(&LineList {

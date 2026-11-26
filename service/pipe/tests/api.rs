@@ -141,6 +141,7 @@ impl Fixture {
                 line: None,
             }]),
             cpu: ctlsrv::no_cpu_meter(),
+            capture_dir: None,
         });
 
         let stop = Arc::new(Event::new().unwrap());

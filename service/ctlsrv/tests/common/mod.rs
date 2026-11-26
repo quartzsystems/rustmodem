@@ -189,6 +189,7 @@ impl Fixture {
             ports: Arc::new(test_ports()),
             apply_service: Arc::new(move |_| Ok(live_settings.load(Ordering::Relaxed))),
             cpu: ctlsrv::no_cpu_meter(),
+            capture_dir: None,
         });
 
         let (listener, connector) = memory::listener();

@@ -102,7 +102,9 @@ impl ListView {
     }
 
     fn prepare(self) {
-        let extended = LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER;
+        // LVS_EX_INFOTIP: the list asks for the tip of the row the
+        // pointer rests on.
+        let extended = LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | 0x0000_0400;
         self.0.send(
             LVM_SETEXTENDEDLISTVIEWSTYLE,
             extended as usize,

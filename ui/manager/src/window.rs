@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use ctlproto::{
     Call, CallList, CallsQuery, ErrorInfo, EventSelection, LineInfo, LineList, LineRef, LogTail,
-    LogTailQuery, ServerFrame, ServiceInfo, Stats,
+    LogTailQuery, ReregisterQuery, ServerFrame, ServiceInfo, Stats,
 };
 use model::{Column, Command, ConnectionState, Model, RowChange, filter_of};
 use msg::message;
@@ -89,6 +89,9 @@ pub type TaskWatchHook = Rc<dyn Fn(&TaskDialog, Hwnd, u32) -> Option<u16>>;
 /// Lists the serial ports of this computer.
 pub type PortsHook = Rc<dyn Fn() -> Vec<String>>;
 
+/// Told the folder that would be opened in Explorer.
+pub type FolderHook = Rc<dyn Fn(&std::path::Path)>;
+
 /// What a test puts in place of the things that would stop it: the
 /// system's dialogs, which wait for a person.
 #[derive(Clone, Default)]
@@ -111,6 +114,8 @@ pub struct Hooks {
     /// Stands in for the serial ports of this computer, which are not
     /// the same on every computer.
     pub serial_ports: Option<PortsHook>,
+    /// Stands in for opening a folder in Explorer: told the folder.
+    pub open_folder: Option<FolderHook>,
 }
 
 /// How the manager is started.
@@ -213,6 +218,9 @@ struct State {
     /// not told again at every attempt.
     denied_shown: bool,
     ticks: u64,
+    /// The SIP trace window is open: the service is asked for the
+    /// messages, again each time the manager connects.
+    tracing: bool,
 }
 
 impl State {
@@ -228,6 +236,7 @@ impl State {
             notice: None,
             denied_shown: false,
             ticks: 0,
+            tracing: false,
         }
     }
 
@@ -279,6 +288,27 @@ impl State {
         self.request(Call::LinesList, Purpose::Lines);
         self.request(Call::StatsGet, Purpose::Stats);
         self.request(Call::CallsList(CallsQuery { last: None }), Purpose::Calls);
+    }
+
+    /// Asks for the SIP messages, or asks for no more of them. They are
+    /// events that have to be named.
+    fn subscribe_trace(&mut self, on: bool) {
+        let selection = EventSelection {
+            events: Some(vec!["sip.trace".to_string()]),
+        };
+        let call = if on {
+            Call::Subscribe(selection)
+        } else {
+            Call::Unsubscribe(selection)
+        };
+        self.request(call, Purpose::Subscribe);
+    }
+
+    /// Re-register: the selected line, or with none selected every line
+    /// that registers.
+    fn reregister(&mut self) {
+        let id = self.model.lines.selected().map(|line| line.id);
+        self.request(Call::SipReregister(ReregisterQuery { id }), Purpose::Asked);
     }
 
     /// Sends a command for the selected line.
@@ -412,6 +442,9 @@ impl State {
                         Call::Subscribe(EventSelection { events: None }),
                         Purpose::Subscribe,
                     );
+                    if self.tracing {
+                        self.subscribe_trace(true);
+                    }
                     self.request(Call::LinesList, Purpose::Lines);
                     self.request(Call::StatsGet, Purpose::Stats);
                     self.request(Call::LogTail(LogTailQuery { last: None }), Purpose::LogTail);
@@ -420,7 +453,7 @@ impl State {
                 }
                 update.stats = true;
             }
-            Purpose::Subscribe | Purpose::Waited(_) => {}
+            Purpose::Subscribe | Purpose::Waited(_) | Purpose::Asked => {}
             Purpose::Lines => {
                 let list: LineList = read(value)?;
                 update.rows(self.model.lines_listed(list.lines));
@@ -496,6 +529,8 @@ pub struct Manager {
     tokens: Cell<u32>,
     /// The AT console, while it is open.
     console: RefCell<Option<ModelessDialog>>,
+    /// The SIP trace, while it is open.
+    trace: RefCell<Option<ModelessDialog>>,
 }
 
 /// The main window, once it is open.
@@ -529,6 +564,7 @@ pub fn open(app: App, options: Options) -> Option<Opened> {
         waited: RefCell::new(HashMap::new()),
         tokens: Cell::new(0),
         console: RefCell::new(None),
+        trace: RefCell::new(None),
     });
     let window = Window::create(
         WindowOptions {
@@ -611,6 +647,9 @@ fn action(command: Command) -> Option<Action> {
                 if let Some(filter) = filter_of(command) {
                     manager.change(window, |state, update| {
                         update.rows(state.model.lines.set_filter(filter));
+                        // A filter of the menu shows the lines of every
+                        // hunt group.
+                        update.rows(state.model.lines.set_group(None));
                     });
                 }
             }
@@ -634,16 +673,17 @@ fn action(command: Command) -> Option<Action> {
         Command::PortsAndDrivers => |manager, window, _| dialogs::ports::show(manager, window),
         Command::About => |manager, window, _| dialogs::about::show(manager, window),
 
+        Command::Reregister => |manager, window, _| {
+            manager.change(window, |state, _| state.reregister());
+        },
+        Command::TrunkPeers => |manager, window, _| dialogs::peers::show(manager, window),
+        Command::HuntGroups => |manager, window, _| dialogs::groups::show(manager, window),
+        Command::Routes => |manager, window, _| dialogs::routes::show(manager, window),
+        Command::SipTrace => |manager, window, _| manager.open_trace(window),
+        Command::CallCapture => |manager, window, _| dialogs::capture::show(manager, window),
+
         // What later phases bring. The model never lets these be chosen,
         // and says why in the status bar.
-        // BLOCKED(phase2): everything under the SIP menu, and call
-        // capture, come with telephony.
-        Command::Reregister
-        | Command::TrunkPeers
-        | Command::HuntGroups
-        | Command::Routes
-        | Command::SipTrace
-        | Command::CallCapture => return None,
         // BLOCKED(phase3): the rate cap, line diagnostics and the
         // loopback self-test come with the first modulation.
         Command::RateCap | Command::LineDiagnostics | Command::LoopbackTest => return None,
@@ -684,8 +724,64 @@ impl Manager {
             .filter(|window| window.exists())
     }
 
+    /// The window of the SIP trace, while it is open.
+    pub fn trace_window(&self) -> Option<Hwnd> {
+        self.trace
+            .borrow()
+            .as_ref()
+            .map(ModelessDialog::hwnd)
+            .filter(|window| window.exists())
+    }
+
     pub(crate) fn hooks(&self) -> &Hooks {
         &self.options.hooks
+    }
+
+    /// Reads and changes the SIP trace. For the trace window, which
+    /// pauses and empties it.
+    pub(crate) fn with_trace<R>(
+        &self,
+        change: impl FnOnce(&mut model::TraceBuffer) -> R,
+    ) -> Option<R> {
+        let mut state = self.state.try_borrow_mut().ok()?;
+        Some(change(&mut state.model.trace))
+    }
+
+    /// Asks the service for the SIP messages as they pass, or to stop
+    /// sending them. For the trace window, when it opens and closes.
+    pub(crate) fn set_tracing(&self, on: bool) {
+        if let Ok(mut state) = self.state.try_borrow_mut() {
+            state.tracing = on;
+            if state.model.connected() {
+                state.subscribe_trace(on);
+            }
+        }
+    }
+
+    /// Asks for the lines again: something a dialog did changed what
+    /// they show.
+    pub(crate) fn refresh_lines(&self) {
+        if let Ok(mut state) = self.state.try_borrow_mut()
+            && state.model.connected()
+        {
+            state.request(Call::LinesList, Purpose::Lines);
+        }
+    }
+
+    /// Opens a folder in Explorer. A folder that cannot be opened is
+    /// message `RMD4014`.
+    pub(crate) fn open_folder(&self, owner: Hwnd, folder: &std::path::Path) {
+        if let Some(hook) = &self.options.hooks.open_folder {
+            hook(folder);
+            return;
+        }
+        if let Err(e) = win32::open_folder(Some(owner), folder) {
+            let error = ErrorInfo::from(message(
+                "RMD4014",
+                &[&folder.display().to_string(), &e.to_string()],
+            ));
+            self.show_error(owner, &error);
+        }
     }
 
     pub(crate) fn clock(&self) -> Clock {
@@ -1095,6 +1191,19 @@ impl Manager {
         *self.console.borrow_mut() = console;
     }
 
+    /// SIP trace: opens it, or brings the one that is open to the front.
+    fn open_trace(self: &Rc<Self>, window: Hwnd) {
+        if let Some(trace) = self.trace_window() {
+            trace.bring_to_front();
+            return;
+        }
+        // The one that was closed goes before the new one is made.
+        let closed = self.trace.borrow_mut().take();
+        drop(closed);
+        let trace = dialogs::trace::open(self, window);
+        *self.trace.borrow_mut() = trace;
+    }
+
     /// Shows or hides a bar and places everything again.
     fn toggle(&self, window: Hwnd, change: impl FnOnce(&View)) {
         if let Ok(view) = self.view.try_borrow()
@@ -1158,6 +1267,8 @@ impl Handler for Manager {
                 window.kill_timer(TICK);
                 let console = self.console.borrow_mut().take();
                 drop(console);
+                let trace = self.trace.borrow_mut().take();
+                drop(trace);
                 if let Ok(mut state) = self.state.try_borrow_mut() {
                     state.link = None;
                 }
@@ -1211,9 +1322,10 @@ impl Handler for Manager {
                     .try_borrow()
                     .ok()
                     .and_then(|view| view.as_ref().and_then(View::chosen_filter));
-                if let Some(filter) = chosen {
+                if let Some((filter, group)) = chosen {
                     self.change(window, |state, update| {
                         update.rows(state.model.lines.set_filter(filter));
+                        update.rows(state.model.lines.set_group(group));
                     });
                 }
                 Reply::Handled
@@ -1267,7 +1379,21 @@ impl Handler for Manager {
                     cell.text = state.model.lines.cell(row, shown, state.clock.now_ms());
                 }
                 if column == 0 {
-                    cell.image = state.model.lines.look(row).map(|look| look.image());
+                    cell.image = state.model.lines.row(row).map(model::row_image);
+                }
+                Reply::Handled
+            }
+            Event::ListTip {
+                id: ids::LIST,
+                row,
+                text,
+            } => {
+                // How the line is reached over SIP, and how its
+                // registration stands.
+                if let Ok(state) = self.state.try_borrow()
+                    && let Some(tip) = state.model.lines.row(row).and_then(model::sip_tip)
+                {
+                    *text = tip;
                 }
                 Reply::Handled
             }

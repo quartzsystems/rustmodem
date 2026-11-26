@@ -14,7 +14,7 @@ use crate::format::{EMPTY, TimeZone, csv_row, duration, grouped};
 pub const CALL_LIMIT: usize = 1000;
 
 /// The columns of the call history, in order.
-pub const CALL_COLUMNS: [(&str, i32, bool); 8] = [
+pub const CALL_COLUMNS: [(&str, i32, bool); 11] = [
     ("Time", 130, false),
     ("Line", 40, true),
     ("Direction", 70, false),
@@ -23,6 +23,9 @@ pub const CALL_COLUMNS: [(&str, i32, bool); 8] = [
     ("Reason", 130, false),
     ("Rate", 100, false),
     ("Bytes TX/RX", 110, true),
+    ("Codec", 50, false),
+    ("Lost", 45, true),
+    ("Slips", 40, true),
 ];
 
 /// The ended calls, newest first.
@@ -107,6 +110,14 @@ impl CallHistory {
         true
     }
 
+    /// Whether a row is marked: its call lost packets or slipped.
+    pub fn marked(&self, row: usize) -> bool {
+        self.calls
+            .get(row)
+            .and_then(|call| call.media.as_ref())
+            .is_some_and(|media| media.lost > 0 || media.slips > 0)
+    }
+
     /// What a cell of the history shows.
     pub fn cell(&self, row: usize, column: usize, zone: &dyn TimeZone) -> String {
         let Some(call) = self.calls.get(row) else {
@@ -138,6 +149,19 @@ impl CallHistory {
                 None => EMPTY.to_string(),
             },
             7 => format!("{} / {}", grouped(call.bytes_tx), grouped(call.bytes_rx)),
+            // A call with no RTP has nothing in the last three.
+            8 => match &call.media {
+                Some(media) => media.codec.clone(),
+                None => EMPTY.to_string(),
+            },
+            9 => match &call.media {
+                Some(media) => grouped(media.lost),
+                None => EMPTY.to_string(),
+            },
+            10 => match &call.media {
+                Some(media) => grouped(media.slips),
+                None => EMPTY.to_string(),
+            },
             _ => String::new(),
         }
     }
@@ -156,6 +180,12 @@ impl CallHistory {
             "Carrier",
             "Bytes TX",
             "Bytes RX",
+            "Codec",
+            "Lost",
+            "Late",
+            "Duplicate",
+            "Resync",
+            "Slips",
         ]);
         for call in &self.calls {
             let connected = call
@@ -169,6 +199,10 @@ impl CallHistory {
                 ),
                 None => (String::new(), String::new()),
             };
+            // A call with no RTP leaves these empty.
+            let media = |pick: &dyn Fn(&ctlproto::MediaInfo) -> String| {
+                call.media.as_deref().map(pick).unwrap_or_default()
+            };
             out.push_str(&csv_row(&[
                 &zone.wall(call.started_ms).date_time(),
                 &call.line.to_string(),
@@ -180,6 +214,12 @@ impl CallHistory {
                 &carrier,
                 &call.bytes_tx.to_string(),
                 &call.bytes_rx.to_string(),
+                &media(&|media| media.codec.clone()),
+                &media(&|media| media.lost.to_string()),
+                &media(&|media| media.late.to_string()),
+                &media(&|media| media.duplicate.to_string()),
+                &media(&|media| media.resync.to_string()),
+                &media(&|media| media.slips.to_string()),
             ]));
         }
         out

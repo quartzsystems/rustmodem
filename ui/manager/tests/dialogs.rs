@@ -193,6 +193,10 @@ fn every_dialog_opens() {
         (Command::Settings, "settings"),
         (Command::PortsAndDrivers, "ports"),
         (Command::About, "about"),
+        (Command::TrunkPeers, "trunk-peers"),
+        (Command::HuntGroups, "hunt-groups"),
+        (Command::Routes, "routes"),
+        (Command::CallCapture, "capture"),
     ] {
         bench.choose(command);
         // A modal dialog has come and gone by the time the command

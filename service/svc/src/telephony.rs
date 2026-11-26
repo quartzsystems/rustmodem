@@ -67,7 +67,7 @@ impl Observer for Watcher {
 
 /// Where call captures go: `media.capture_dir`, or `captures` under the
 /// log directory.
-fn capture_dir(config: &Config, log_dir: &Path) -> PathBuf {
+pub fn capture_dir(config: &Config, log_dir: &Path) -> PathBuf {
     if config.media.capture_dir.is_empty() {
         log_dir.join(CAPTURES)
     } else {

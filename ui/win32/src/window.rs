@@ -31,10 +31,10 @@ use windows::Win32::Graphics::Gdi::{COLOR_BTNFACE, HBRUSH, InvalidateRect, Updat
 use windows::Win32::UI::Controls::{
     CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NEWFONT,
     CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW, CLR_DEFAULT, LVIF_IMAGE, LVIF_STATE, LVIF_TEXT,
-    LVIS_SELECTED, LVN_COLUMNCLICK, LVN_GETDISPINFOW, LVN_ITEMCHANGED, LVN_KEYDOWN, NM_CUSTOMDRAW,
-    NM_DBLCLK, NM_RETURN, NMHDR, NMITEMACTIVATE, NMLISTVIEW, NMLVCUSTOMDRAW, NMLVDISPINFOW,
-    NMLVKEYDOWN, NMTBGETINFOTIPW, PROPSHEETPAGEW, PSN_APPLY, PSNRET_INVALID, PSNRET_NOERROR,
-    TBN_GETINFOTIPW, TCN_SELCHANGE,
+    LVIS_SELECTED, LVIS_STATEIMAGEMASK, LVN_COLUMNCLICK, LVN_GETDISPINFOW, LVN_GETINFOTIPW,
+    LVN_ITEMCHANGED, LVN_KEYDOWN, NM_CUSTOMDRAW, NM_DBLCLK, NM_RETURN, NMHDR, NMITEMACTIVATE,
+    NMLISTVIEW, NMLVCUSTOMDRAW, NMLVDISPINFOW, NMLVGETINFOTIPW, NMLVKEYDOWN, NMTBGETINFOTIPW,
+    PROPSHEETPAGEW, PSN_APPLY, PSNRET_INVALID, PSNRET_NOERROR, TBN_GETINFOTIPW, TCN_SELCHANGE,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -102,6 +102,10 @@ pub mod code {
     pub const COMBO_EDIT: u16 = 5;
     /// The text of an edit control changed.
     pub const EDIT_CHANGE: u16 = 0x0300;
+    /// The entry chosen in a list box changed.
+    pub const LIST_SELECTED: u16 = 1;
+    /// An entry of a list box was double-clicked.
+    pub const LIST_DOUBLE_CLICK: u16 = 2;
 }
 
 /// A rectangle in pixels.
@@ -306,6 +310,26 @@ pub enum Event<'a> {
         id: u16,
         /// The virtual key code.
         key: u16,
+    },
+    /// The box of a row of a [`crate::CheckList`] was checked or
+    /// cleared, by the user or by the program.
+    ListCheck {
+        /// The id of the list.
+        id: u16,
+        /// The row.
+        row: usize,
+        /// Whether the box is checked now.
+        checked: bool,
+    },
+    /// A list view asks for the tip of a row: what is shown while the
+    /// pointer rests on it. Left empty, there is no tip.
+    ListTip {
+        /// The id of the list view.
+        id: u16,
+        /// The row.
+        row: usize,
+        /// What to fill in.
+        text: &'a mut String,
     },
     /// A toolbar asks for the tip of a button.
     ToolTip {
@@ -580,6 +604,18 @@ impl Hwnd {
         // carries no pointers.
         unsafe {
             let _ = PostMessageW(Some(self.0), WM_COMMAND, WPARAM(usize::from(id)), LPARAM(0));
+        }
+    }
+
+    /// Sends the window a command with a code, as a control with that
+    /// id does when something happens in it: one of [`code`]. It arrives
+    /// after this returns.
+    pub fn command_code(self, id: u16, code: u16) {
+        let wparam = (usize::from(code) << 16) | usize::from(id);
+        // SAFETY: posting a message is sound for any handle; this one
+        // carries no pointers.
+        unsafe {
+            let _ = PostMessageW(Some(self.0), WM_COMMAND, WPARAM(wparam), LPARAM(0));
         }
     }
 
@@ -1250,11 +1286,47 @@ fn notify(handler: &dyn Handler, hwnd: Hwnd, lparam: LPARAM) -> Option<isize> {
         LVN_ITEMCHANGED => {
             // SAFETY: the code says the structure is an NMLISTVIEW.
             let info = unsafe { &*(lparam.0 as *const NMLISTVIEW) };
+            if !info.uChanged.contains(LVIF_STATE) {
+                return None;
+            }
+            // The state image is the check box of a list that has them:
+            // none while the row is being made, then the empty box or the
+            // checked one.
+            let (old_box, new_box) = (
+                (info.uOldState & LVIS_STATEIMAGEMASK.0) >> 12,
+                (info.uNewState & LVIS_STATEIMAGEMASK.0) >> 12,
+            );
+            if old_box != 0 && new_box != 0 && old_box != new_box && info.iItem >= 0 {
+                let event = Event::ListCheck {
+                    id,
+                    row: info.iItem as usize,
+                    checked: new_box == 2,
+                };
+                return reply(handler.event(hwnd, event), 0);
+            }
             let selection = (info.uNewState ^ info.uOldState) & LVIS_SELECTED.0 != 0;
-            if !info.uChanged.contains(LVIF_STATE) || !selection {
+            if !selection {
                 return None;
             }
             reply(handler.event(hwnd, Event::ListSelection { id }), 0)
+        }
+        LVN_GETINFOTIPW => {
+            // SAFETY: the code says the structure is an NMLVGETINFOTIPW,
+            // with a buffer for the receiver to write the tip to.
+            let info = unsafe { &mut *(lparam.0 as *mut NMLVGETINFOTIPW) };
+            let mut text = String::new();
+            handler.event(
+                hwnd,
+                Event::ListTip {
+                    id,
+                    row: info.iItem.max(0) as usize,
+                    text: &mut text,
+                },
+            );
+            // SAFETY: the list view gives a buffer of `cchTextMax`
+            // characters for the tip.
+            unsafe { copy_to_buffer(&text, info.pszText.0, info.cchTextMax.max(0) as usize) };
+            Some(0)
         }
         LVN_KEYDOWN => {
             // SAFETY: the code says the structure is an NMLVKEYDOWN.

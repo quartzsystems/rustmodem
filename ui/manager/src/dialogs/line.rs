@@ -11,7 +11,10 @@
 
 use std::rc::Rc;
 
-use ctlproto::{Call, ErrorInfo, LineChange, LineInfo, LineSpec, PortInfo, PortKind, PortList};
+use ctlproto::{
+    Call, ErrorInfo, LineChange, LineInfo, LineSpec, PortInfo, PortKind, PortList, RegisterChange,
+    RegisterSpec, SipMode,
+};
 use win32::controls::{self, Combo, UpDown};
 use win32::{DialogTemplate, Event, Handler, Hwnd, Reply, id};
 
@@ -40,6 +43,24 @@ pub mod ids {
     pub const ANSWER_OK: u16 = 308;
     /// Answer `ERROR` to an unknown command.
     pub const ANSWER_ERROR: u16 = 309;
+    /// The modem engine.
+    pub const ENGINE: u16 = 310;
+    /// SIP: the line is reached by the trunk, or with no SIP not at all.
+    pub const SIP_TRUNK: u16 = 311;
+    /// SIP: the line registers to a PBX.
+    pub const SIP_REGISTER: u16 = 312;
+    /// The registrar.
+    pub const SERVER: u16 = 313;
+    /// The extension.
+    pub const USER: u16 = 314;
+    /// The password.
+    pub const PASSWORD: u16 = 315;
+    /// The user name to authenticate with.
+    pub const AUTH_USER: u16 = 316;
+    /// The registration time to ask for.
+    pub const EXPIRES: u16 = 317;
+    /// The arrows beside the registration time.
+    pub const EXPIRES_ARROWS: u16 = 318;
 }
 
 use ids::{
@@ -54,8 +75,21 @@ const BACKEND: &str = "com0com";
 /// The line ids the service takes.
 const LINE_IDS: (u32, u32) = (1, 999);
 
+/// The engines, in the order the combo box lists them: what the
+/// service calls each, and what the user is shown.
+pub const ENGINES: [(&str, &str); 2] = [
+    ("null", "Null: data straight into the samples"),
+    ("echo", "Echo: sends back what it receives"),
+];
+
+/// The registration times the service takes, in seconds.
+const EXPIRES: (u32, u32) = (60, 86_400);
+
+/// The registration time a line asks for when none is given.
+const DEFAULT_EXPIRES: u32 = 300;
+
 fn template(title: &str) -> DialogTemplate {
-    DialogTemplate::new(title, 250, 172)
+    DialogTemplate::new(title, 250, 318)
         .label(7, 9, 80, 8, "Line &id:")
         .number(ID_NUMBER, 90, 7, 40, 14)
         .up_down(ID_NUMBER_ARROWS)
@@ -72,6 +106,30 @@ fn template(title: &str) -> DialogTemplate {
         .group(7, 112, 236, 28, "Unknown AT commands")
         .radio_button(ID_ANSWER_OK, 14, 124, 80, 10, "Answer &OK", true)
         .radio_button(ID_ANSWER_ERROR, 100, 124, 90, 10, "Answer E&RROR", false)
+        .label(7, 149, 80, 8, "Modem en&gine:")
+        .combo(ids::ENGINE, 90, 147, 153, 50)
+        .group(7, 166, 236, 120, "SIP")
+        .radio_button(ids::SIP_TRUNK, 14, 178, 222, 10, "&Trunk", true)
+        .radio_button(
+            ids::SIP_REGISTER,
+            14,
+            191,
+            222,
+            10,
+            "Register to a PB&X",
+            false,
+        )
+        .label(26, 207, 62, 8, "&Server:")
+        .edit(ids::SERVER, 90, 205, 146, 14)
+        .label(26, 223, 62, 8, "E&xtension:")
+        .edit(ids::USER, 90, 221, 80, 14)
+        .label(26, 239, 62, 8, "Pass&word:")
+        .password(ids::PASSWORD, 90, 237, 146, 14)
+        .label(26, 255, 62, 8, "Authenticate a&s:")
+        .edit(ids::AUTH_USER, 90, 253, 80, 14)
+        .label(26, 271, 62, 8, "Expir&y (seconds):")
+        .number(ids::EXPIRES, 90, 269, 40, 14)
+        .up_down(ids::EXPIRES_ARROWS)
         .ok_cancel()
 }
 
@@ -91,6 +149,20 @@ pub struct Form {
     pub enabled: bool,
     /// Whether an unknown AT command is answered `OK`.
     pub answer_ok: bool,
+    /// The modem engine, as the service calls it.
+    pub engine: String,
+    /// Whether the line registers to a PBX.
+    pub register: bool,
+    /// The registrar.
+    pub server: String,
+    /// The extension.
+    pub user: String,
+    /// The password. On Edit an empty one means the password stays.
+    pub password: String,
+    /// The user name to authenticate with; empty for the extension.
+    pub auth_user: String,
+    /// The registration time to ask for, in seconds.
+    pub expires: String,
 }
 
 impl Form {
@@ -103,6 +175,13 @@ impl Form {
             rings: "0".to_string(),
             enabled: true,
             answer_ok: true,
+            engine: ENGINES[0].0.to_string(),
+            register: false,
+            server: String::new(),
+            user: String::new(),
+            password: String::new(),
+            auth_user: String::new(),
+            expires: DEFAULT_EXPIRES.to_string(),
         }
     }
 
@@ -115,7 +194,81 @@ impl Form {
             rings: line.auto_answer_rings.to_string(),
             enabled: line.enabled,
             answer_ok: line.unknown_command != "error",
+            engine: line.engine.clone(),
+            register: line.sip.mode == SipMode::Registered,
+            server: line.sip.server.clone().unwrap_or_default(),
+            user: line.sip.extension.clone().unwrap_or_default(),
+            // The service never says what the password is.
+            password: String::new(),
+            auth_user: line.sip.auth_user.clone().unwrap_or_default(),
+            expires: line.sip.expires_s.unwrap_or(DEFAULT_EXPIRES).to_string(),
         }
+    }
+
+    fn expires(&self) -> Result<u32, ErrorInfo> {
+        number_in("Expiry", &self.expires, EXPIRES.0, EXPIRES.1)
+    }
+
+    /// The server and the extension, neither of them empty.
+    fn registrar(&self) -> Result<(String, String), ErrorInfo> {
+        let (server, user) = (self.server.trim(), self.user.trim());
+        if server.is_empty() {
+            return Err(must_not_be_empty("Server"));
+        }
+        if user.is_empty() {
+            return Err(must_not_be_empty("Extension"));
+        }
+        Ok((server.to_string(), user.to_string()))
+    }
+
+    /// The registration of a line to add, if it registers.
+    fn register_spec(&self) -> Result<Option<RegisterSpec>, ErrorInfo> {
+        if !self.register {
+            return Ok(None);
+        }
+        let (server, user) = self.registrar()?;
+        if self.password.is_empty() {
+            return Err(must_not_be_empty("Password"));
+        }
+        let expires = self.expires()?;
+        let auth_user = self.auth_user.trim();
+        Ok(Some(RegisterSpec {
+            server,
+            user,
+            password: self.password.clone(),
+            auth_user: (!auth_user.is_empty()).then(|| auth_user.to_string()),
+            expires_s: (expires != DEFAULT_EXPIRES).then_some(expires),
+        }))
+    }
+
+    /// What to change of a line's registration: only what is not as the
+    /// line has it. A password left empty stays as it is; a line that
+    /// had no registration needs one.
+    fn register_change(&self, line: &LineInfo) -> Result<Option<RegisterChange>, ErrorInfo> {
+        let registered = line.sip.mode == SipMode::Registered;
+        if !self.register {
+            // An empty server takes the registration away.
+            return Ok(registered.then(|| RegisterChange {
+                server: Some(String::new()),
+                ..RegisterChange::default()
+            }));
+        }
+        let (server, user) = self.registrar()?;
+        if !registered && self.password.is_empty() {
+            return Err(must_not_be_empty("Password"));
+        }
+        let expires = self.expires()?;
+        let auth_user = self.auth_user.trim();
+        let before = &line.sip;
+        let change = RegisterChange {
+            server: (before.server.as_deref() != Some(server.as_str())).then_some(server),
+            user: (before.extension.as_deref() != Some(user.as_str())).then_some(user),
+            password: (!self.password.is_empty()).then(|| self.password.clone()),
+            auth_user: (before.auth_user.as_deref().unwrap_or_default() != auth_user)
+                .then(|| auth_user.to_string()),
+            expires_s: (before.expires_s.unwrap_or(DEFAULT_EXPIRES) != expires).then_some(expires),
+        };
+        Ok((change != RegisterChange::default()).then_some(change))
     }
 
     /// The name of the port: what is before the first space.
@@ -146,10 +299,8 @@ impl Form {
             enabled: Some(self.enabled),
             auto_answer_rings: Some(self.rings()?),
             unknown_command: Some(self.unknown_command()),
-            // BLOCKED(phase2): the engine and the registration come with
-            // the dialog's SIP group in the next work package.
-            engine: None,
-            register: None,
+            engine: Some(self.engine.clone()),
+            register: self.register_spec()?,
         })
     }
 
@@ -170,8 +321,8 @@ impl Form {
             enabled: (self.enabled != line.enabled).then_some(self.enabled),
             auto_answer_rings: (rings != line.auto_answer_rings).then_some(rings),
             unknown_command: (unknown_command != line.unknown_command).then_some(unknown_command),
-            engine: None,
-            register: None,
+            engine: (self.engine != line.engine).then(|| self.engine.clone()),
+            register: self.register_change(line)?,
         })
     }
 }
@@ -184,6 +335,8 @@ fn changes_something(change: &LineChange) -> bool {
         || change.enabled.is_some()
         || change.auto_answer_rings.is_some()
         || change.unknown_command.is_some()
+        || change.engine.is_some()
+        || change.register.is_some()
 }
 
 /// Whether a port has the name Windows gives a serial port: `COM` and a
@@ -253,9 +406,27 @@ struct LineDialog {
     kind: Kind,
     start: Form,
     ports: Vec<String>,
+    /// The service speaks SIP: a line that does not register is reached
+    /// by the trunk. Without SIP it is not reached at all.
+    sip: bool,
 }
 
 impl LineDialog {
+    /// The fields of the registration are for a line that registers.
+    fn show_register(dialog: Hwnd) {
+        let register = controls::checked(dialog.item(ids::SIP_REGISTER));
+        for field in [
+            ids::SERVER,
+            ids::USER,
+            ids::PASSWORD,
+            ids::AUTH_USER,
+            ids::EXPIRES,
+            ids::EXPIRES_ARROWS,
+        ] {
+            dialog.item(field).set_enabled(register);
+        }
+    }
+
     fn fill(&self, dialog: Hwnd) {
         let number = dialog.item(ID_NUMBER);
         number.set_text(&self.start.number);
@@ -286,6 +457,37 @@ impl LineDialog {
         controls::set_checked(dialog.item(ID_ENABLED), self.start.enabled);
         controls::set_checked(dialog.item(ID_ANSWER_OK), self.start.answer_ok);
         controls::set_checked(dialog.item(ID_ANSWER_ERROR), !self.start.answer_ok);
+
+        let engine = Combo::of(dialog.item(ids::ENGINE));
+        for (_, text) in ENGINES {
+            engine.add(text);
+        }
+        engine.select(
+            ENGINES
+                .iter()
+                .position(|(name, _)| *name == self.start.engine),
+        );
+        // A line that does not register is reached by the trunk when the
+        // service speaks SIP, and not at all when it does not: the first
+        // choice says which.
+        dialog.item(ids::SIP_TRUNK).set_text(if self.sip {
+            "&Trunk: calls come from the trusted peers"
+        } else {
+            "&None: the service does not speak SIP"
+        });
+        controls::set_checked(dialog.item(ids::SIP_TRUNK), !self.start.register);
+        controls::set_checked(dialog.item(ids::SIP_REGISTER), self.start.register);
+        dialog.item(ids::SERVER).set_text(&self.start.server);
+        dialog.item(ids::USER).set_text(&self.start.user);
+        dialog.item(ids::AUTH_USER).set_text(&self.start.auth_user);
+        let expires = dialog.item(ids::EXPIRES);
+        UpDown::of(dialog.item(ids::EXPIRES_ARROWS)).attach(
+            expires,
+            EXPIRES.0 as i32,
+            EXPIRES.1 as i32,
+        );
+        expires.set_text(&self.start.expires);
+        Self::show_register(dialog);
     }
 
     fn read(dialog: Hwnd) -> Form {
@@ -296,6 +498,17 @@ impl LineDialog {
             rings: dialog.item(ID_RINGS).text(),
             enabled: controls::checked(dialog.item(ID_ENABLED)),
             answer_ok: controls::checked(dialog.item(ID_ANSWER_OK)),
+            engine: Combo::of(dialog.item(ids::ENGINE))
+                .selected()
+                .and_then(|index| ENGINES.get(index))
+                .map_or(ENGINES[0].0, |(name, _)| *name)
+                .to_string(),
+            register: controls::checked(dialog.item(ids::SIP_REGISTER)),
+            server: dialog.item(ids::SERVER).text(),
+            user: dialog.item(ids::USER).text(),
+            password: dialog.item(ids::PASSWORD).text(),
+            auth_user: dialog.item(ids::AUTH_USER).text(),
+            expires: dialog.item(ids::EXPIRES).text(),
         }
     }
 
@@ -338,6 +551,13 @@ impl Handler for LineDialog {
                     Reply::Default
                 }
             }
+            Event::Command {
+                id: ids::SIP_TRUNK | ids::SIP_REGISTER,
+                ..
+            } => {
+                Self::show_register(dialog);
+                Reply::Handled
+            }
             Event::Command { id: id::OK, .. } => {
                 match self.send(dialog) {
                     Ok(()) => dialog.end_dialog(id::OK),
@@ -349,6 +569,15 @@ impl Handler for LineDialog {
             _ => Reply::Default,
         }
     }
+}
+
+/// Whether the service speaks SIP, as far as the manager knows.
+fn sip_on(manager: &Manager) -> bool {
+    manager.with_model(|model| {
+        model
+            .stats()
+            .is_some_and(|stats| stats.sip.listener != ctlproto::ListenerState::Off)
+    })
 }
 
 /// The ports to offer, as the service lists them now. If the service
@@ -368,6 +597,7 @@ pub fn new_line(manager: &Rc<Manager>, owner: Hwnd) {
         kind: Kind::New,
         start: Form::new_line(id),
         ports: ports(manager, owner),
+        sip: sip_on(manager),
     });
     template("New line").show_modal(Some(owner), handler);
 }
@@ -379,6 +609,7 @@ pub fn edit_line(manager: &Rc<Manager>, owner: Hwnd, line: LineInfo) {
         start: Form::of(&line),
         kind: Kind::Edit(Box::new(line)),
         ports: ports(manager, owner),
+        sip: sip_on(manager),
     });
     template("Edit line").show_modal(Some(owner), handler);
 }
@@ -564,5 +795,177 @@ mod tests {
         assert!(com_named("COM1") && com_named("com25"));
         assert!(!com_named("COM") && !com_named("CNCB0") && !com_named("COMX"));
         assert!(!com_named("") && !com_named("CO"));
+    }
+
+    fn registered() -> LineInfo {
+        let mut line = line();
+        line.sip = ctlproto::LineSip {
+            mode: SipMode::Registered,
+            extension: Some("203".to_string()),
+            server: Some("pbx.example.com".to_string()),
+            auth_user: None,
+            expires_s: Some(300),
+            registration: None,
+            has_password: true,
+        };
+        line
+    }
+
+    #[test]
+    fn a_new_line_takes_an_engine_and_a_registration() {
+        let form = Form {
+            port: "CNCB4".to_string(),
+            ..Form::new_line(5)
+        };
+        let spec = form.spec().unwrap();
+        assert_eq!(spec.engine.as_deref(), Some("null"));
+        assert_eq!(spec.register, None);
+
+        let form = Form {
+            engine: "echo".to_string(),
+            register: true,
+            server: " pbx.example.com ".to_string(),
+            user: "205".to_string(),
+            password: "open sesame".to_string(),
+            ..form
+        };
+        let spec = form.spec().unwrap();
+        assert_eq!(spec.engine.as_deref(), Some("echo"));
+        let register = spec.register.unwrap();
+        assert_eq!(register.server, "pbx.example.com");
+        assert_eq!(register.user, "205");
+        assert_eq!(register.password, "open sesame");
+        // What was left as it started is left to the service.
+        assert_eq!((register.auth_user, register.expires_s), (None, None));
+
+        let form = Form {
+            auth_user: "line205".to_string(),
+            expires: "600".to_string(),
+            ..form
+        };
+        let register = form.spec().unwrap().register.unwrap();
+        assert_eq!(register.auth_user.as_deref(), Some("line205"));
+        assert_eq!(register.expires_s, Some(600));
+
+        // A line that registers needs all three, and a time the service
+        // takes.
+        for (broken, field) in [
+            (
+                Form {
+                    server: String::new(),
+                    ..form.clone()
+                },
+                "Server",
+            ),
+            (
+                Form {
+                    user: "  ".to_string(),
+                    ..form.clone()
+                },
+                "Extension",
+            ),
+            (
+                Form {
+                    password: String::new(),
+                    ..form.clone()
+                },
+                "Password",
+            ),
+        ] {
+            assert_eq!(
+                broken.spec().unwrap_err().text,
+                format!("{field} must not be empty.")
+            );
+        }
+        let short = Form {
+            expires: "5".to_string(),
+            ..form
+        };
+        assert_eq!(short.spec().unwrap_err().msgid, "RMD4008");
+    }
+
+    #[test]
+    fn a_registration_that_was_not_touched_is_not_sent_and_its_password_stays() {
+        let line = registered();
+        let form = Form::of(&line);
+        assert!(form.register);
+        assert_eq!(form.server, "pbx.example.com");
+        assert_eq!(form.user, "203");
+        assert_eq!(form.password, "");
+        assert_eq!(form.expires, "300");
+        let change = form.change(&line).unwrap();
+        assert_eq!(change.register, None);
+        assert!(!changes_something(&change));
+
+        // Only what was changed is sent; a password that was typed is.
+        let edited = Form {
+            user: "204".to_string(),
+            password: "another".to_string(),
+            expires: "600".to_string(),
+            ..form.clone()
+        };
+        let change = edited.change(&line).unwrap();
+        let register = change.register.clone().unwrap();
+        assert_eq!(register.server, None);
+        assert_eq!(register.user.as_deref(), Some("204"));
+        assert_eq!(register.password.as_deref(), Some("another"));
+        assert_eq!(register.auth_user, None);
+        assert_eq!(register.expires_s, Some(600));
+        assert!(changes_something(&change));
+
+        // The user name to authenticate with can be taken away again.
+        let mut named = line.clone();
+        named.sip.auth_user = Some("line203".to_string());
+        let change = form.change(&named).unwrap();
+        assert_eq!(
+            change.register.unwrap().auth_user.as_deref(),
+            Some(""),
+            "an empty name means the extension"
+        );
+    }
+
+    #[test]
+    fn a_line_stops_registering_and_another_starts() {
+        let line = registered();
+        let trunk = Form {
+            register: false,
+            ..Form::of(&line)
+        };
+        let register = trunk.change(&line).unwrap().register.unwrap();
+        assert_eq!(register.server.as_deref(), Some(""));
+        assert_eq!(register.user, None);
+
+        // A line that did not register needs the password with the rest.
+        let plain = self::line();
+        let starts = Form {
+            register: true,
+            server: "pbx".to_string(),
+            user: "203".to_string(),
+            ..Form::of(&plain)
+        };
+        assert_eq!(
+            starts.change(&plain).unwrap_err().text,
+            "Password must not be empty."
+        );
+        let starts = Form {
+            password: "pw".to_string(),
+            ..starts
+        };
+        let register = starts.change(&plain).unwrap().register.unwrap();
+        assert_eq!(register.server.as_deref(), Some("pbx"));
+        assert_eq!(register.user.as_deref(), Some("203"));
+        assert_eq!(register.password.as_deref(), Some("pw"));
+        // A line that does not register and is left so changes nothing.
+        assert_eq!(Form::of(&plain).change(&plain).unwrap().register, None);
+
+        // The engine is sent when it was changed.
+        let echo = Form {
+            engine: "echo".to_string(),
+            ..Form::of(&plain)
+        };
+        let change = echo.change(&plain).unwrap();
+        assert_eq!(change.engine.as_deref(), Some("echo"));
+        assert!(changes_something(&change));
+        assert_eq!(ENGINES.map(|(name, _)| name), ["null", "echo"]);
     }
 }
