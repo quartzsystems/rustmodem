@@ -41,13 +41,21 @@ control the service over a local API; everything is in-house Rust under MIT.
 7. **Markers.** Unfinished or deferred code is marked
    `BLOCKED(phaseN): reason` or `NEEDS-CODY: reason`. No bare `TODO`, `FIXME`
    or `unimplemented!()`.
-8. **`unsafe`.** `#![forbid(unsafe_code)]` in every crate except `dte/serial`
-   and `service/svc`, where each `unsafe` block carries a `// SAFETY:` comment.
+8. **`unsafe`.** `#![forbid(unsafe_code)]` in every crate except `dte/serial`,
+   `service/svc`, `service/pipe` and `ui/win32`, where each `unsafe` block
+   carries a `// SAFETY:` comment. Everything the manager needs from Win32
+   goes through a safe wrapper in `ui/win32`.
 9. **Ask, do not guess,** when the handoff is silent on something that changes
    an interface. Record the answer in the phase record.
 
 Every user-visible error is an `RMD` message from `service/msg`. No free-text
-error strings cross a crate boundary to the user.
+error strings cross a crate boundary to the user. The manager shows a message
+in a task dialog: the id in the title, the text as the main instruction, the
+cause and the recovery in the part that expands.
+
+The manager is built from the stock Win32 common controls and nothing else:
+no toolkit that draws its own widgets, no theme, palette or font of its own.
+If a stock control exists for a job, use it.
 
 ## Layout
 
@@ -62,14 +70,21 @@ service/msg         RMD message catalogue
 service/config      TOML schema, validation, write-back
 service/ctlproto    control API message types
 service/ctlsrv      control API server
-service/pool        lines, line state machine, null switch
+service/pipe        named pipe transport: listener and client
+service/pool        lines, line state machine, null switch, statistics
 service/svc         rustmodem-svc.exe
+ui/model            the manager's data model (pure)
+ui/glyph            icons drawn in code; .ico and .res writers (pure)
+ui/win32            safe wrappers over the Win32 controls the manager uses
+ui/manager          rustmodem-manager.exe, "RustModem Manager"
 tools/ctl           rustmodemctl.exe
+tools/demosvc       rustmodem-demosvc.exe: a pool on memory ports, scripted
 tools/fuzz          cargo-fuzz targets (own lockfile, outside the workspace)
 ```
 
 Pure crates (no OS calls, must pass on Linux): `engine`, `at`, `msg`,
-`config`, `ctlproto`, `pool`, and the trait and memory backend of `serial`.
+`config`, `ctlproto`, `pool`, `glyph`, `model`, and the trait and memory
+backend of `serial`.
 
 ## Phases
 
@@ -84,7 +99,24 @@ Pure crates (no OS calls, must pass on Linux): `engine`, `at`, `msg`,
 | 6 to 8 | V.32bis, V.34, V.90 |
 | 9 | Extensions |
 
-The record of each phase is in `docs/` (`docs/PHASE0.md` for phase 0).
+The record of each phase is in `docs/`: `docs/PHASE0.md`, `docs/PHASE1.md`.
+Phases 0 and 1 are built.
+
+## Running the manager
+
+The manager needs no com0com and no elevated prompt against the demo
+service, which runs a real pool on in-memory ports with scripted calls and
+admits the user who started it:
+
+```
+cargo run -p demosvc -- --script busy --lines 12
+cargo run -p manager -- --demo
+```
+
+`--script frozen` gives the same lines, calls and statistics on every run,
+which is what the screenshot tests use; `--script idle` gives lines and no
+calls. Against the real service the manager is `rustmodem-manager.exe` with no
+arguments, and needs administrator rights, which it offers to get.
 
 ## Checks
 
@@ -97,14 +129,29 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo deny check
 cargo test --workspace
-cargo build --release -p svc -p ctl
+cargo build --release -p svc -p ctl -p manager
 ```
 
 The pure crates on Linux (CI does this; WSL works locally):
 
 ```
-cargo test -p engine -p at -p serial -p msg -p config -p ctlproto -p pool
+cargo test -p engine -p at -p serial -p msg -p config -p ctlproto -p pool -p glyph -p model
 ```
+
+`cargo test --workspace` opens the manager's window many times over: its
+tests run it against the demo service on the desktop of whoever runs them,
+and one of them, the smoke test, takes a minute.
+
+The screenshot tests (`ui/manager/tests/screenshots.rs`) compare the main
+window and every dialog with the goldens in `ui/manager/tests/goldens/`. The
+goldens are blessed on the CI runner image, so the comparison fails the run
+on CI only; elsewhere it reports what differs and passes. The pictures, and
+for a view that fails its golden and a picture of the difference, go to
+`target/screenshots/`, which CI uploads. After a change that is meant to
+change how a view looks, take the new goldens from that artifact of a CI
+run, look at each, and commit them. `RM_BLESS=1` writes the pictures of the
+machine at hand as goldens, `RM_SCREENSHOTS=strict` fails on a difference
+anywhere, and `RM_SCREENSHOTS=skip` takes no pictures.
 
 The fuzz target (nightly toolchain and cargo-fuzz, on Linux or WSL):
 
