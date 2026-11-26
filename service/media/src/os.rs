@@ -18,9 +18,10 @@ use std::net::UdpSocket;
 /// The size asked for each of a call's socket buffers. A second of the
 /// smallest packets, a hundred of 120 octets with their headers, is 12 kB;
 /// this holds several seconds of the largest.
+#[cfg(windows)]
 pub const SOCKET_BUFFER: i32 = 256 * 1024;
 
-/// Asks for receive and send buffers of [`SOCKET_BUFFER`] octets. A
+/// Asks for receive and send buffers of 256 kB each. A
 /// system that gives less gives what it gives: the call still works.
 #[cfg(windows)]
 pub fn size_buffers(socket: &UdpSocket) {
