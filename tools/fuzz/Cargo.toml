@@ -25,10 +25,20 @@ at = { path = "../../dte/at" }
 sdp = { path = "../../voip/sdp" }
 rtp = { path = "../../voip/rtp" }
 sip = { path = "../../voip/sip" }
+g711 = { path = "../../dsp/g711" }
+fsk = { path = "../../modem/fsk" }
+alloccount = { path = "../alloccount" }
 
 [[bin]]
 name = "at_input"
 path = "fuzz_targets/at_input.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fsk_demod"
+path = "fuzz_targets/fsk_demod.rs"
 test = false
 doc = false
 bench = false

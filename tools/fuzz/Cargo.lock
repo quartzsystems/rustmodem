@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "alloccount"
+version = "0.0.4"
+
+[[package]]
 name = "arbitrary"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10,7 +14,7 @@ checksum = "3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed"
 
 [[package]]
 name = "at"
-version = "0.0.2"
+version = "0.0.4"
 dependencies = [
  "engine",
 ]
@@ -78,8 +82,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dspkit"
+version = "0.0.4"
+dependencies = [
+ "g711",
+]
+
+[[package]]
 name = "engine"
-version = "0.0.2"
+version = "0.0.4"
 
 [[package]]
 name = "find-msvc-tools"
@@ -88,15 +99,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
+name = "fsk"
+version = "0.0.4"
+dependencies = [
+ "dspkit",
+ "g711",
+]
+
+[[package]]
 name = "fuzz"
 version = "0.0.0"
 dependencies = [
+ "alloccount",
  "at",
+ "fsk",
+ "g711",
  "libfuzzer-sys",
  "rtp",
  "sdp",
  "sip",
 ]
+
+[[package]]
+name = "g711"
+version = "0.0.4"
 
 [[package]]
 name = "getrandom"
@@ -162,11 +188,11 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rtp"
-version = "0.0.2"
+version = "0.0.4"
 
 [[package]]
 name = "sdp"
-version = "0.0.2"
+version = "0.0.4"
 
 [[package]]
 name = "sha2"
@@ -187,7 +213,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sip"
-version = "0.0.2"
+version = "0.0.4"
 dependencies = [
  "md-5",
  "sha2",

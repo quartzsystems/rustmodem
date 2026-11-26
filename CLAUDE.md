@@ -42,13 +42,17 @@ control the service over a local API; everything is in-house Rust under MIT.
    `BLOCKED(phaseN): reason` or `NEEDS-CODY: reason`. No bare `TODO`, `FIXME`
    or `unimplemented!()`.
 8. **`unsafe`.** `#![forbid(unsafe_code)]` in every crate except `dte/serial`,
-   `service/svc`, `service/pipe`, `service/media` and `ui/win32`, where each
+   `service/svc`, `service/pipe`, `service/media`, `ui/win32` and
+   `tools/alloccount`, where each
    `unsafe` block carries a `// SAFETY:` comment. In `service/media` it is
    in `os.rs` only, for thread priority (MMCSS) and the socket calls `std`
    cannot make; every other module of the crate forbids it. In
    `service/svc` it is in the program only: the library, which is the
    runner, forbids it. Everything the manager needs from Win32 goes through
    a safe wrapper in `ui/win32`.
+   `tools/alloccount` is the counting allocator of the tests that assert
+   a path allocates nothing: an allocator cannot be written without
+   `unsafe`, so it is there and in no modem crate or test of one.
 9. **Ask, do not guess,** when the handoff is silent on something that changes
    an interface. Record the answer in the phase record.
 10. **Tokio lives in the I/O shell of the service.** A pure crate or a media
@@ -200,8 +204,8 @@ The pure crates on Linux (CI does this; WSL works locally):
 
 ```
 cargo fmt --check
-cargo clippy -p g711 -p dspkit -p tones -p chansim -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p glyph -p model --all-targets -- -D warnings
-cargo test -p g711 -p dspkit -p tones -p chansim -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p glyph -p model
+cargo clippy -p g711 -p dspkit -p tones -p chansim -p fsk -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p glyph -p model --all-targets -- -D warnings
+cargo test -p g711 -p dspkit -p tones -p chansim -p fsk -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p glyph -p model
 cargo clippy -p ctlsrv --all-targets -- -D warnings
 cargo clippy -p svc --lib --test '*' -- -D warnings
 cargo test -p ctlsrv
@@ -232,7 +236,8 @@ run, look at each, and commit them. `RM_BLESS=1` writes the pictures of the
 machine at hand as goldens, `RM_SCREENSHOTS=strict` fails on a difference
 anywhere, and `RM_SCREENSHOTS=skip` takes no pictures.
 
-The fuzz targets, `at_input`, `sdp_parse`, `rtp_packet` and `sip_message`
+The fuzz targets, `at_input`, `sdp_parse`, `rtp_packet`, `sip_message` and
+`fsk_demod`
 (nightly toolchain and cargo-fuzz, on Linux or WSL):
 
 ```

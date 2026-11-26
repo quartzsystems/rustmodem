@@ -10,7 +10,9 @@ members = [
     "dsp/dspkit",
     "dsp/tones",
     "dsp/chansim",
-    # Modem: the engine trait every softmodem implements, and the null engine.
+    # Modem: the modulations, and the engine trait every softmodem
+    # implements with its engines.
+    "modem/fsk",
     "modem/engine",
     # DTE: what the host sees on the COM port.
     "dte/at",
@@ -38,6 +40,8 @@ members = [
     "tools/ctl",
     "tools/demosvc",
     "tools/sippeer",
+    # A counting allocator for the tests that assert no allocation.
+    "tools/alloccount",
 ]
 # The fuzz targets build with cargo-fuzz on a nightly toolchain and keep
 # their own lockfile.
@@ -83,6 +87,8 @@ png = "0.18.1"
 # The workspace's own crates.
 g711 = { path = "dsp/g711" }
 dspkit = { path = "dsp/dspkit" }
+chansim = { path = "dsp/chansim" }
+alloccount = { path = "tools/alloccount" }
 engine = { path = "modem/engine" }
 at = { path = "dte/at" }
 serial = { path = "dte/serial" }
@@ -123,6 +129,9 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.chansim]
+opt-level = 3
+
+[profile.dev.package.fsk]
 opt-level = 3
 
 [profile.release]

@@ -9,6 +9,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "alloccount"
+version = "0.0.4"
+
+[[package]]
 name = "at"
 version = "0.0.4"
 dependencies = [
@@ -229,6 +233,16 @@ dependencies = [
  "crc32fast",
  "miniz_oxide 0.9.1",
  "zlib-rs",
+]
+
+[[package]]
+name = "fsk"
+version = "0.0.4"
+dependencies = [
+ "alloccount",
+ "chansim",
+ "dspkit",
+ "g711",
 ]
 
 [[package]]

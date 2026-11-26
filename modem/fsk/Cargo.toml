@@ -1,0 +1,23 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+[package]
+name = "fsk"
+description = "The V.21 and Bell 103 modems with start-stop framing (pure)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+dspkit.workspace = true
+g711.workspace = true
+
+[dev-dependencies]
+alloccount.workspace = true
+chansim.workspace = true
+
+[lints]
+workspace = true
