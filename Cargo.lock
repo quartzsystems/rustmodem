@@ -79,6 +79,16 @@ dependencies = [
 [[package]]
 name = "ctlsrv"
 version = "0.0.1"
+dependencies = [
+ "config",
+ "ctlproto",
+ "engine",
+ "msg",
+ "pool",
+ "serde",
+ "serde_json",
+ "serial",
+]
 
 [[package]]
 name = "engine"

@@ -3,12 +3,29 @@
 // root directory of this project.
 
 //! The control API message types.
+//!
+//! These are the serde types of the control API and nothing else: no I/O,
+//! no threads. The service, the command-line client and the manager all
+//! use them, so they agree on the wire format by construction.
+//!
+//! - `model` is what the service reports: lines, calls and events.
+//! - `wire` is the framing: hello, requests, responses, and the methods
+//!   with their parameters and results.
+//! - [`doc`] describes the API for people and renders
+//!   `docs/CONTROL_API.md`.
 
 #![forbid(unsafe_code)]
 
+pub mod doc;
 mod model;
+mod wire;
 
 pub use model::{
     CallEvent, CallInfo, CallRecord, ConnectInfo, Counters, Direction, EndReason, ErrorInfo, Event,
     LineInfo, LineState, LogEvent, LogLevel,
+};
+pub use wire::{
+    Call, CallList, CallsQuery, ClientFrame, Done, EVENT_NAMES, EventSelection, Hello, LineChange,
+    LineList, LineRef, LineSpec, MAX_MESSAGE_BYTES, PROTOCOL, Reloaded, RequestFrame, ServerFrame,
+    ServiceInfo, Subscription, decode_client, decode_server, encode,
 };

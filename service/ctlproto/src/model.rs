@@ -27,6 +27,16 @@ pub enum LineState {
 }
 
 impl LineState {
+    /// Every state.
+    pub const ALL: [LineState; 6] = [
+        LineState::Disabled,
+        LineState::NotReady,
+        LineState::Idle,
+        LineState::Ringing,
+        LineState::Handshaking,
+        LineState::Online,
+    ];
+
     /// The state as the control API spells it.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -51,6 +61,9 @@ pub enum Direction {
 }
 
 impl Direction {
+    /// Both directions.
+    pub const ALL: [Direction; 2] = [Direction::Outgoing, Direction::Incoming];
+
     /// The direction as the control API spells it.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -80,8 +93,8 @@ pub enum EndReason {
     Remote,
     /// The caller gave up before the line answered.
     Abandoned,
-    /// The call could not be set up: the number does not exist or the line
-    /// it names is not in service.
+    /// The call could not be set up or carried on: the number is not a line
+    /// in service, the line called went away, or the line's port failed.
     Failed,
     /// The host reset the modem with a `Z` command.
     Reset,
@@ -92,6 +105,22 @@ pub enum EndReason {
 }
 
 impl EndReason {
+    /// Every reason.
+    pub const ALL: [EndReason; 12] = [
+        EndReason::Hangup,
+        EndReason::Dtr,
+        EndReason::Aborted,
+        EndReason::NoAnswer,
+        EndReason::Busy,
+        EndReason::NoDialtone,
+        EndReason::Remote,
+        EndReason::Abandoned,
+        EndReason::Failed,
+        EndReason::Reset,
+        EndReason::Operator,
+        EndReason::Shutdown,
+    ];
+
     /// The reason as the control API spells it.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -275,6 +304,14 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
+    /// Every level, most serious first.
+    pub const ALL: [LogLevel; 4] = [
+        LogLevel::Error,
+        LogLevel::Warning,
+        LogLevel::Info,
+        LogLevel::Debug,
+    ];
+
     /// The level as the log and the control API spell it.
     pub fn as_str(self) -> &'static str {
         match self {

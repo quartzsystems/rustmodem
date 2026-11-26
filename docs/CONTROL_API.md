@@ -1,3 +1,585 @@
-# CONTROL_API
+# The rustmodem control API
 
-Written in a later work package of phase 0.
+This file is generated from `service/ctlproto/src/doc.rs` and checked against
+the API's types by that crate's tests. Do not edit it by hand: change the
+tables there and run `UPDATE_DOCS=1 cargo test -p ctlproto`.
+
+## Transport
+
+The service listens on a Windows named pipe, `\\.\pipe\rustmodem-control` by
+default; the name is `control.pipe` in the configuration. The pipe is open to
+SYSTEM and Administrators only, so a client must run elevated. Remote clients
+are refused.
+
+Each message is one JSON object on one line, in UTF-8, ended by a line feed.
+A message may be at most 1048576 bytes long.
+
+## Hello
+
+The first message each way is `hello`. The client sends its hello first:
+
+```json
+{"hello":{"protocol":1,"version":"0.0.1"}}
+```
+
+The service answers with its own, in the same form. This version of the
+service speaks protocol 1. If the client's protocol is another, the service
+answers with error `RMD2001` and closes the connection. If the first message
+is not a hello, the service answers with error `RMD2005` and closes the
+connection. Both errors are sent with a null `id`.
+
+## Requests, responses and events
+
+A request names a method. The `id` is chosen by the client and comes back in
+the answer; `params` may be left out when the method takes none.
+
+```json
+{"id":7,"method":"lines.get","params":{"id":1}}
+```
+
+The answer is a result or an error:
+
+```json
+{"id":7,"result":{ ... }}
+{"id":7,"error":{"msgid":"RMD1001","text":"Line 1 does not exist.","cause":"...","recovery":"..."}}
+```
+
+An error is always an `RMD` message: its id, its text, and its cause and
+recovery. When a message cannot be read as a request at all, the error has a
+null `id`.
+
+Events are sent only to a client that has subscribed:
+
+```json
+{"event":"line.state","data":{ ... }}
+```
+
+Answers come in the order of their requests. Events may come between them.
+
+A client that subscribes must keep reading. The service queues what a client
+has not read yet. When the queue is full, the oldest `log` events are dropped
+first; every other event reports state and is never dropped. A client that
+falls further behind than that is disconnected (`RMD2006` in the service
+log), and can connect again and ask for the current state.
+
+## Methods
+
+| Method | Result | Summary |
+|---|---|---|
+| [`service.info`](#serviceinfo) | ServiceInfo | Reports the service's version, protocol, pipe name, configuration path, number of lines and how long it has been running. |
+| [`lines.list`](#lineslist) | LineList | Lists every line, in id order. |
+| [`lines.get`](#linesget) | LineInfo | Reports one line. |
+| [`lines.answer`](#linesanswer) | LineInfo | Answers the call ringing on a line, as `ATA` from the host would. |
+| [`lines.hangup`](#lineshangup) | LineInfo | Hangs up the call on a line, or turns away the call ringing on it. |
+| [`lines.reset`](#linesreset) | LineInfo | Resets a line: hangs up any call and returns the modem's settings to their defaults. |
+| [`lines.enable`](#linesenable) | LineInfo | Puts a line in service. |
+| [`lines.disable`](#linesdisable) | LineInfo | Takes a line out of service: any call on it is hung up and its port is released. |
+| [`lines.add`](#linesadd) | LineInfo | Adds a line. |
+| [`lines.edit`](#linesedit) | LineInfo | Changes the keys of a line that are given and leaves the others alone. |
+| [`lines.remove`](#linesremove) | Done | Removes a line: any call on it is hung up and its port is released. |
+| [`calls.list`](#callslist) | CallList | Lists the calls that have ended, oldest first. |
+| [`config.reload`](#configreload) | Reloaded | Reads the configuration file again and makes the lines match it. |
+| [`subscribe`](#subscribe) | Subscription | Starts sending the client events. |
+| [`unsubscribe`](#unsubscribe) | Subscription | Stops sending the client events. |
+
+Every request can also get one of these errors: `RMD2002`, `RMD2003`, `RMD2004`, `RMD2010`, `RMD2014`.
+
+### `service.info`
+
+Reports the service's version, protocol, pipe name, configuration path, number of lines and how long it has been running.
+
+Parameters: none.
+
+Result: ServiceInfo.
+
+```json
+{"id":1,"method":"service.info"}
+```
+
+### `lines.list`
+
+Lists every line, in id order.
+
+Parameters: none.
+
+Result: LineList.
+
+```json
+{"id":1,"method":"lines.list"}
+```
+
+### `lines.get`
+
+Reports one line.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The line id. |
+
+Result: LineInfo.
+
+Errors: `RMD1001`.
+
+```json
+{"id":1,"method":"lines.get","params":{"id":1}}
+```
+
+### `lines.answer`
+
+Answers the call ringing on a line, as `ATA` from the host would. The result is the line afterwards.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The line id. |
+
+Result: LineInfo.
+
+Errors: `RMD1001`, `RMD1002`, `RMD1003`.
+
+```json
+{"id":1,"method":"lines.answer","params":{"id":1}}
+```
+
+### `lines.hangup`
+
+Hangs up the call on a line, or turns away the call ringing on it. The host is told `NO CARRIER`. The result is the line afterwards.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The line id. |
+
+Result: LineInfo.
+
+Errors: `RMD1001`, `RMD1004`.
+
+```json
+{"id":1,"method":"lines.hangup","params":{"id":1}}
+```
+
+### `lines.reset`
+
+Resets a line: hangs up any call and returns the modem's settings to their defaults. The result is the line afterwards.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The line id. |
+
+Result: LineInfo.
+
+Errors: `RMD1001`.
+
+```json
+{"id":1,"method":"lines.reset","params":{"id":1}}
+```
+
+### `lines.enable`
+
+Puts a line in service. The change is written to the configuration file. The result is the line afterwards.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The line id. |
+
+Result: LineInfo.
+
+Errors: `RMD0011`, `RMD0019`.
+
+```json
+{"id":1,"method":"lines.enable","params":{"id":1}}
+```
+
+### `lines.disable`
+
+Takes a line out of service: any call on it is hung up and its port is released. The change is written to the configuration file. The result is the line afterwards.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The line id. |
+
+Result: LineInfo.
+
+Errors: `RMD0011`, `RMD0019`.
+
+```json
+{"id":1,"method":"lines.disable","params":{"id":1}}
+```
+
+### `lines.add`
+
+Adds a line. The change is written to the configuration file. The result is the new line.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The line id, 1 to 999, not in use. |
+| `name` | string | no | A name for people. |
+| `backend` | string | no | The serial backend. Default `com0com`. |
+| `port` | string | yes | The serial port, for example `CNCB0`. |
+| `enabled` | boolean | no | Whether the line is in service. Default true. |
+| `auto_answer_rings` | integer | no | The initial S0, 0 to 255. Default 0. |
+| `unknown_command` | string | no | What the line answers to an unknown AT command: `ok` or `error`. Default `ok`. |
+
+Result: LineInfo.
+
+Errors: `RMD0011`, `RMD0014`, `RMD0017`, `RMD0018`, `RMD0020`.
+
+```json
+{"id":1,"method":"lines.add","params":{"id":3,"name":"Line 3","backend":"com0com","port":"CNCB2","enabled":true,"auto_answer_rings":0,"unknown_command":"ok"}}
+```
+
+### `lines.edit`
+
+Changes the keys of a line that are given and leaves the others alone. Changing the port, or disabling the line, hangs up any call on it. The change is written to the configuration file. The result is the line afterwards.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The line to change. |
+| `name` | string | no | A new name. An empty string removes the name. |
+| `backend` | string | no | A new serial backend. |
+| `port` | string | no | A new serial port. |
+| `enabled` | boolean | no | Whether the line is in service. |
+| `auto_answer_rings` | integer | no | A new initial S0, 0 to 255. |
+| `unknown_command` | string | no | `ok` or `error`. |
+
+Result: LineInfo.
+
+Errors: `RMD0011`, `RMD0014`, `RMD0017`, `RMD0018`, `RMD0019`.
+
+```json
+{"id":1,"method":"lines.edit","params":{"id":3,"name":"Front desk","backend":"com0com","port":"CNCB5","enabled":false,"auto_answer_rings":2,"unknown_command":"error"}}
+```
+
+### `lines.remove`
+
+Removes a line: any call on it is hung up and its port is released. The change is written to the configuration file.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The line id. |
+
+Result: Done.
+
+Errors: `RMD0011`, `RMD0019`.
+
+```json
+{"id":1,"method":"lines.remove","params":{"id":3}}
+```
+
+### `calls.list`
+
+Lists the calls that have ended, oldest first. The service remembers the last 1000.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `last` | integer | no | Return at most this many, the most recent. Default all. |
+
+Result: CallList.
+
+```json
+{"id":1,"method":"calls.list","params":{"last":20}}
+```
+
+### `config.reload`
+
+Reads the configuration file again and makes the lines match it. Lines whose configuration has not changed are not disturbed. Changes to `[service]` and `[control]` take effect when the service next starts. If the file is not valid nothing changes, and the error is the first problem found.
+
+Parameters: none.
+
+Result: Reloaded.
+
+Errors: `RMD0010`, `RMD0012`, `RMD0013`, `RMD0014`, `RMD0015`, `RMD0016`, `RMD0017`, `RMD0018`.
+
+```json
+{"id":1,"method":"config.reload"}
+```
+
+### `subscribe`
+
+Starts sending the client events. The result is everything the client is now subscribed to.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `events` | array of string | no | The event names to add. Default every event. |
+
+Result: Subscription.
+
+```json
+{"id":1,"method":"subscribe","params":{"events":["line.state","call.ended"]}}
+```
+
+### `unsubscribe`
+
+Stops sending the client events. The result is everything the client is still subscribed to.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `events` | array of string | no | The event names to remove. Default every event. |
+
+Result: Subscription.
+
+```json
+{"id":1,"method":"unsubscribe","params":{"events":["log"]}}
+```
+
+## Events
+
+| Event | Data | When |
+|---|---|---|
+| `line.state` | LineInfo | A line changed state, or was added. The data is the whole line, with its counters and any call in progress. |
+| `call.started` | CallEvent | A line dialled, or a call was offered to a line. |
+| `call.connected` | CallEvent | The modems of a call connected. |
+| `call.ended` | CallRecord | A call ended. |
+| `log` | LogEvent | A line was written to the service log, at the service's log level. |
+
+Removing a line sends no event of its own. A client that changes the lines
+should list them again afterwards.
+
+## Types
+
+### Hello
+
+The body of the `hello` message each side sends first.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `protocol` | integer | yes | The protocol number the sender speaks. |
+| `version` | string | yes | The sender's version, for people. |
+
+### Error
+
+An `RMD` message.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `msgid` | string | yes | The message id: `RMD` and four digits. |
+| `text` | string | yes | The first-level text. |
+| `cause` | string | yes | The second-level text: the cause. |
+| `recovery` | string | yes | The second-level text: the recovery. |
+
+### ServiceInfo
+
+The result of `service.info`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `version` | string | yes | The service version. |
+| `protocol` | integer | yes | The protocol number the service speaks. |
+| `pipe` | string | yes | The name of the control pipe. |
+| `config_path` | string | yes | The path of the configuration file. |
+| `lines` | integer | yes | How many lines the service has. |
+| `started_ms` | integer | yes | When the service started, in milliseconds since the Unix epoch. |
+| `uptime_ms` | integer | yes | How long the service has been running, in milliseconds. |
+
+### LineList
+
+The result of `lines.list`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `lines` | array of LineInfo | yes | Every line, in id order. |
+
+### LineInfo
+
+Everything about one line.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The line id. |
+| `name` | string | no | The line's name, if it has one. |
+| `backend` | string | yes | The serial backend, for example `com0com`. |
+| `port` | string | yes | The serial port, for example `CNCB0`. |
+| `enabled` | boolean | yes | Whether the line is in service by configuration. |
+| `state` | LineState | yes | The state of the line. |
+| `auto_answer_rings` | integer | yes | The configured initial S0. |
+| `unknown_command` | string | yes | What the line answers to an unknown AT command: `ok` or `error`. |
+| `counters` | Counters | yes | The counters of the line. |
+| `call` | CallInfo | no | The call in progress, if there is one. |
+| `error` | Error | no | Why the serial port is not open, if it should be and is not. |
+
+### Counters
+
+The counters of a line since the service started.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `calls_out` | integer | yes | Calls the line dialled. |
+| `calls_in` | integer | yes | Calls offered to the line. |
+| `connects` | integer | yes | Calls that connected. |
+| `bytes_tx` | integer | yes | Data bytes from the host to the far end. |
+| `bytes_rx` | integer | yes | Data bytes from the far end to the host. |
+
+### CallInfo
+
+A call in progress.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The call id, unique since the service started. |
+| `direction` | Direction | yes | Which way the call went. |
+| `number` | string | yes | The number dialled, or for an incoming call the caller. |
+| `started_ms` | integer | yes | When the call started, in milliseconds since the Unix epoch. |
+| `connected_ms` | integer | no | When the call connected, if it has. |
+| `connect` | ConnectInfo | no | What is known about the connection, once connected. |
+| `bytes_tx` | integer | yes | Data bytes from the host to the far end so far. |
+| `bytes_rx` | integer | yes | Data bytes from the far end to the host so far. |
+
+### CallRecord
+
+A call that has ended. The same object is written, one a line, to `calls.jsonl` in the log directory.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The call id, unique since the service started. |
+| `line` | integer | yes | The line the call was on. |
+| `direction` | Direction | yes | Which way the call went. |
+| `number` | string | yes | The number dialled, or for an incoming call the caller. |
+| `started_ms` | integer | yes | When the call started, in milliseconds since the Unix epoch. |
+| `connected_ms` | integer | no | When the call connected, if it did. |
+| `ended_ms` | integer | yes | When the call ended. |
+| `reason` | EndReason | yes | Why the call ended. |
+| `connect` | ConnectInfo | no | What is known about the connection, if the call connected. |
+| `bytes_tx` | integer | yes | Data bytes from the host to the far end. |
+| `bytes_rx` | integer | yes | Data bytes from the far end to the host. |
+
+### ConnectInfo
+
+What is known about a connection. Phase 0 reports rate 0 and nothing else.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `rate` | integer | yes | The line rate in bit/s; 0 means not known. |
+| `carrier` | string | no | The carrier (modulation) name. |
+| `protocol` | string | no | The error-control protocol name. |
+| `compression` | string | no | The data compression name. |
+
+### CallList
+
+The result of `calls.list`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `calls` | array of CallRecord | yes | The calls that have ended, oldest first. |
+
+### CallEvent
+
+The data of `call.started` and `call.connected`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `line` | integer | yes | The line the call is on. |
+| `call` | CallInfo | yes | The call. |
+
+### LogEvent
+
+The data of `log`: one line of the service log.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `time_ms` | integer | yes | When, in milliseconds since the Unix epoch. |
+| `level` | LogLevel | yes | How serious. |
+| `source` | string | yes | Where from: `Line01`, `CTL`, `SVC`, `POOL`. |
+| `text` | string | yes | The text. |
+
+### Reloaded
+
+The result of `config.reload`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `lines` | integer | yes | How many lines the configuration has. |
+
+### Subscription
+
+The result of `subscribe` and `unsubscribe`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `events` | array of string | yes | The events the client is now subscribed to. |
+
+### Done
+
+The result of a method that has nothing to report: an empty object.
+
+## Values
+
+### LineState
+
+The state of a line. A string, one of:
+
+| Value | Meaning |
+|---|---|
+| `disabled` | The line is out of service by configuration. |
+| `not_ready` | The serial port is closed, or the host has DTR off. |
+| `idle` | In service, with no call. |
+| `ringing` | A call is being offered to the line. |
+| `handshaking` | A call is being set up. |
+| `online` | A call is connected. |
+
+### Direction
+
+Which way a call went. A string, one of:
+
+| Value | Meaning |
+|---|---|
+| `outgoing` | The line dialled out. |
+| `incoming` | The call was offered to the line. |
+
+### EndReason
+
+Why a call ended. A string, one of:
+
+| Value | Meaning |
+|---|---|
+| `hangup` | The host hung up with an `H` command. |
+| `dtr` | The host dropped DTR. |
+| `aborted` | The host sent a character while the call was being set up. |
+| `no_answer` | Nothing answered in time. |
+| `busy` | The number dialled was busy. |
+| `no_dialtone` | There was no dial tone. |
+| `remote` | The far end cleared the call, or the carrier was lost. |
+| `abandoned` | The caller gave up before the line answered. |
+| `failed` | The call could not be set up or carried on: the number is not a line in service, the line called went away, or the line's serial port failed. |
+| `reset` | The host reset the modem with a `Z` command. |
+| `operator` | The operator hung the line up, reset it, disabled it or removed it. |
+| `shutdown` | The service stopped. |
+
+### LogLevel
+
+How serious a log line is. A string, one of:
+
+| Value | Meaning |
+|---|---|
+| `error` | Something failed. |
+| `warning` | Something is wrong but the service went on. |
+| `info` | Something happened. |
+| `debug` | Detail, including every AT command line and result code. |
+
+## Errors
+
+The errors the API returns, from the message catalogue
+(`service/msg/messages.toml`). `&1`, `&2` and so on stand for the values the
+service fills in.
+
+| Id | Text | Cause | Recovery |
+|---|---|---|---|
+| `RMD0010` | Configuration file &1 could not be read: &2 | The file does not exist or the service is not allowed to read it. | Create the file or correct its permissions, then try again. |
+| `RMD0011` | Configuration file &1 could not be written: &2 | The service is not allowed to write the file, or the disk is full. | Correct the permissions of the file and its directory, then repeat the change. |
+| `RMD0012` | Configuration is not valid TOML at line &1: &2 | The configuration file could not be parsed. | Correct the file at the line given and try again. |
+| `RMD0013` | Key &1 at line &2 has the wrong type; &3 expected. | The value given for the key is not of the type the key takes. | Correct the value and try again. |
+| `RMD0014` | Key &1 at line &2 has value &3, which is not allowed. | The value is outside what the key accepts. Allowed: &4. | Correct the value and try again. |
+| `RMD0015` | Required key &1 is missing from the table at line &2. | The table must have the key and it has no default. | Add the key and try again. |
+| `RMD0016` | Line id &1 at line &2 is already used at line &3. | Two lines have the same id. Every line needs its own id. | Give one of the lines a different id and try again. |
+| `RMD0017` | Serial port &1 at line &2 is already used at line &3. | Two lines name the same serial port. A port can serve one line only. | Give one of the lines a different port and try again. |
+| `RMD0018` | Serial backend &1 at line &2 is not known. | The backend named for the line is not one this version of rustmodem has. Known backends: com0com. | Correct the backend name and try again. |
+| `RMD0019` | Line &1 is not in the configuration. | The change names a line id that the configuration does not have. | List the lines to see which ids exist, then repeat the change with one of them. |
+| `RMD0020` | Line &1 is already in the configuration. | A line cannot be added with an id that the configuration already has. | Choose an id that is not in use, or edit the existing line. |
+| `RMD1001` | Line &1 does not exist. | The request names a line id that the service does not have. | List the lines to see which ids exist, then repeat the request with one of them. |
+| `RMD1002` | Line &1 is disabled. | The request needs the line to be enabled. | Enable the line and repeat the request. |
+| `RMD1003` | Line &1 is not ringing; its state is &2. | A line can be answered only while a call is ringing on it. | Wait for the line to ring, then repeat the request. |
+| `RMD1004` | Line &1 has no call to hang up. | The line is neither connecting nor connected. | No action is needed. |
+| `RMD2001` | Control protocol &1 is not supported; this service supports protocol &2. | The client and the service were built for different versions of the control protocol. | Use a client of the same version as the service. |
+| `RMD2002` | Control method &1 is not known. | The request names a method that this version of the service does not have. | Correct the method name. The methods are listed in docs/CONTROL_API.md. |
+| `RMD2003` | Parameters of control method &1 are not valid: &2 | A parameter is missing, has the wrong type, or is not one the method takes. | Correct the parameters. They are listed for each method in docs/CONTROL_API.md. |
+| `RMD2004` | Control message is not valid: &1 | The message is not one JSON object on one line, or it is missing the fields a request needs. | Send each request as one JSON object with id and method, ended by a line feed. |
+| `RMD2005` | The first control message must be hello. | A client sent something else before saying hello. | Send hello with the protocol number and client version first. |
+| `RMD2010` | The service is stopping. | The request arrived while the service was shutting down, so it was not carried out. | Start the service and repeat the request. |
+| `RMD2014` | Control message is longer than &1 bytes. | A control message must fit on one line within the size limit. | Send a shorter message. |
