@@ -45,7 +45,7 @@ configuration file, and run the service in the foreground from an elevated
 prompt:
 
 ```
-rustmodem-svc --console C:\path	oustmodem.toml
+rustmodem-svc --console C:\rustmodem\rustmodem.toml
 rustmodemctl lines
 rustmodemctl watch
 ```
