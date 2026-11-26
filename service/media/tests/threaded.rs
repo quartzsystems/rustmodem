@@ -372,12 +372,12 @@ fn a_wait_that_runs_out_loses_no_datagram() {
     let (sending, _) = loopback();
     media::prepare_socket(&receiving, WAIT).unwrap();
 
-    // Nothing has been sent: the wait runs out, and takes about as long
-    // as it was given.
+    // Nothing has been sent: the wait runs out, and does not hang. How
+    // short it may be is the system's timer's to say: on a machine whose
+    // timer ticks coarsely a wait of 2 ms has come back inside one.
     let mut buffer = [0u8; 64];
     let began = Instant::now();
     assert_eq!(media::receive_within(&receiving, &mut buffer, WAIT), None);
-    assert!(began.elapsed() >= Duration::from_millis(1));
     assert!(began.elapsed() < Duration::from_secs(1));
 
     let sender = std::thread::spawn(move || {
