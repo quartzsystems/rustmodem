@@ -10,6 +10,8 @@ members = [
     # DTE: what the host sees on the COM port.
     "dte/at",
     "dte/serial",
+    # VoIP: the telephone side.
+    "voip/sdp",
     # Service: the pool, its configuration, its messages and its control API.
     "service/msg",
     "service/config",

@@ -54,7 +54,7 @@ jobs:
     name: Linux (pure crates)
     runs-on: ubuntu-latest
     env:
-      PURE: -p engine -p at -p serial -p msg -p config -p ctlproto -p pool -p glyph -p model
+      PURE: -p engine -p at -p serial -p sdp -p msg -p config -p ctlproto -p pool -p glyph -p model
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
@@ -67,8 +67,12 @@ jobs:
         run: cargo test $PURE
 
   fuzz:
-    name: Fuzz (at_input, 10 minutes)
+    name: Fuzz (${{ matrix.target }}, 10 minutes)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [at_input, sdp_parse]
     steps:
       - uses: actions/checkout@v4
       - name: Nightly toolchain
@@ -76,4 +80,4 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
       - name: Fuzz
-        run: cargo +nightly fuzz run --fuzz-dir tools/fuzz at_input -- -max_total_time=600
+        run: cargo +nightly fuzz run --fuzz-dir tools/fuzz ${{ matrix.target }} -- -max_total_time=600
