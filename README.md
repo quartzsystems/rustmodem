@@ -38,6 +38,28 @@ cargo build --release -p svc -p ctl
 This produces `target/release/rustmodem-svc.exe` and
 `target/release/rustmodemctl.exe`.
 
+## Running
+
+Set up com0com as [docs/COM0COM.md](docs/COM0COM.md) describes, write a
+configuration file, and run the service in the foreground from an elevated
+prompt:
+
+```
+rustmodem-svc --console C:\path	oustmodem.toml
+rustmodemctl lines
+rustmodemctl watch
+```
+
+Or install it as the Windows service `rustmodem`:
+
+```
+rustmodem-svc --install
+net start rustmodem
+```
+
+The AT command set is in [docs/AT.md](docs/AT.md) and the control API in
+[docs/CONTROL_API.md](docs/CONTROL_API.md).
+
 ## Checks
 
 ```
@@ -47,6 +69,12 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo deny check
 cargo test --workspace
+```
+
+The fuzz target needs a nightly toolchain and cargo-fuzz, on Linux or WSL:
+
+```
+cargo +nightly fuzz run --fuzz-dir tools/fuzz at_input -- -max_total_time=600
 ```
 
 ## Licence

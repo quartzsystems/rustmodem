@@ -53,3 +53,15 @@ jobs:
         run: cargo clippy $PURE --all-targets -- -D warnings
       - name: Test
         run: cargo test $PURE
+
+  fuzz:
+    name: Fuzz (at_input, 10 minutes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nightly toolchain
+        run: rustup toolchain install nightly --profile minimal
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz
+        run: cargo +nightly fuzz run --fuzz-dir tools/fuzz at_input -- -max_total_time=600
