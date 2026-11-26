@@ -129,6 +129,7 @@ impl Fixture {
             limits,
             mode: ServiceMode::Console,
             clock: ctlsrv::system_clock(),
+            apply_service: ctlsrv::restart_to_apply(),
             ports: Arc::new(vec![PortInfo {
                 name: "P1".to_string(),
                 kind: PortKind::Com0com,

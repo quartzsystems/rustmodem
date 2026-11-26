@@ -2,7 +2,7 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! Gives rustmodem-gui.exe its icon, its version information and its
+//! Gives rustmodem-manager.exe its icon, its version information and its
 //! manifest. The resource file is written by `glyph` and handed to the
 //! linker; no resource compiler is used.
 //!
@@ -16,7 +16,7 @@ use glyph::{Glyph, LinkInto, Manifest, VersionInfo, link_windows_res, windows_re
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     let version = std::env::var("CARGO_PKG_VERSION").expect("Cargo sets the package version");
-    let info = VersionInfo::rustmodem("rustmodem Manager", "rustmodem-gui.exe", &version);
+    let info = VersionInfo::rustmodem("RustModem Manager", "rustmodem-manager.exe", &version);
     let manifest = Manifest {
         name: "QuartzSystems.rustmodem.Manager".to_string(),
         description: info.description.clone(),

@@ -184,7 +184,6 @@ impl Bench {
                 clock: Clock::fixed(FROZEN_NOW_MS),
                 settings_key: None,
                 size: Some(SIZE),
-                machine: "TESTBENCH".to_string(),
                 hooks,
             },
         )

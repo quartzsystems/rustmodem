@@ -372,12 +372,28 @@ fn settings_are_sent_and_a_restart_is_offered() {
     bench.choose(Command::Settings);
     assert!(seen.tasks.borrow().is_empty(), "{:?}", seen.tasks.borrow());
 
-    // A change is sent; it takes effect when the service next starts,
-    // and the manager offers to restart it. Later: nothing more.
-    seen.answer.set(902);
+    // A change to the service's own settings is sent and is in effect
+    // at once: nothing is offered.
     *seen.with_dialog.borrow_mut() = Some(Box::new(|name, page| {
         Combo::of(page.item(settings_ids::LEVEL)).select(Some(3));
         frame(name, page).command(id::OK);
+    }));
+    bench.choose(Command::Settings);
+    assert!(seen.tasks.borrow().is_empty(), "{:?}", seen.tasks.borrow());
+
+    // A change to the control pipe takes effect when the service next
+    // starts, and the manager offers to restart it. Later: nothing more.
+    seen.answer.set(902);
+    *seen.with_dialog.borrow_mut() = Some(Box::new(|name, page| {
+        let sheet = page.parent().expect("a page is in its sheet");
+        if name == "settings" {
+            // The pipe is on the second page.
+            sheet.select_page(1);
+        } else {
+            assert_eq!(name, "settings-control");
+            page.item(settings_ids::PIPE).set_text("rustmodem-other");
+            sheet.command(id::OK);
+        }
     }));
     bench.choose(Command::Settings);
     {
@@ -393,8 +409,14 @@ fn settings_are_sent_and_a_restart_is_offered() {
 
     // The sheet opens again with what was set.
     *seen.with_dialog.borrow_mut() = Some(Box::new(|name, page| {
-        assert_eq!(Combo::of(page.item(settings_ids::LEVEL)).text(), "Debug");
-        frame(name, page).command(id::CANCEL);
+        let sheet = page.parent().expect("a page is in its sheet");
+        if name == "settings" {
+            assert_eq!(Combo::of(page.item(settings_ids::LEVEL)).text(), "Debug");
+            sheet.select_page(1);
+        } else {
+            assert_eq!(page.item(settings_ids::PIPE).text(), "rustmodem-other");
+            sheet.command(id::CANCEL);
+        }
     }));
     bench.choose(Command::Settings);
     assert!(seen.tasks.borrow().is_empty(), "{:?}", seen.tasks.borrow());

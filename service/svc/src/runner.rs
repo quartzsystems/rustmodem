@@ -139,17 +139,7 @@ fn start_inner(
     let file = ConfigFile::load(&config_path)?;
     let config = file.config().clone();
 
-    let log_dir = if config.service.log_dir.is_empty() {
-        config::default_log_dir()
-    } else {
-        PathBuf::from(&config.service.log_dir)
-    };
-    let level = match config.service.log_level {
-        config::LogLevel::Error => LogLevel::Error,
-        config::LogLevel::Warning => LogLevel::Warning,
-        config::LogLevel::Info => LogLevel::Info,
-        config::LogLevel::Debug => LogLevel::Debug,
-    };
+    let (log_dir, level) = log_settings(&config.service);
     let hub = Hub::new();
     let logger = Logger::open(
         &log_dir,
@@ -237,6 +227,16 @@ fn start_inner(
         },
         ports: Arc::new(SystemPorts),
         clock: ctlsrv::system_clock(),
+        // A new log level or log directory is in effect as soon as it is
+        // set. The call records stay in the directory the service
+        // started with until it starts again.
+        apply_service: {
+            let logger = logger.clone();
+            Arc::new(move |service| {
+                let (directory, level) = log_settings(service);
+                logger.reconfigure(&directory, level).map(|()| true)
+            })
+        },
     });
     let binding_server = server.clone();
 
@@ -378,4 +378,20 @@ fn accept_clients(server: Server, mut listener: PipeListener, stop: Arc<Event>, 
             }
         }
     }
+}
+
+/// Where the log goes and how much of it there is, as `[service]` says.
+fn log_settings(service: &config::ServiceConfig) -> (PathBuf, LogLevel) {
+    let directory = if service.log_dir.is_empty() {
+        config::default_log_dir()
+    } else {
+        PathBuf::from(&service.log_dir)
+    };
+    let level = match service.log_level {
+        config::LogLevel::Error => LogLevel::Error,
+        config::LogLevel::Warning => LogLevel::Warning,
+        config::LogLevel::Info => LogLevel::Info,
+        config::LogLevel::Debug => LogLevel::Debug,
+    };
+    (directory, level)
 }

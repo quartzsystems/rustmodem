@@ -2,7 +2,7 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! `rustmodem-gui.exe`, the rustmodem Manager.
+//! `rustmodem-manager.exe`, the RustModem Manager.
 
 #![forbid(unsafe_code)]
 // A program of the Windows subsystem: no console window opens behind it.
@@ -15,6 +15,6 @@ fn main() {
 
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("The rustmodem Manager runs on Windows only.");
+    eprintln!("The RustModem Manager runs on Windows only.");
     std::process::exit(1);
 }

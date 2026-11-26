@@ -23,30 +23,28 @@ pub const LOG_LIMIT: usize = 5000;
 /// line that came twice.
 const OVERLAP: usize = 64;
 
-/// What a log line is about, which is what its colour says.
+/// How much a log line matters, which is what its colour says: each
+/// level has a colour of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LogClass {
-    /// A line: the source is `Line01` and so on.
-    Line,
-    /// The control API: the source is `CTL`.
-    Control,
-    /// The service itself: the source is `SVC`, `POOL` or anything else.
-    Service,
-    /// An error, wherever it is from.
+    /// Something failed.
     Error,
+    /// Something is wrong but the service went on.
+    Warning,
+    /// Something happened.
+    Info,
+    /// Detail: every AT command line and result code.
+    Debug,
 }
 
 impl LogClass {
-    /// The class of a line.
+    /// The class of a line: its level, whatever its source.
     pub fn of(event: &LogEvent) -> LogClass {
-        if event.level == LogLevel::Error {
-            LogClass::Error
-        } else if event.source.starts_with("Line") {
-            LogClass::Line
-        } else if event.source == "CTL" {
-            LogClass::Control
-        } else {
-            LogClass::Service
+        match event.level {
+            LogLevel::Error => LogClass::Error,
+            LogLevel::Warning => LogClass::Warning,
+            LogLevel::Info => LogClass::Info,
+            LogLevel::Debug => LogClass::Debug,
         }
     }
 }

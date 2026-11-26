@@ -113,7 +113,7 @@ fn without_a_service_the_window_stays_up_and_says_why() {
         })
     }));
     let window = bench.opened.window;
-    assert_eq!(window.text(), "rustmodem Manager \u{2014} not connected");
+    assert_eq!(window.text(), "RustModem Manager");
     bench.opened.manager.with_model(|model| {
         let ConnectionState::Disconnected(Some(reason)) = model.connection() else {
             panic!("the manager is {:?}", model.connection());
@@ -203,10 +203,8 @@ fn against_the_demo_service_the_window_shows_the_lines_and_carries_commands() {
     assert!(bench.run_until(CONNECT, |bench| {
         bench.opened.manager.requests_waiting() == 0
     }));
-    assert_eq!(
-        window.text(),
-        "rustmodem Manager \u{2014} rustmodem-demo.toml [8 lines] \u{2014} TESTBENCH (demo)"
-    );
+    // The title is the name of the program and nothing else.
+    assert_eq!(window.text(), "RustModem Manager");
 
     // The grid shows what the model holds.
     let list = grid(&bench);

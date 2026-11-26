@@ -4,7 +4,7 @@
 
 [package]
 name = "manager"
-description = "The rustmodem Manager: the operator's window"
+description = "The RustModem Manager: the operator's window"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -35,7 +35,7 @@ png.workspace = true
 workspace = true
 
 [[bin]]
-name = "rustmodem-gui"
+name = "rustmodem-manager"
 path = "src/main.rs"
 
 # The screenshot tests are a program of their own: one window after the

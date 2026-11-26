@@ -320,7 +320,7 @@ Result: Settings.
 
 ### `config.set`
 
-Changes the settings that are given and leaves the others alone. The change is checked and written to the configuration file, comments kept. Changes to `[service]` and `[control]` take effect when the service next starts; the result says whether a restart is needed.
+Changes the settings that are given and leaves the others alone. The change is checked and written to the configuration file, comments kept. A change to `[service]` takes effect at once; a change to `[control]` takes effect when the service next starts. The result says whether a restart is needed.
 
 | Parameter | Type | Required | Meaning |
 |---|---|---|---|

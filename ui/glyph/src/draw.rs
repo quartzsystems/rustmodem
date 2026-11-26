@@ -38,7 +38,7 @@ const LED_OFF: Rgb = hex(0x5B6066);
 pub fn draw(glyph: Glyph, c: &mut Canvas) {
     match glyph {
         Glyph::App => app(c),
-        Glyph::Answer => handset(c, -38.0, GREEN_LIGHT, GREEN, GREEN_EDGE),
+        Glyph::Answer => handset(c, -40.0, GREEN_LIGHT, GREEN, GREEN_EDGE),
         Glyph::HangUp => handset(c, 0.0, RED_LIGHT, RED, RED_EDGE),
         Glyph::Reset => reset(c),
         Glyph::NewLine => new_line(c),
@@ -97,19 +97,26 @@ fn app(c: &mut Canvas) {
 
 /// A telephone handset, turned by `degrees`: level it is on the hook,
 /// tilted it is lifted.
+///
+/// It is the handset of a desk telephone seen from the side: a long
+/// grip, bowed a little, with the earpiece at one end and the mouthpiece
+/// at the other, each a block that stands out from the grip towards the
+/// face.
 fn handset(c: &mut Canvas, degrees: f32, light: Rgb, fill: Rgb, edge: Rgb) {
-    // The grip, arched over the two cups.
-    let grip = turned(&arc(8.0, 11.5, 5.4, 205.0, 335.0), 8.0, 8.0, degrees);
-    let cups = turned(&[(3.3, 10.6), (12.7, 10.6)], 8.0, 8.0, degrees);
+    let about = |points: &[(f32, f32)]| turned(points, 8.0, 8.0, degrees);
+    // The grip: a shallow bow from end to end.
+    let grip = about(&arc(8.0, 16.4, 11.0, 241.0, 299.0));
+    // The earpiece and the mouthpiece, hanging from its ends.
+    let ear = about(&[(3.3, 7.0), (3.3, 10.0)]);
+    let mouth = about(&[(12.7, 7.0), (12.7, 10.0)]);
+    let (grip_width, block_width) = (2.7, 3.7);
     let rim = 2.0 * line(c);
-    c.stroke(&grip, 2.2 + rim, Paint::Flat(edge));
-    for (x, y) in &cups {
-        c.disc(*x, *y, 2.1 + rim / 2.0, Paint::Flat(edge));
-    }
-    c.stroke(&grip, 2.2, Paint::Flat(fill));
-    for (x, y) in &cups {
-        c.disc(*x, *y, 2.1, Paint::Shade(light, fill));
-    }
+    c.stroke(&grip, grip_width + rim, Paint::Flat(edge));
+    c.stroke(&ear, block_width + rim, Paint::Flat(edge));
+    c.stroke(&mouth, block_width + rim, Paint::Flat(edge));
+    c.stroke(&grip, grip_width, Paint::Shade(light, fill));
+    c.stroke(&ear, block_width, Paint::Flat(fill));
+    c.stroke(&mouth, block_width, Paint::Flat(fill));
 }
 
 /// An arrowhead at `tip` pointing along `degrees`.

@@ -49,8 +49,11 @@ const LEVELS: [(LogLevel, &str); 4] = [
     (LogLevel::Debug, "Debug"),
 ];
 
-/// What every page says under its fields.
-const NOTE: &str = "Changes take effect when the service next starts.";
+/// What the Service page says under its fields.
+const SERVICE_NOTE: &str = "Changes take effect as soon as they are applied.";
+
+/// What the Control page says under its field.
+const CONTROL_NOTE: &str = "A change takes effect when the service next starts.";
 
 fn service_template() -> DialogTemplate {
     DialogTemplate::new("", 240, 110)
@@ -59,14 +62,14 @@ fn service_template() -> DialogTemplate {
         .label(7, 27, 70, 8, "Log &directory:")
         .edit(ID_DIRECTORY, 80, 25, 104, 14)
         .button(ID_BROWSE, 188, 25, 45, 14, "B&rowse\u{2026}")
-        .label(7, 48, 226, 8, NOTE)
+        .label(7, 48, 226, 8, SERVICE_NOTE)
 }
 
 fn control_template() -> DialogTemplate {
     DialogTemplate::new("", 240, 110)
         .label(7, 9, 70, 8, "&Pipe name:")
         .edit(ID_PIPE, 80, 7, 153, 14)
-        .label(7, 30, 226, 8, NOTE)
+        .label(7, 30, 226, 8, CONTROL_NOTE)
 }
 
 /// What the pages share: the settings as the service last gave them, and
@@ -219,7 +222,11 @@ impl Handler for ControlPage {
                 let settings = self.shared.settings.borrow();
                 page.item(ID_PIPE).set_text(&settings.control.pipe);
                 self.filled.set(true);
+                watch(&self.shared.manager, page);
                 Reply::Default
+            }
+            Event::Timer { id } if watched(&self.shared.manager, page, id, "settings-control") => {
+                Reply::Handled
             }
             Event::Command {
                 id: ID_PIPE,

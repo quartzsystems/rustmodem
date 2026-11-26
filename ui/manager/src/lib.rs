@@ -2,7 +2,7 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! The rustmodem Manager: the operator's window.
+//! The RustModem Manager: the operator's window.
 //!
 //! One window that connects to the service over the control pipe, shows
 //! every line live, and carries the operator's actions. It holds no state

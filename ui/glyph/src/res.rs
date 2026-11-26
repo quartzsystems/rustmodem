@@ -32,7 +32,7 @@ pub struct VersionInfo {
     pub product: String,
     /// The company: `Quartz Systems`.
     pub company: String,
-    /// What this file is, for example `rustmodem Manager`.
+    /// What this file is, for example `RustModem Manager`.
     pub description: String,
     /// Major, minor, patch and build.
     pub version: [u16; 4],
@@ -401,10 +401,10 @@ mod tests {
     }
 
     fn manager() -> (VersionInfo, Manifest) {
-        let version = VersionInfo::rustmodem("rustmodem Manager", "rustmodem-gui.exe", "1.2.3");
+        let version = VersionInfo::rustmodem("RustModem Manager", "rustmodem-manager.exe", "1.2.3");
         let manifest = Manifest {
             name: "QuartzSystems.rustmodem.Manager".to_string(),
-            description: "rustmodem Manager".to_string(),
+            description: "RustModem Manager".to_string(),
             version: version.version,
             gui: true,
         };
@@ -416,8 +416,8 @@ mod tests {
         let (version, _) = manager();
         assert_eq!(version.version, [1, 2, 3, 0]);
         assert_eq!(version.text(), "1.2.3");
-        assert_eq!(version.internal_name, "rustmodem-gui");
-        assert_eq!(version.original_filename, "rustmodem-gui.exe");
+        assert_eq!(version.internal_name, "rustmodem-manager");
+        assert_eq!(version.original_filename, "rustmodem-manager.exe");
         assert_eq!(version.company, "Quartz Systems");
         assert_eq!(version.product, "rustmodem");
         let odd = VersionInfo::rustmodem("x", "x.exe", "0.0.2-rc.1");
@@ -488,13 +488,13 @@ mod tests {
             "CompanyName",
             "Quartz Systems",
             "FileDescription",
-            "rustmodem Manager",
+            "RustModem Manager",
             "1.2.3.0",
             "ProductName",
             "rustmodem",
             "ProductVersion",
             "OriginalFilename",
-            "rustmodem-gui.exe",
+            "rustmodem-manager.exe",
             "Copyright (C) 2026 Quartz Systems",
             "VarFileInfo",
             "Translation",

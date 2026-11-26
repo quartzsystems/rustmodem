@@ -881,3 +881,55 @@ fn lines_show_what_their_ports_are_bound_to() {
     client.ok::<Reloaded>(Call::ConfigReload);
     assert_eq!(client.line(2).binding.as_deref(), Some("COM12"));
 }
+
+#[test]
+fn a_service_that_can_apply_its_settings_needs_no_restart_for_them() {
+    let fixture = Fixture::new(1);
+    let mut client = fixture.connect();
+    let level = |level| {
+        Call::ConfigSet(SettingsChange {
+            service: Some(ServiceChange {
+                log_level: Some(level),
+                log_dir: None,
+            }),
+            control: None,
+        })
+    };
+
+    // A service that takes its settings up only when it starts.
+    let result: SettingsResult = client.ok(level(LogLevel::Debug));
+    assert!(result.restart_required);
+    assert_eq!(result.config.service.log_level, LogLevel::Debug);
+
+    // One that puts them into effect: the change that was waiting is in
+    // effect with the next one, and nothing waits for a restart.
+    fixture
+        .live
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let result: SettingsResult = client.ok(level(LogLevel::Warning));
+    assert!(!result.restart_required);
+    assert_eq!(result.config.service.log_level, LogLevel::Warning);
+    let text = fixture.config_text();
+    assert!(text.contains("log_level = \"warning\""), "{text}");
+
+    // The control pipe is made when the service starts, whatever the
+    // service can do while it runs.
+    let result: SettingsResult = client.ok(Call::ConfigSet(SettingsChange {
+        service: None,
+        control: Some(ControlChange {
+            pipe: Some("other".to_string()),
+        }),
+    }));
+    assert!(result.restart_required);
+    // And back: nothing is waiting any more.
+    let result: SettingsResult = client.ok(Call::ConfigSet(SettingsChange {
+        service: Some(ServiceChange {
+            log_level: Some(LogLevel::Error),
+            log_dir: None,
+        }),
+        control: Some(ControlChange {
+            pipe: Some("rustmodem-control".to_string()),
+        }),
+    }));
+    assert!(!result.restart_required);
+}

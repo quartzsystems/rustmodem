@@ -286,8 +286,9 @@ pub const METHODS: &[MethodDoc] = &[
         name: "config.set",
         summary: "Changes the settings that are given and leaves the others alone. The \
                   change is checked and written to the configuration file, comments kept. \
-                  Changes to `[service]` and `[control]` take effect when the service next \
-                  starts; the result says whether a restart is needed.",
+                  A change to `[service]` takes effect at once; a change to `[control]` \
+                  takes effect when the service next starts. The result says whether a \
+                  restart is needed.",
         params: &[
             optional("service", "ServiceChange", "Changes to `[service]`."),
             optional("control", "ControlChange", "Changes to `[control]`."),

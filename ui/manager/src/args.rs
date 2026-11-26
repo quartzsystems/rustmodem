@@ -5,7 +5,7 @@
 //! The manager's command line.
 //!
 //! ```text
-//! rustmodem-gui [--pipe NAME] [--demo] [start|stop|restart|install|uninstall]
+//! rustmodem-manager [--pipe NAME] [--demo] [start|stop|restart|install|uninstall]
 //! ```
 //!
 //! The last argument names a service command. It is how the manager hands

@@ -94,6 +94,9 @@ pub struct Fixture {
     pub connector: MemoryConnector,
     pub hosts: Hosts,
     pub logs: Arc<Mutex<Vec<(LogLevel, String)>>>,
+    /// Whether the service behind the server can put `[service]` settings
+    /// into effect while it runs. It cannot, until a test says it can.
+    pub live: Arc<AtomicBool>,
     pub directory: PathBuf,
     pub config_path: PathBuf,
     stop: Arc<AtomicBool>,
@@ -167,6 +170,8 @@ impl Fixture {
         });
 
         let logs: Arc<Mutex<Vec<(LogLevel, String)>>> = Arc::default();
+        let live = Arc::new(AtomicBool::new(false));
+        let live_settings = Arc::clone(&live);
         let log_to = Arc::clone(&logs);
         let server = Server::new(ServerParts {
             pool: handle,
@@ -180,6 +185,7 @@ impl Fixture {
             mode: ServiceMode::Console,
             clock: ctlsrv::system_clock(),
             ports: Arc::new(test_ports()),
+            apply_service: Arc::new(move |_| Ok(live_settings.load(Ordering::Relaxed))),
         });
 
         let (listener, connector) = memory::listener();
@@ -192,6 +198,7 @@ impl Fixture {
             connector,
             hosts,
             logs,
+            live,
             directory,
             config_path,
             stop,

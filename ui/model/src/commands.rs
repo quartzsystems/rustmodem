@@ -98,7 +98,7 @@ pub enum Command {
     /// Call capture…
     CallCapture,
     // Help
-    /// About rustmodem Manager…
+    /// About RustModem Manager…
     About,
 }
 
@@ -222,7 +222,7 @@ impl Command {
             Command::PortsAndDrivers => "&Ports and drivers…",
             Command::LoopbackTest => "&Loopback self-test…",
             Command::CallCapture => "&Call capture…",
-            Command::About => "&About rustmodem Manager…",
+            Command::About => "&About RustModem Manager…",
         }
     }
 
@@ -235,7 +235,6 @@ impl Command {
             Command::Reset => Some("Reset line"),
             Command::NewLine => Some("New line…"),
             Command::Reregister => Some("Re-register"),
-            Command::ReloadConfig => Some("Reload config"),
             Command::Settings => Some("Settings…"),
             _ => None,
         }
@@ -470,7 +469,6 @@ pub fn toolbar() -> Vec<Option<Command>> {
         None,
         Some(C::NewLine),
         Some(C::Reregister),
-        Some(C::ReloadConfig),
         Some(C::Settings),
         None,
     ]
@@ -629,7 +627,7 @@ mod tests {
                 "Call capture…",
             ]
         );
-        assert_eq!(texts(6), ["About rustmodem Manager…"]);
+        assert_eq!(texts(6), ["About RustModem Manager…"]);
         assert_eq!(lines_menu(), bar[1].1);
     }
 
@@ -688,7 +686,7 @@ mod tests {
     }
 
     #[test]
-    fn the_toolbar_is_the_one_the_handoff_lists() {
+    fn the_toolbar_is_the_handoff_s_without_reload_config() {
         let labels: Vec<&str> = toolbar()
             .iter()
             .map(|button| match button {
@@ -705,7 +703,6 @@ mod tests {
                 "|",
                 "New line…",
                 "Re-register",
-                "Reload config",
                 "Settings…",
                 "|",
             ]
@@ -715,7 +712,9 @@ mod tests {
             .iter()
             .filter(|command| command.tool_label().is_some())
             .count();
-        assert_eq!(with_labels, 7);
+        assert_eq!(with_labels, 6);
+        // Reloading the configuration is in the File menu only.
+        assert_eq!(Command::ReloadConfig.tool_label(), None);
     }
 
     #[test]

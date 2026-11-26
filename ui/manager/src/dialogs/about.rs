@@ -2,7 +2,7 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! About rustmodem Manager.
+//! About RustModem Manager.
 
 use std::rc::Rc;
 
@@ -14,7 +14,7 @@ use crate::window::Manager;
 const ID_ICON: u16 = 300;
 
 /// The name of the product.
-const PRODUCT: &str = "rustmodem Manager";
+const PRODUCT: &str = "RustModem Manager";
 
 /// The copyright line.
 const COPYRIGHT: &str = "Copyright (C) 2026 Quartz Systems";
@@ -25,7 +25,7 @@ const LICENCE: &str = "This program is free software under the terms of the MIT 
 
 fn template() -> DialogTemplate {
     let (width, height) = (230, 104);
-    DialogTemplate::new("About rustmodem Manager", width, height)
+    DialogTemplate::new("About RustModem Manager", width, height)
         .icon(ID_ICON, 7, 7)
         .label(36, 7, 187, 8, PRODUCT)
         .label(36, 19, 187, 8, &version_line())

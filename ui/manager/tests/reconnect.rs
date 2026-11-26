@@ -85,13 +85,9 @@ fn a_service_that_is_killed_and_started_again_is_lost_and_found() {
         };
         assert!(reason.msgid.starts_with("RMD2"), "{reason}");
         assert_eq!(model.status_message(), reason.to_string());
-        assert_eq!(
-            model.title("TESTBENCH"),
-            "rustmodem Manager \u{2014} not connected"
-        );
     });
     assert!(window.exists());
-    assert_eq!(window.text(), "rustmodem Manager \u{2014} not connected");
+    assert_eq!(window.text(), "RustModem Manager");
     assert!(!list.hwnd().enabled());
     for command in [
         Command::Answer,
@@ -126,10 +122,11 @@ fn a_service_that_is_killed_and_started_again_is_lost_and_found() {
     assert!(list.hwnd().enabled());
     assert_grid_is_the_model(&bench, list);
     assert!(menu.enabled(Command::NewLine.id()));
-    assert_eq!(
-        window.text(),
-        "rustmodem Manager \u{2014} rustmodem-demo.toml [6 lines] \u{2014} TESTBENCH (demo)"
-    );
+    assert_eq!(window.text(), "RustModem Manager");
+    bench.opened.manager.with_model(|model| {
+        let title = model.lines.title();
+        assert!(title.contains("6 configured"), "{title}");
+    });
     // The model is what a client that has just connected is told.
     let fresh = fresh_lines(&name);
     bench.opened.manager.with_model(|model| {

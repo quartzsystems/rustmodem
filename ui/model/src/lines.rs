@@ -287,20 +287,26 @@ impl StateLook {
     pub fn colour(self) -> StateColour {
         match self {
             StateLook::Online => StateColour::Green,
+            StateLook::Ringing | StateLook::Handshaking => StateColour::Yellow,
+            StateLook::Idle => StateColour::Blue,
             StateLook::PortError => StateColour::Red,
-            _ => StateColour::Default,
+            StateLook::Disabled | StateLook::NotReady => StateColour::Default,
         }
     }
 }
 
-/// The colour of a state's text. The two that are not the control's own
-/// are the only colours the manager chooses.
+/// The colour of a state's text: that of the state's image at the start
+/// of the row. A line that is out of service has the control's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StateColour {
     /// The control's own text colour.
     Default,
     /// Online.
     Green,
+    /// A call is on its way: ringing, or handshaking.
+    Yellow,
+    /// Idle, waiting for a call.
+    Blue,
     /// A port error.
     Red,
 }

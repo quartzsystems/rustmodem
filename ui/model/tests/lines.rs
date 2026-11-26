@@ -503,15 +503,15 @@ fn every_cell_of_every_kind_of_line() {
             (look.image(), look.colour())
         })
         .collect();
-    use StateColour::{Default as Plain, Green, Red};
+    use StateColour::{Blue, Default as Plain, Green, Red, Yellow};
     assert_eq!(
         looks,
         [
             (5, Green),
-            (4, Plain),
-            (3, Plain),
+            (4, Yellow),
+            (3, Yellow),
             (5, Green),
-            (2, Plain),
+            (2, Blue),
             (1, Plain),
             (0, Plain),
             (6, Red),

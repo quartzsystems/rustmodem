@@ -45,6 +45,19 @@ pub fn system_clock() -> Clock {
 /// Takes the server's own log lines. The source is always `CTL`.
 pub type LogFn = Arc<dyn Fn(LogLevel, String) + Send + Sync>;
 
+/// Puts changed `[service]` settings into effect while the service runs.
+/// It answers `true` when they are in effect, and `false` when this
+/// service can only take them up when it next starts. An error is a
+/// setting that could not be used, such as a log directory that cannot be
+/// made: nothing has changed then, and the change is not kept.
+pub type ApplyService = Arc<dyn Fn(&ServiceConfig) -> Result<bool, Message> + Send + Sync>;
+
+/// For a service that takes up its `[service]` settings only when it
+/// starts.
+pub fn restart_to_apply() -> ApplyService {
+    Arc::new(|_| Ok(false))
+}
+
 /// What a server is made from.
 pub struct ServerParts {
     /// The way to the pool.
@@ -70,6 +83,9 @@ pub struct ServerParts {
     pub ports: Arc<dyn PortInventory>,
     /// Tells the time, for `service.info`.
     pub clock: Clock,
+    /// Puts changed `[service]` settings into effect, if the service can
+    /// without starting again.
+    pub apply_service: ApplyService,
 }
 
 struct Shared {
@@ -83,9 +99,11 @@ struct Shared {
     limits: Limits,
     mode: ServiceMode,
     ports: Arc<dyn PortInventory>,
-    /// The `[service]` and `[control]` settings the service started with.
-    /// A change to them is in effect only after a restart.
-    running: (ServiceConfig, ControlConfig),
+    /// The `[service]` and `[control]` settings that are in effect: the
+    /// ones the service started with, and the changes it could apply
+    /// since. A change that is in the file and not here needs a restart.
+    running: Mutex<(ServiceConfig, ControlConfig)>,
+    apply_service: ApplyService,
     clock: Clock,
     started_ms: u64,
     config_loaded_ms: AtomicU64,
@@ -123,7 +141,8 @@ impl Server {
                 pool: parts.pool,
                 mode: parts.mode,
                 ports: parts.ports,
-                running,
+                running: Mutex::new(running),
+                apply_service: parts.apply_service,
                 config_loaded_ms: AtomicU64::new(started_ms),
                 config: Mutex::new(parts.config),
                 config_path: parts.config_path,
@@ -462,9 +481,11 @@ impl Server {
         }
     }
 
-    /// `config.set`: the change is made to a copy, checked and written to
-    /// the file, and only then kept. The lines are not touched. What the
-    /// service is doing does not change until it starts again.
+    /// `config.set`: the change is made to a copy, checked, put into
+    /// effect where the service can do that while it runs, written to the
+    /// file, and only then kept. The lines are not touched. What could
+    /// not be put into effect waits for the service to start again, and
+    /// the result says so.
     fn change_settings(&self, change: &SettingsChange) -> Result<SettingsResult, Message> {
         let service = change.service.as_ref();
         let edit = SettingsEdit {
@@ -485,12 +506,30 @@ impl Server {
         let mut current = self.config();
         let mut next = current.clone();
         next.edit_settings(&edit).map_err(first)?;
-        next.save(&self.shared.config_path)?;
+        let mut running = self
+            .shared
+            .running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // The settings of the service itself go into effect now, if this
+        // service can do that; the control pipe is made when it starts.
+        let wanted = next.config().service.clone();
+        let applied = wanted != running.0 && (self.shared.apply_service)(&wanted)?;
+        if let Err(problem) = next.save(&self.shared.config_path) {
+            if applied {
+                // What is in effect is what the file says, or it would
+                // change at the next start with nobody having asked.
+                let _ = (self.shared.apply_service)(&running.0);
+            }
+            return Err(problem);
+        }
+        if applied {
+            running.0 = wanted;
+        }
         *current = next;
         let config = current.config();
-        let (service, control) = &self.shared.running;
         Ok(SettingsResult {
-            restart_required: config.service != *service || config.control != *control,
+            restart_required: config.service != running.0 || config.control != running.1,
             config: self.settings(config),
         })
     }

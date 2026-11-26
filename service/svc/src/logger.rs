@@ -18,6 +18,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -42,7 +43,9 @@ struct Files {
 }
 
 struct Inner {
-    level: LogLevel,
+    /// The level, as a number, so that it can be changed while lines are
+    /// being written.
+    level: AtomicU8,
     console: bool,
     hub: Option<Hub>,
     files: Mutex<Files>,
@@ -77,7 +80,7 @@ impl Logger {
         let size = current.metadata().map_err(unusable)?.len();
         Ok(Logger {
             inner: Arc::new(Inner {
-                level,
+                level: AtomicU8::new(level as u8),
                 console,
                 hub,
                 files: Mutex::new(Files {
@@ -112,7 +115,7 @@ impl Logger {
 
     /// Writes a line that already has its time, as the pool's do.
     pub fn event(&self, event: LogEvent) {
-        if event.level > self.inner.level {
+        if event.level as u8 > self.inner.level.load(Ordering::Relaxed) {
             return;
         }
         let line = format_line(&event);
@@ -123,6 +126,34 @@ impl Logger {
         if let Some(hub) = &self.inner.hub {
             hub.publish(&Event::Log(event));
         }
+    }
+
+    /// Changes what is logged and where, while the service runs. The
+    /// level takes effect with the next line. A new directory is made if
+    /// need be and the log goes on in it; the files in the old one stay
+    /// where they are. If the directory cannot be used nothing changes,
+    /// and the reason is message `RMD0022`.
+    pub fn reconfigure(&self, directory: &Path, level: LogLevel) -> Result<(), Message> {
+        let mut files = self.files();
+        if files.directory != directory {
+            let unusable = |e: std::io::Error| {
+                message(
+                    "RMD0022",
+                    &[&directory.display().to_string(), &e.to_string()],
+                )
+            };
+            std::fs::create_dir_all(directory).map_err(unusable)?;
+            let current = open_append(&directory.join(LOG_FILE)).map_err(unusable)?;
+            let size = current.metadata().map_err(unusable)?.len();
+            if let Some(old) = &mut files.current {
+                let _ = old.flush();
+            }
+            files.directory = directory.to_path_buf();
+            files.current = Some(current);
+            files.size = size;
+        }
+        self.inner.level.store(level as u8, Ordering::Relaxed);
+        Ok(())
     }
 
     /// Makes sure everything written has reached the file.
@@ -286,6 +317,51 @@ mod tests {
             });
             assert_eq!(line, format!("1970-01-01T00:00:00.000Z {word} [SVC] x"));
         }
+    }
+
+    #[test]
+    fn the_level_and_the_directory_can_be_changed_while_the_log_is_open() {
+        let first = temp_dir("reconfigure-first");
+        let second = temp_dir("reconfigure-second")
+            .join("made")
+            .join("on demand");
+        let logger = Logger::open(&first, LogLevel::Info, false, None, DEFAULT_MAX_BYTES).unwrap();
+        logger.log(LogLevel::Debug, "SVC", "detail, left out");
+        logger.log(LogLevel::Info, "SVC", "before");
+
+        // The level alone: the same file, more in it.
+        logger.reconfigure(&first, LogLevel::Debug).unwrap();
+        logger.log(LogLevel::Debug, "SVC", "detail, kept");
+
+        // A new directory: it is made, and the log goes on there.
+        logger.reconfigure(&second, LogLevel::Warning).unwrap();
+        logger.log(LogLevel::Info, "SVC", "information, left out");
+        logger.log(LogLevel::Warning, "SVC", "after");
+        logger.flush();
+
+        let old = std::fs::read_to_string(first.join(LOG_FILE)).unwrap();
+        let lines: Vec<&str> = old.lines().collect();
+        assert_eq!(lines.len(), 2, "{old}");
+        assert!(lines[0].ends_with("INFO  [SVC] before"));
+        assert!(lines[1].ends_with("DEBUG [SVC] detail, kept"));
+        let new = std::fs::read_to_string(second.join(LOG_FILE)).unwrap();
+        assert_eq!(new.lines().count(), 1, "{new}");
+        assert!(new.trim_end().ends_with("WARN  [SVC] after"));
+
+        // A directory that cannot be used changes nothing.
+        let file = first.join(LOG_FILE);
+        let problem = logger.reconfigure(&file, LogLevel::Debug).unwrap_err();
+        assert_eq!(problem.id, "RMD0022");
+        logger.log(LogLevel::Debug, "SVC", "detail, left out again");
+        logger.log(LogLevel::Error, "SVC", "still here");
+        logger.flush();
+        let new = std::fs::read_to_string(second.join(LOG_FILE)).unwrap();
+        assert_eq!(new.lines().count(), 2, "{new}");
+        assert!(new.trim_end().ends_with("ERROR [SVC] still here"));
+
+        drop(logger);
+        let _ = std::fs::remove_dir_all(&first);
+        let _ = std::fs::remove_dir_all(temp_dir("reconfigure-second"));
     }
 
     #[test]

@@ -196,6 +196,9 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
         mode: ServiceMode::Demo,
         ports: Arc::new(ports.clone()),
         clock,
+        // The demo service keeps no log file: a new log level or log
+        // directory is in effect as soon as it is set.
+        apply_service: Arc::new(|_| Ok(true)),
     });
 
     log(SOURCE, &message("RMD0001", &[crate::VERSION]));

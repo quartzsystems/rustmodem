@@ -43,13 +43,25 @@ pub mod ids {
     pub const STATUS: u16 = 104;
 }
 
-/// The colour of the state of a line that is online. This and the red of
-/// a port error are the only colours the manager chooses; a high-contrast
-/// theme takes them away again.
+/// The colours the manager chooses: those of the states of a line, which
+/// are the colours of the state images, and of the levels of the event
+/// log. A high-contrast theme takes them away again.
+///
+/// The state of a line that is online.
 const GREEN: Colour = Colour::rgb(0, 128, 0);
 
-/// The colour of a port error, and of an error in the event log.
+/// The state of a line that is ringing or handshaking: a yellow dark
+/// enough to be read on white.
+const YELLOW: Colour = Colour::rgb(176, 124, 0);
+
+/// The state of a line that is idle.
+const BLUE: Colour = Colour::rgb(0, 84, 200);
+
+/// A port error, and an error in the event log.
 const RED: Colour = Colour::rgb(192, 0, 0);
+
+/// A warning in the event log.
+const AMBER: Colour = Colour::rgb(176, 96, 0);
 
 /// The widths of the status bar's parts after the message, at 96 DPI:
 /// the connection, SIP, how many lines answer, RTP, the processor, and
@@ -152,15 +164,15 @@ pub fn lines_popup(model: &Model) -> Menu {
     menu
 }
 
-/// The colour of a line of the event log. A line about the service is in
-/// the control's own colour, one about the control API in the system's
-/// colour for what stands out.
+/// The colour of a line of the event log, by its level: an error in red,
+/// a warning in amber, what happened in the control's own colour, and
+/// detail in the system's colour for what matters less.
 fn log_colour(class: LogClass) -> Option<Colour> {
     match class {
-        LogClass::Service => None,
-        LogClass::Line => Some(metrics::chosen(Colour::rgb(0, 102, 0))),
-        LogClass::Control => Some(metrics::hot_light()),
         LogClass::Error => Some(metrics::chosen(RED)),
+        LogClass::Warning => Some(metrics::chosen(AMBER)),
+        LogClass::Info => None,
+        LogClass::Debug => Some(metrics::gray_text()),
     }
 }
 
@@ -169,7 +181,31 @@ pub fn state_colour(colour: StateColour) -> Option<Colour> {
     match colour {
         StateColour::Default => None,
         StateColour::Green => Some(metrics::chosen(GREEN)),
+        StateColour::Yellow => Some(metrics::chosen(YELLOW)),
+        StateColour::Blue => Some(metrics::chosen(BLUE)),
         StateColour::Red => Some(metrics::chosen(RED)),
+    }
+}
+
+/// The images of the toolbar's buttons, in the order of the buttons.
+fn tool_glyphs() -> Vec<Glyph> {
+    model::toolbar()
+        .into_iter()
+        .flatten()
+        .map(tool_glyph)
+        .collect()
+}
+
+/// The image of a toolbar button.
+fn tool_glyph(command: Command) -> Glyph {
+    match command {
+        Command::Answer => Glyph::Answer,
+        Command::HangUp => Glyph::HangUp,
+        Command::Reset => Glyph::Reset,
+        Command::NewLine => Glyph::NewLine,
+        Command::Reregister => Glyph::Reregister,
+        Command::ReloadConfig => Glyph::Reload,
+        _ => Glyph::Settings,
     }
 }
 
@@ -177,7 +213,7 @@ impl View {
     /// Makes the controls in `window`, as `saved` remembers them.
     pub fn create(window: Hwnd, saved: &Saved) -> View {
         let dpi = window.dpi();
-        let tool_images = images(&Glyph::TOOLBAR, dpi);
+        let tool_images = images(&tool_glyphs(), dpi);
         let state_images = images(&Glyph::STATES, dpi);
 
         // The buttons take the images in order.
@@ -291,7 +327,7 @@ impl View {
         self.font = Font::message(dpi);
         self.log_font = Font::log(dpi);
         self.apply_fonts(window);
-        self.tool_images = images(&Glyph::TOOLBAR, dpi);
+        self.tool_images = images(&tool_glyphs(), dpi);
         self.state_images = images(&Glyph::STATES, dpi);
         self.toolbar.set_images(&self.tool_images);
         self.list.set_images(&self.state_images);
@@ -639,8 +675,8 @@ impl View {
 
     /// The title of the window and of the group boxes that have one that
     /// changes.
-    pub fn show_titles(&self, window: Hwnd, model: &Model, machine: &str) {
-        window.set_text_if_changed(&model.title(machine));
+    pub fn show_titles(&self, window: Hwnd, model: &Model) {
+        window.set_text_if_changed(&model.title());
         self.lines_group.set_text_if_changed(&model.lines.title());
         self.log_group.set_text_if_changed(&model.log_title());
     }

@@ -339,13 +339,23 @@ mod shots {
                         act(name, window);
                         return;
                     }
-                    camera.take(name, frame(name, window));
-                    if name == "settings" {
-                        // The second page too.
-                        frame(name, window).select_page(1);
-                        camera.take("settings-control", frame(name, window));
+                    let sheet = window.parent();
+                    match (name, sheet) {
+                        ("settings", Some(sheet)) => {
+                            camera.take(name, sheet);
+                            // The second page too: it says so when it is
+                            // up, and the sheet is closed then.
+                            sheet.select_page(1);
+                        }
+                        ("settings-control", Some(sheet)) => {
+                            camera.take(name, sheet);
+                            sheet.command(id::CANCEL);
+                        }
+                        _ => {
+                            camera.take(name, window);
+                            close(name, window);
+                        }
                     }
-                    close(name, window);
                 }
             })),
             watch_task: Some(Rc::new({
@@ -437,8 +447,13 @@ mod shots {
 
         // A change of settings, and the offer to restart that follows.
         *with_dialog.borrow_mut() = Some(Box::new(|name, page| {
-            Combo::of(page.item(settings_ids::LEVEL)).select(Some(3));
-            frame(name, page).command(id::OK);
+            let sheet = page.parent().expect("a page is in its sheet");
+            if name == "settings" {
+                sheet.select_page(1);
+            } else {
+                page.item(settings_ids::PIPE).set_text("rustmodem-other");
+                sheet.command(id::OK);
+            }
         }));
         bench.choose(Command::Settings);
         *with_dialog.borrow_mut() = None;

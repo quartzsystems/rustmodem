@@ -94,9 +94,10 @@ pub type PortsHook = Rc<dyn Fn() -> Vec<String>>;
 #[derive(Clone, Default)]
 pub struct Hooks {
     /// Told when a dialog of the manager is up, with the dialog's name
-    /// and its window. For the settings the window is the first page of
-    /// the property sheet, whose parent is the sheet. The test closes
-    /// the dialog when it has seen enough of it.
+    /// and its window. For the settings the window is a page of the
+    /// property sheet, whose parent is the sheet: `settings` is the first
+    /// page, and `settings-control` the second, once it has been chosen.
+    /// The test closes the dialog when it has seen enough of it.
     pub dialog: Option<DialogHook>,
     /// Stands in for a task dialog: given what would be shown, answers
     /// with the id of the button that was pressed.
@@ -127,8 +128,6 @@ pub struct Options {
     /// The size of the window in pixels at 96 DPI, in place of where it
     /// was last time.
     pub size: Option<(i32, i32)>,
-    /// The name of this computer, for the title.
-    pub machine: String,
     /// What a test puts in place of the system's dialogs.
     pub hooks: Hooks,
 }
@@ -142,7 +141,6 @@ impl Options {
             clock: Clock::system(),
             settings_key: Some(settings::KEY.to_string()),
             size: None,
-            machine: std::env::var("COMPUTERNAME").unwrap_or_else(|_| "localhost".to_string()),
             hooks: Hooks::default(),
         }
     }
@@ -534,7 +532,7 @@ pub fn open(app: App, options: Options) -> Option<Opened> {
     });
     let window = Window::create(
         WindowOptions {
-            title: &Model::new().title(&manager.options.machine),
+            title: model::TITLE,
             size: Some((scale(width, dpi), scale(height, dpi))),
             menu: Some(view::menu_bar()),
             owner: None,
@@ -955,7 +953,7 @@ impl Manager {
             if update.stats {
                 view.show_stats(&state.model, &state.clock);
             }
-            view.show_titles(window, &state.model, &self.options.machine);
+            view.show_titles(window, &state.model);
             view.show_status(&state.model, &state.clock, state.notice.as_deref());
             view.show_commands(window, &state.model);
         }

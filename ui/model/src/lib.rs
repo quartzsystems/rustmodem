@@ -40,6 +40,9 @@ pub use lines::{
 pub use log::{LOG_LIMIT, LogBuffer, LogClass, LogLine};
 pub use stats::{CALL_LABELS, CARRIER_LABELS, RATE_ROWS, RateRow, StatsView};
 
+/// The title of the manager's window.
+pub const TITLE: &str = "RustModem Manager";
+
 /// The name of the file the service logs to, for the title of the event
 /// log.
 const LOG_FILE: &str = "rustmodem.log";
@@ -242,28 +245,11 @@ impl Model {
     // What the window shows
     // ----------------------------------------------------------------------
 
-    /// The title of the window.
-    pub fn title(&self, machine: &str) -> String {
-        let Some(info) = self.service() else {
-            return format!("rustmodem Manager {EMPTY} not connected");
-        };
-        // The name of the file, not the whole path.
-        let file = info
-            .config_path
-            .rsplit(['\\', '/'])
-            .next()
-            .unwrap_or(&info.config_path);
-        let lines = self.lines.len();
-        let mut title = format!(
-            "rustmodem Manager {EMPTY} {file} [{lines} line{}] {EMPTY} {machine}",
-            if lines == 1 { "" } else { "s" }
-        );
-        match info.mode {
-            ServiceMode::Service => {}
-            ServiceMode::Console => title.push_str(" (console)"),
-            ServiceMode::Demo => title.push_str(" (demo)"),
-        }
-        title
+    /// The title of the window: the name of the program and nothing
+    /// else. Which service it is connected to, and how many lines that
+    /// has, is in the status bar and over the grid.
+    pub fn title(&self) -> String {
+        TITLE.to_string()
     }
 
     /// The title of the event log's group box.

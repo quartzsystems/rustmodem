@@ -29,7 +29,7 @@ Options:
                            that stands still, for screenshots
   --pipe NAME    the control pipe; default rustmodem-demo
 
-Connect with:  rustmodem-gui --demo
+Connect with:  rustmodem-manager --demo
                rustmodemctl --pipe rustmodem-demo lines";
 
 /// The default control pipe name.

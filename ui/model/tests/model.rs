@@ -40,10 +40,7 @@ fn the_connection_goes_from_disconnected_through_connecting_to_connected() {
     assert_eq!(*model.connection(), ConnectionState::Disconnected(None));
     assert!(!model.connected() && model.service().is_none());
     assert_eq!(model.status_message(), "Not connected.");
-    assert_eq!(
-        model.title("SERVER01"),
-        "rustmodem Manager \u{2014} not connected"
-    );
+    assert_eq!(model.title(), "RustModem Manager");
 
     model.connecting();
     assert_eq!(*model.connection(), ConnectionState::Connecting);
@@ -54,10 +51,8 @@ fn the_connection_goes_from_disconnected_through_connecting_to_connected() {
     assert!(model.connected());
     assert_eq!(model.status_message(), "Ready");
     model.lines_listed(vec![line(1, LineState::Idle), line(2, LineState::Idle)]);
-    assert_eq!(
-        model.title("SERVER01"),
-        "rustmodem Manager \u{2014} rustmodem.toml [2 lines] \u{2014} SERVER01"
-    );
+    // The title is the name of the program, whatever it is connected to.
+    assert_eq!(model.title(), "RustModem Manager");
 
     // The service goes away: the reason is the RMD message, and what the
     // grid showed stays until the service is back.
@@ -73,10 +68,7 @@ fn the_connection_goes_from_disconnected_through_connecting_to_connected() {
     );
     assert_eq!(model.lines.len(), 2);
     assert!(model.stats().is_none());
-    assert_eq!(
-        model.title("SERVER01"),
-        "rustmodem Manager \u{2014} not connected"
-    );
+    assert_eq!(model.title(), "RustModem Manager");
 
     // The user disconnects: no reason.
     model.disconnected(None);
@@ -84,23 +76,17 @@ fn the_connection_goes_from_disconnected_through_connecting_to_connected() {
 }
 
 #[test]
-fn the_title_says_how_the_service_is_run() {
+fn the_log_s_title_says_where_the_log_is_kept() {
     let mut model = Model::new();
     model.connected_to(service(ServiceMode::Demo, 1, 0));
     model.lines_listed(vec![line(1, LineState::Idle)]);
-    assert_eq!(
-        model.title("PC"),
-        "rustmodem Manager \u{2014} rustmodem.toml [1 line] \u{2014} PC (demo)"
-    );
+    assert_eq!(model.title(), "RustModem Manager");
     assert_eq!(model.log_title(), "Event log \u{2014} demo service");
     let mut console = service(ServiceMode::Console, 0, 0);
     console.config_path = "relative/dir/other.toml".to_string();
     model.service_info(console);
     model.lines_listed(Vec::new());
-    assert_eq!(
-        model.title("PC"),
-        "rustmodem Manager \u{2014} other.toml [0 lines] \u{2014} PC (console)"
-    );
+    assert_eq!(model.title(), "RustModem Manager");
     assert_eq!(model.log_title(), "Event log \u{2014} rustmodem.log");
     // An answer to service.info that arrives after the connection has
     // gone is not a connection.
@@ -752,16 +738,13 @@ fn the_statistics_export_as_csv() {
 // --------------------------------------------------------------------------
 
 #[test]
-fn log_lines_have_a_class_by_their_source_and_errors_a_class_of_their_own() {
+fn log_lines_have_a_class_by_their_level_whatever_their_source() {
     let class = |level, source: &str| LogClass::of(&log(0, level, source, "x"));
-    assert_eq!(class(LogLevel::Info, "Line01"), LogClass::Line);
-    assert_eq!(class(LogLevel::Debug, "Line999"), LogClass::Line);
-    assert_eq!(class(LogLevel::Info, "CTL"), LogClass::Control);
-    assert_eq!(class(LogLevel::Info, "SVC"), LogClass::Service);
-    assert_eq!(class(LogLevel::Warning, "POOL"), LogClass::Service);
-    assert_eq!(class(LogLevel::Info, "Something"), LogClass::Service);
-    for source in ["Line01", "CTL", "SVC", "POOL"] {
+    for source in ["Line01", "CTL", "SVC", "POOL", "Something"] {
         assert_eq!(class(LogLevel::Error, source), LogClass::Error);
+        assert_eq!(class(LogLevel::Warning, source), LogClass::Warning);
+        assert_eq!(class(LogLevel::Info, source), LogClass::Info);
+        assert_eq!(class(LogLevel::Debug, source), LogClass::Debug);
     }
 }
 
