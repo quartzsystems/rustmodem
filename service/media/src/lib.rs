@@ -28,9 +28,12 @@
 //!
 //! On the tick path there is no heap allocation, no lock, no logging and
 //! no system call but the socket's receive and send. Everything a call
-//! needs is made before the loop starts. The pool is woken, which is a
-//! system call, only when the engine reports an event or the call stalls,
-//! not for data: the pool looks for data every turn of its own clock.
+//! needs is made before the loop starts. The pool is woken, through the
+//! [`Waker`] it gave, only when the engine reports an event or the call
+//! stalls, not for data: the pool looks for data every turn of its own
+//! clock. This crate has no runtime and knows nothing of the one the pool
+//! is driven by; what a wake costs is the waker's affair, and a waker
+//! that cannot deliver one says so and is asked again.
 //!
 //! `unsafe` is used in `os` only, for the three things `std` cannot do:
 //! the size of a socket's buffers, a wait for a datagram that loses none,

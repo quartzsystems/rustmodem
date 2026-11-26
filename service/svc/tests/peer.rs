@@ -121,7 +121,7 @@ lines = [1]
         let hosts = Hosts::default();
         let mut pool = Pool::new(PoolParts {
             router: Box::new(router),
-            media: Box::new(ThreadedRunner::with_capture(1, Arc::new(|| {}), writer).unwrap()),
+            media: Box::new(ThreadedRunner::with_capture(1, Arc::new(|| true), writer).unwrap()),
             serial: Box::new(Ports(Arc::clone(&hosts))),
             engines: Box::new(engine_for),
             sink: Box::new(Sink),

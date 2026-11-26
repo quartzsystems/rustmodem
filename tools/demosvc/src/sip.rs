@@ -297,7 +297,7 @@ pub fn start(
         }),
     )
     .map_err(failed)?;
-    let runner = ThreadedRunner::with_capture(config.lines.len(), Arc::new(|| {}), writer)
+    let runner = ThreadedRunner::with_capture(config.lines.len(), Arc::new(|| true), writer)
         .map_err(failed)?;
     let router = SipRouter::new(RouterParts {
         settings: Settings::new(config, crate::VERSION),

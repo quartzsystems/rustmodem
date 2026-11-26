@@ -189,12 +189,14 @@ fn start_inner(
         PipeListener::bind(&config.control.pipe, PipeSecurity::AdministratorsOnly).map_err(fail)?;
 
     // What wakes the pool's task between its ticks: a serial port's
-    // thread with something from its host, a media thread with something
-    // to report, or a SIP message that has arrived.
+    // thread with something from its host, or a SIP message that has
+    // arrived. A media thread with something to report has a channel of
+    // its own.
     let wake = Arc::new(Notify::new());
+    let (media_waker, media_events) = svc::mediawake::channel();
     let mut sip_failed = None;
     let (router, media): (Box<dyn CallRouter>, Box<dyn MediaRunner>) = if config.sip.enabled {
-        match telephony::start(&config, &log_dir, &logger, &hub, &wake) {
+        match telephony::start(&config, &log_dir, &logger, &hub, &wake, media_waker) {
             Ok(parts) => parts,
             Err(problem) => {
                 // The modems are still of use to whoever dials between
@@ -282,6 +284,7 @@ fn start_inner(
         pool,
         requests,
         wake,
+        media_events: Some(media_events),
         clock: PoolClock::Running(Arc::new(logger::unix_ms)),
         linger: LINGER,
     };

@@ -27,8 +27,12 @@ use crate::endpoint::RtpEndpoint;
 use crate::os;
 use crate::ticker::{Clock, MAX_DATAGRAM, Received, Ticker, Transport};
 
-/// Wakes the pool's thread: it has an event to take.
-pub type Waker = Arc<dyn Fn() + Send + Sync>;
+/// Tells whatever drives the pool that a call has an event for it to
+/// take. It answers whether the pool was told. `false` means it could not
+/// be told just now, and the media thread tries again at its next turn:
+/// the event is in the call's ring and is not lost. A waker must not
+/// wait, and is called for events only, never for data.
+pub type Waker = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// How long a media thread waits on its socket before it looks at its
 /// clock and at whether it has been told to stop.
@@ -267,10 +271,9 @@ fn carry(job: Job, waker: &Waker) -> Box<dyn ModemEngine> {
     } else {
         engine.answer();
     }
-    // An engine may connect the moment it is started.
-    if port.drain(engine.as_mut()) {
-        waker();
-    }
+    // An engine may connect the moment it is started. A wake the pool
+    // could not be given is owed to it, and is tried again every turn.
+    let mut owed = port.drain(engine.as_mut()) && !waker();
 
     while !stop.load(Ordering::Relaxed) {
         let received = transport.receive(&mut buffer);
@@ -282,8 +285,8 @@ fn carry(job: Job, waker: &Waker) -> Box<dyn ModemEngine> {
             &mut clock,
             &mut port,
         );
-        if wake {
-            waker();
+        if wake || owed {
+            owed = !waker();
         }
     }
 

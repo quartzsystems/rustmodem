@@ -102,6 +102,7 @@ fn a_hundred_lines_on_memory_ports_are_served_as_the_first_is() {
             pool,
             requests,
             wake,
+            media_events: None,
             clock: PoolClock::Running(system_unix_clock()),
             linger: LINGER,
         }

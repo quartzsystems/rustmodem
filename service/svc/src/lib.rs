@@ -19,6 +19,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bridge;
+pub mod mediawake;
 pub mod pooltask;
 pub mod runtime;
 pub mod shutdown;

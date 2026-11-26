@@ -257,7 +257,7 @@ fn far_end(
 fn captured_call(name: &str, packets: u32, skip: &[u32], on_from: Option<u32>) -> (Report, u32) {
     let scratch = Scratch::new(name);
     let (writer, _events) = writer(&scratch.0);
-    let mut runner = ThreadedRunner::with_capture(1, Arc::new(|| {}), writer).unwrap();
+    let mut runner = ThreadedRunner::with_capture(1, Arc::new(|| true), writer).unwrap();
 
     let ours = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let far = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();

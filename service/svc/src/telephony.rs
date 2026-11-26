@@ -88,13 +88,14 @@ pub fn start(
     logger: &Logger,
     hub: &Hub,
     wake: &Arc<Notify>,
+    media_waker: media::Waker,
 ) -> Result<Parts, Message> {
     let listen = config.sip.listen.to_string();
     let waker = {
         let wake = Arc::clone(wake);
         Arc::new(move || wake.notify_one())
     };
-    let transport = SipSocket::bind(config.sip.listen, waker.clone())
+    let transport = SipSocket::bind(config.sip.listen, waker)
         .map_err(|error| message("RMD5002", &[&listen, &error.to_string()]))?;
     let listening = message("RMD5001", &[&transport.local().to_string()]);
 
@@ -122,7 +123,7 @@ pub fn start(
     .map_err(|error| message("RMD0003", &[&error.to_string()]))?;
     // A thread for each line there is now; more are made if lines are
     // added.
-    let runner = ThreadedRunner::with_capture(config.lines.len(), waker, writer)
+    let runner = ThreadedRunner::with_capture(config.lines.len(), media_waker, writer)
         .map_err(|error| message("RMD0003", &[&error.to_string()]))?;
 
     let router = SipRouter::new(RouterParts {

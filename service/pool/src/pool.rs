@@ -1120,6 +1120,13 @@ impl Pool {
         self.lines[index].media.as_ref()?.stats()
     }
 
+    /// Whether any call has media: an engine a runner is carrying, with
+    /// data crossing between it and the line. Data is not signalled, so
+    /// whoever drives the pool looks for it often while this is true.
+    pub fn calls_up(&self) -> bool {
+        self.lines.iter().any(|line| line.media.is_some())
+    }
+
     fn lines_in_use(&self) -> u32 {
         self.lines.iter().filter(|line| line.call.is_some()).count() as u32
     }

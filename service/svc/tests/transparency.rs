@@ -101,7 +101,7 @@ lines = [1]
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut pool = Pool::new(PoolParts {
             router: Box::new(router),
-            media: Box::new(ThreadedRunner::new(1, Arc::new(|| {})).unwrap()),
+            media: Box::new(ThreadedRunner::new(1, Arc::new(|| true)).unwrap()),
             serial: Box::new(Ports(Arc::clone(&hosts))),
             engines: Box::new(engine_for),
             sink: Box::new(Sink(Arc::clone(&events))),

@@ -2,10 +2,16 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! The soak test of the phase: a whole service with 24 lines on memory
-//! ports and SIP on the loopback interface takes 24 calls at once from 24
-//! test peers and holds them, for a minute, or for as many minutes as
-//! `RM_SOAK_MINUTES` says.
+//! The soak test: a whole service with 24 lines on memory ports and SIP
+//! on the loopback interface takes 24 calls at once from 24 test peers and
+//! holds them, for a minute, or for as many minutes as `RM_SOAK_MINUTES`
+//! says.
+//!
+//! The service is the real runner: the pool on its task, a thread for
+//! each port, the SIP socket on its task, and a media thread for each
+//! call, which wakes the pool's task through the channel the service
+//! gives it. The test only plays the hosts and the far end, and asks the
+//! pool what it sees.
 //!
 //! Half the lines run the echo engine: their peers send a pattern and
 //! check that it comes back as it went. The other half run the null
@@ -27,11 +33,14 @@ use config::{Config, ConfigFile, LineConfig};
 use ctlproto::{EndReason, Event, LineState};
 use media::ThreadedRunner;
 use msg::Message;
-use pool::{EventSink, MemoryProfiles, Now, Pool, PoolParts, SerialFactory, engine_for};
+use pool::{EventSink, MemoryProfiles, Pool, PoolParts, SerialFactory, engine_for};
 use serial::{MemoryHost, SerialBackend, memory_pair};
 use sippeer::{Agent, AgentConfig, MediaKind, MediaReport, PeerEvent, loopback};
 use support::sip_socket;
+use svc::bridge::BridgedPorts;
+use svc::pooltask::{LINGER, PoolClock, PoolTask, system_unix_clock};
 use telephony::{RouterParts, Settings, SipRouter, TelephonyHandle, Unobserved, system_random};
+use tokio::sync::Notify;
 
 /// How many lines, and calls.
 const LINES: u16 = 24;
@@ -255,7 +264,19 @@ fn far_end(service: SocketAddrV4, shared: &Shared) -> Vec<Outcome> {
 #[test]
 fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
     let held = soak();
-    let transport = sip_socket(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0), Arc::new(|| {})).unwrap();
+    // What wakes the pool's task: the SIP socket and the ports' threads
+    // through one notification, the media threads through their channel.
+    let wake = Arc::new(Notify::new());
+    let (media_waker, media_events) = svc::mediawake::channel();
+    let wakes_refused = media_events.full();
+    let transport = {
+        let wake = Arc::clone(&wake);
+        sip_socket(
+            SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0),
+            Arc::new(move || wake.notify_one()),
+        )
+        .unwrap()
+    };
     let service = transport.local();
     let config = configuration(service);
     let router = SipRouter::new(RouterParts {
@@ -269,45 +290,55 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
     let hosts = Hosts::default();
     let mut pool = Pool::new(PoolParts {
         router: Box::new(router),
-        media: Box::new(ThreadedRunner::new(usize::from(LINES), Arc::new(|| {})).unwrap()),
-        serial: Box::new(Ports(Arc::clone(&hosts))),
+        media: Box::new(ThreadedRunner::new(usize::from(LINES), media_waker).unwrap()),
+        serial: Box::new(BridgedPorts::new(
+            Box::new(Ports(Arc::clone(&hosts))),
+            Arc::clone(&wake),
+        )),
         engines: Box::new(engine_for),
         sink: Box::new(Sink),
         profiles: Box::new(MemoryProfiles::new()),
         call_log: None,
     });
     pool.apply_config(&config);
+    let (link, requests) = ctlsrv::pool_link();
+    let (shutdown, stopping) = svc::shutdown::channel();
+    let task = support::runtime().spawn(
+        PoolTask {
+            pool,
+            requests,
+            wake,
+            media_events: Some(media_events),
+            clock: PoolClock::Running(system_unix_clock()),
+            linger: LINGER,
+        }
+        .run(stopping),
+    );
 
     let started = Instant::now();
-    let now = || {
-        let mono_ms = started.elapsed().as_millis() as u64;
-        Now {
-            mono_ms,
-            unix_ms: 1_800_000_000_000 + mono_ms,
-        }
-    };
-    let states = |pool: &Pool| -> Vec<LineState> {
+    // The lines as the pool's task sees them, in the order of their ids.
+    let states = || -> Vec<LineState> {
+        let lines = link.blocking_lines().unwrap();
         (1..=LINES)
-            .map(|line| pool.line(line).unwrap().state)
+            .map(|line| lines.iter().find(|l| l.id == line).unwrap().state)
             .collect()
     };
 
     // The hosts open their ports and tell their modems to say nothing:
     // what a host is sent during a call is then the data and only that.
-    pool.service(now());
+    let opened = Instant::now() + Duration::from_secs(20);
+    while hosts.lock().unwrap().len() < usize::from(LINES) {
+        assert!(Instant::now() < opened, "the ports were not opened");
+        std::thread::sleep(Duration::from_millis(1));
+    }
     let hosts: BTreeMap<u16, MemoryHost> = hosts.lock().unwrap().clone();
     for host in hosts.values() {
         host.open();
         host.write(b"ATE0Q1\r");
     }
     let deadline = Instant::now() + Duration::from_secs(20);
-    while states(&pool).iter().any(|state| *state != LineState::Idle) {
-        assert!(
-            Instant::now() < deadline,
-            "the lines are {:?}",
-            states(&pool)
-        );
-        pool.service(now());
+    while states().iter().any(|state| *state != LineState::Idle) {
+        assert!(Instant::now() < deadline, "the lines are {:?}", states());
         std::thread::sleep(Duration::from_millis(1));
     }
     for host in hosts.values() {
@@ -334,10 +365,12 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
     let mut quiet_at = None;
     let mut worst: BTreeMap<u16, pool::MediaStats> = BTreeMap::new();
     let end = loop {
-        pool.service(now());
-        for line in 1..=LINES {
-            if !online.contains_key(&line) && pool.line(line).unwrap().state == LineState::Online {
-                online.insert(line, Instant::now());
+        // Once every call is up the pool is not asked again until the end.
+        if all_online.is_none() {
+            for (line, state) in (1..=LINES).zip(states()) {
+                if !online.contains_key(&line) && state == LineState::Online {
+                    online.insert(line, Instant::now());
+                }
             }
         }
         if all_online.is_none() && online.len() == usize::from(LINES) {
@@ -347,7 +380,7 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
             all_online.is_some() || started.elapsed() < Duration::from_secs(40),
             "only {} of {LINES} calls were answered: {:?}",
             online.len(),
-            states(&pool)
+            states()
         );
         // The hosts of the lines that carry data send theirs and check
         // what they are sent.
@@ -376,7 +409,10 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
         // looked at as they stand, and the peers hang up.
         if quiet_at.is_some_and(|at: Instant| at.elapsed() > Duration::from_secs(2)) {
             for line in 1..=LINES {
-                worst.insert(line, pool.media_stats(line).expect("the call has media"));
+                let stats = link
+                    .blocking_with(move |pool| pool.media_stats(line))
+                    .unwrap();
+                worst.insert(line, stats.expect("the call has media"));
             }
             shared.hang_up.store(true, Ordering::Relaxed);
             break Instant::now();
@@ -385,17 +421,16 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
     };
 
     // Every call is torn down by its BYE.
-    while states(&pool).iter().any(|state| *state != LineState::Idle) {
+    while states().iter().any(|state| *state != LineState::Idle) {
         assert!(
             end.elapsed() < Duration::from_secs(20),
             "calls were left: {:?}",
-            states(&pool)
+            states()
         );
-        pool.service(now());
         std::thread::sleep(Duration::from_millis(1));
     }
     let outcomes = far.join().unwrap();
-    let records = pool.calls(None);
+    let records = link.blocking_with(|pool| pool.calls(None)).unwrap();
     assert_eq!(records.len(), usize::from(LINES));
     for record in &records {
         assert_eq!(record.reason, EndReason::Remote, "line {}", record.line);
@@ -413,7 +448,9 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
     // and no tick that took as long as a packet.
     let seconds = held.as_secs();
     let mut slowest = (0u32, 0u32, 0u32);
+    let mut overruns = 0;
     for (line, stats) in &worst {
+        overruns += stats.overruns;
         assert_eq!(
             (stats.lost, stats.resync, stats.slips),
             (0, 0, 0),
@@ -435,8 +472,12 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
     }
     println!(
         "soak: {LINES} calls for {seconds} s; of the lines' tick times the greatest median was \
-         {} us, the greatest 99th percentile {} us and the longest tick {} us",
-        slowest.0, slowest.1, slowest.2
+         {} us, the greatest 99th percentile {} us and the longest tick {} us; {overruns} ticks \
+         overran their packet; {} wakes of the pool were refused",
+        slowest.0,
+        slowest.1,
+        slowest.2,
+        wakes_refused.load(Ordering::Relaxed)
     );
 
     // The peers: every call answered and held, every packet back, and on
@@ -479,4 +520,10 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
             );
         }
     }
+
+    // The service stops: its task ends within the time a stop is given.
+    let stopping_at = Instant::now();
+    shutdown.trigger();
+    support::runtime().block_on(task).unwrap();
+    assert!(stopping_at.elapsed() < Duration::from_secs(10));
 }

@@ -47,6 +47,7 @@ fn counting_waker() -> (Waker, Arc<AtomicUsize>) {
     let seen = Arc::clone(&count);
     let waker: Waker = Arc::new(move || {
         seen.fetch_add(1, Ordering::Relaxed);
+        true
     });
     (waker, count)
 }
@@ -398,4 +399,49 @@ fn a_wait_that_runs_out_loses_no_datagram() {
     sender.join().unwrap();
     let expected: Vec<u16> = (0..DATAGRAMS).collect();
     assert_eq!(seen, expected, "every datagram, once, in order");
+}
+
+/// A waker that cannot deliver its wake says so, and the media thread
+/// asks again at its next turns until it can: the pool is never left
+/// without the wake for an event that is in the call's ring, and the
+/// thread never waits for it.
+#[test]
+fn a_wake_that_is_refused_is_tried_again_until_it_is_taken() {
+    const REFUSALS: usize = 5;
+    let asked = Arc::new(AtomicUsize::new(0));
+    let waker: Waker = {
+        let asked = Arc::clone(&asked);
+        // Refused the first few times, as by a channel that is full.
+        Arc::new(move || asked.fetch_add(1, Ordering::Relaxed) >= REFUSALS)
+    };
+    let mut runner = ThreadedRunner::new(1, waker).unwrap();
+    let (socket, _) = loopback();
+    let (_far, far_address) = loopback();
+    let mut call = runner
+        .start(
+            1,
+            null_engine(),
+            endpoint(socket, far_address, 20, 10_000),
+            false,
+        )
+        .ok()
+        .expect("the runner takes an RTP endpoint");
+
+    // The engine connects at once: one event, and one wake owed for it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while asked.load(Ordering::Relaxed) <= REFUSALS {
+        assert!(Instant::now() < deadline, "the wake was not tried again");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // Once it is taken it is not asked for again: nothing else happened.
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(asked.load(Ordering::Relaxed), REFUSALS + 1);
+    // The event was in the ring all the while.
+    assert_eq!(
+        next_event(&mut call, Duration::from_secs(1)),
+        Some(MediaEvent::Modem(ModemEvent::Connect(
+            ConnectInfo::unknown()
+        )))
+    );
+    runner.stop(1, call);
 }
