@@ -1,0 +1,452 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+# The rustmodem message catalogue.
+#
+# One table per message. The table name is the message id: RMD and four
+# digits. Each message has:
+#
+#   severity   info, warning or error
+#   vars       how many substitution variables (&1 to &9) the texts take
+#   text       the one-line first-level text
+#   cause      second-level text, part one
+#   recovery   second-level text, part two
+#
+# Number ranges:
+#
+#   0001-0999  service and configuration
+#   1000-1999  lines and AT
+#   2000-2999  control API
+#   3000-3999  serial
+#
+# The rest is left for later phases.
+
+# ---------------------------------------------------------------------------
+# 0001-0999: service and configuration
+# ---------------------------------------------------------------------------
+
+[RMD0001]
+severity = "info"
+vars = 1
+text = "rustmodem service started, version &1."
+cause = "The service finished starting and is serving its lines."
+recovery = "No action is needed."
+
+[RMD0002]
+severity = "info"
+vars = 0
+text = "rustmodem service stopped."
+cause = "The service was asked to stop. Every call was hung up and every port released."
+recovery = "No action is needed."
+
+[RMD0003]
+severity = "error"
+vars = 1
+text = "rustmodem service ended abnormally: &1"
+cause = "The service met an error it could not continue from."
+recovery = "Look at the service log for earlier messages, correct the problem and start the service again."
+
+[RMD0004]
+severity = "info"
+vars = 1
+text = "Service &1 installed."
+cause = "The service was registered with the Windows service control manager."
+recovery = "Start it with: net start &1"
+
+[RMD0005]
+severity = "info"
+vars = 1
+text = "Service &1 removed."
+cause = "The service was removed from the Windows service control manager."
+recovery = "No action is needed."
+
+[RMD0006]
+severity = "error"
+vars = 2
+text = "Service &1 could not be installed: &2"
+cause = "The Windows service control manager refused the registration. The service may already be installed, or the command was not run as an administrator."
+recovery = "Run the command from an elevated prompt. If the service is already installed, remove it first."
+
+[RMD0007]
+severity = "error"
+vars = 2
+text = "Service &1 could not be removed: &2"
+cause = "The Windows service control manager refused the removal. The service may not be installed, or the command was not run as an administrator."
+recovery = "Run the command from an elevated prompt and check that the service is installed."
+
+[RMD0008]
+severity = "error"
+vars = 1
+text = "The service could not connect to the service control manager: &1"
+cause = "The program was started with no arguments, which is how the Windows service control manager starts it, but it was not started as a service."
+recovery = "To run in the foreground use --console. To run as a service use --install and then start the service."
+
+[RMD0009]
+severity = "error"
+vars = 1
+text = "Command-line argument &1 is not recognised."
+cause = "The command line has an argument, or a combination of arguments, that the program does not accept."
+recovery = "Run the program with --help to see the arguments it accepts."
+
+[RMD0010]
+severity = "error"
+vars = 2
+text = "Configuration file &1 could not be read: &2"
+cause = "The file does not exist or the service is not allowed to read it."
+recovery = "Create the file or correct its permissions, then try again."
+
+[RMD0011]
+severity = "error"
+vars = 2
+text = "Configuration file &1 could not be written: &2"
+cause = "The service is not allowed to write the file, or the disk is full."
+recovery = "Correct the permissions of the file and its directory, then repeat the change."
+
+[RMD0012]
+severity = "error"
+vars = 2
+text = "Configuration is not valid TOML at line &1: &2"
+cause = "The configuration file could not be parsed."
+recovery = "Correct the file at the line given and try again."
+
+[RMD0013]
+severity = "error"
+vars = 3
+text = "Key &1 at line &2 has the wrong type; &3 expected."
+cause = "The value given for the key is not of the type the key takes."
+recovery = "Correct the value and try again."
+
+[RMD0014]
+severity = "error"
+vars = 4
+text = "Key &1 at line &2 has value &3, which is not allowed."
+cause = "The value is outside what the key accepts. Allowed: &4."
+recovery = "Correct the value and try again."
+
+[RMD0015]
+severity = "error"
+vars = 2
+text = "Required key &1 is missing from the table at line &2."
+cause = "The table must have the key and it has no default."
+recovery = "Add the key and try again."
+
+[RMD0016]
+severity = "error"
+vars = 3
+text = "Line id &1 at line &2 is already used at line &3."
+cause = "Two lines have the same id. Every line needs its own id."
+recovery = "Give one of the lines a different id and try again."
+
+[RMD0017]
+severity = "error"
+vars = 3
+text = "Serial port &1 at line &2 is already used at line &3."
+cause = "Two lines name the same serial port. A port can serve one line only."
+recovery = "Give one of the lines a different port and try again."
+
+[RMD0018]
+severity = "error"
+vars = 2
+text = "Serial backend &1 at line &2 is not known."
+cause = "The backend named for the line is not one this version of rustmodem has. Known backends: com0com."
+recovery = "Correct the backend name and try again."
+
+[RMD0019]
+severity = "error"
+vars = 1
+text = "Line &1 is not in the configuration."
+cause = "The change names a line id that the configuration does not have."
+recovery = "List the lines to see which ids exist, then repeat the change with one of them."
+
+[RMD0020]
+severity = "error"
+vars = 1
+text = "Line &1 is already in the configuration."
+cause = "A line cannot be added with an id that the configuration already has."
+recovery = "Choose an id that is not in use, or edit the existing line."
+
+[RMD0021]
+severity = "info"
+vars = 2
+text = "Configuration loaded from &1: &2 lines."
+cause = "The configuration file was read and found valid."
+recovery = "No action is needed."
+
+[RMD0022]
+severity = "error"
+vars = 2
+text = "Log directory &1 could not be used: &2"
+cause = "The directory could not be created, or a log file in it could not be opened for writing."
+recovery = "Correct log_dir in the configuration or the permissions of the directory, then start the service again."
+
+[RMD0023]
+severity = "error"
+vars = 1
+text = "The Ctrl+C handler could not be set: &1"
+cause = "Windows refused the console control handler, so the service could not be stopped cleanly from the keyboard."
+recovery = "Run the service from an ordinary console window."
+
+[RMD0999]
+severity = "error"
+vars = 1
+text = "Message &1 is not in the message catalogue."
+cause = "The program asked for a message id that the catalogue does not have. This is an error in rustmodem."
+recovery = "Report the problem to Quartz Systems with the message id."
+
+# ---------------------------------------------------------------------------
+# 1000-1999: lines and AT
+# ---------------------------------------------------------------------------
+
+[RMD1001]
+severity = "error"
+vars = 1
+text = "Line &1 does not exist."
+cause = "The request names a line id that the service does not have."
+recovery = "List the lines to see which ids exist, then repeat the request with one of them."
+
+[RMD1002]
+severity = "error"
+vars = 1
+text = "Line &1 is disabled."
+cause = "The request needs the line to be enabled."
+recovery = "Enable the line and repeat the request."
+
+[RMD1003]
+severity = "error"
+vars = 2
+text = "Line &1 is not ringing; its state is &2."
+cause = "A line can be answered only while a call is ringing on it."
+recovery = "Wait for the line to ring, then repeat the request."
+
+[RMD1004]
+severity = "error"
+vars = 1
+text = "Line &1 has no call to hang up."
+cause = "The line is neither connecting nor connected."
+recovery = "No action is needed."
+
+[RMD1005]
+severity = "info"
+vars = 2
+text = "Line &1 state is now &2."
+cause = "The line changed state."
+recovery = "No action is needed."
+
+[RMD1006]
+severity = "info"
+vars = 3
+text = "Line &1 call started: &2, number &3."
+cause = "The line dialled a number or was offered a call."
+recovery = "No action is needed."
+
+[RMD1007]
+severity = "info"
+vars = 2
+text = "Line &1 call connected at &2 bit/s."
+cause = "The modems on both ends of the call finished connecting. A rate of 0 means the rate is not known."
+recovery = "No action is needed."
+
+[RMD1008]
+severity = "info"
+vars = 4
+text = "Line &1 call ended: &2; &3 bytes sent, &4 bytes received."
+cause = "The call on the line finished for the reason given."
+recovery = "No action is needed."
+
+[RMD1009]
+severity = "info"
+vars = 1
+text = "Line &1 was reset."
+cause = "The line was reset on request. Any call on it was hung up and its modem settings returned to their defaults."
+recovery = "No action is needed."
+
+[RMD1010]
+severity = "info"
+vars = 1
+text = "Line &1 added."
+cause = "The line was added to the service from the configuration."
+recovery = "No action is needed."
+
+[RMD1011]
+severity = "info"
+vars = 1
+text = "Line &1 removed."
+cause = "The line is no longer in the configuration. Any call on it was hung up and its port released."
+recovery = "No action is needed."
+
+[RMD1012]
+severity = "info"
+vars = 1
+text = "Line &1 changed."
+cause = "The configuration of the line changed and the service applied the change."
+recovery = "No action is needed."
+
+[RMD1013]
+severity = "warning"
+vars = 1
+text = "A call record could not be written: &1"
+cause = "The service could not append to the call records file. The record is still held in memory."
+recovery = "Check the log directory for free space and correct permissions."
+
+# ---------------------------------------------------------------------------
+# 2000-2999: control API
+# ---------------------------------------------------------------------------
+
+[RMD2001]
+severity = "error"
+vars = 2
+text = "Control protocol &1 is not supported; this service supports protocol &2."
+cause = "The client and the service were built for different versions of the control protocol."
+recovery = "Use a client of the same version as the service."
+
+[RMD2002]
+severity = "error"
+vars = 1
+text = "Control method &1 is not known."
+cause = "The request names a method that this version of the service does not have."
+recovery = "Correct the method name. The methods are listed in docs/CONTROL_API.md."
+
+[RMD2003]
+severity = "error"
+vars = 2
+text = "Parameters of control method &1 are not valid: &2"
+cause = "A parameter is missing, has the wrong type, or is not one the method takes."
+recovery = "Correct the parameters. They are listed for each method in docs/CONTROL_API.md."
+
+[RMD2004]
+severity = "error"
+vars = 1
+text = "Control message is not valid: &1"
+cause = "The message is not one JSON object on one line, or it is missing the fields a request needs."
+recovery = "Send each request as one JSON object with id and method, ended by a line feed."
+
+[RMD2005]
+severity = "error"
+vars = 0
+text = "The first control message must be hello."
+cause = "A client sent something else before saying hello."
+recovery = "Send hello with the protocol number and client version first."
+
+[RMD2006]
+severity = "warning"
+vars = 1
+text = "Control client &1 was disconnected because it fell too far behind."
+cause = "The client did not read its events as fast as the service produced them, and its queue filled."
+recovery = "Connect again. A client that subscribes to events must keep reading them."
+
+[RMD2007]
+severity = "error"
+vars = 2
+text = "Control pipe &1 could not be created: &2"
+cause = "Windows refused the named pipe. Another copy of the service may be running with the same pipe name."
+recovery = "Stop the other copy, or give this one a different pipe name in the configuration."
+
+[RMD2008]
+severity = "error"
+vars = 2
+text = "Control pipe &1 could not be opened: &2"
+cause = "The service is not running, it uses a different pipe name, or this user is not allowed to open the pipe. The pipe is open to SYSTEM and Administrators only."
+recovery = "Start the service, check the pipe name, and run the command from an elevated prompt."
+
+[RMD2009]
+severity = "error"
+vars = 1
+text = "The connection to the service was lost: &1"
+cause = "The service closed the connection or stopped."
+recovery = "Check that the service is running and try again."
+
+[RMD2010]
+severity = "error"
+vars = 0
+text = "The service is stopping."
+cause = "The request arrived while the service was shutting down, so it was not carried out."
+recovery = "Start the service and repeat the request."
+
+[RMD2011]
+severity = "info"
+vars = 1
+text = "Control client &1 connected."
+cause = "A client opened the control pipe and completed the hello exchange."
+recovery = "No action is needed."
+
+[RMD2012]
+severity = "info"
+vars = 1
+text = "Control client &1 disconnected."
+cause = "The client closed its connection."
+recovery = "No action is needed."
+
+[RMD2013]
+severity = "error"
+vars = 1
+text = "The reply from the service was not understood: &1"
+cause = "The service sent something this client cannot read. The client and the service may be different versions."
+recovery = "Use a client of the same version as the service."
+
+[RMD2014]
+severity = "error"
+vars = 1
+text = "Control message is longer than &1 bytes."
+cause = "A control message must fit on one line within the size limit."
+recovery = "Send a shorter message."
+
+# ---------------------------------------------------------------------------
+# 3000-3999: serial
+# ---------------------------------------------------------------------------
+
+[RMD3001]
+severity = "error"
+vars = 2
+text = "Serial port &1 could not be opened: &2"
+cause = "The port does not exist, is in use by another program, or the service is not allowed to open it."
+recovery = "Check the port name against the com0com set-up in docs/COM0COM.md and that nothing else has the port open. The service tries again by itself."
+
+[RMD3002]
+severity = "error"
+vars = 2
+text = "Serial port &1 read failed: &2"
+cause = "Windows reported an error reading from the port. The port may have been removed."
+recovery = "Check that the port still exists. The service closes the port and tries to open it again by itself."
+
+[RMD3003]
+severity = "error"
+vars = 2
+text = "Serial port &1 write failed: &2"
+cause = "Windows reported an error writing to the port. The port may have been removed."
+recovery = "Check that the port still exists. The service closes the port and tries to open it again by itself."
+
+[RMD3004]
+severity = "error"
+vars = 2
+text = "Serial port &1 modem signals could not be set: &2"
+cause = "Windows reported an error changing the output lines of the port."
+recovery = "Check that the port still exists and that the pair is set up as docs/COM0COM.md describes."
+
+[RMD3005]
+severity = "error"
+vars = 2
+text = "Serial port &1 status could not be read: &2"
+cause = "Windows reported an error reading the input lines of the port."
+recovery = "Check that the port still exists. The service closes the port and tries to open it again by itself."
+
+[RMD3006]
+severity = "error"
+vars = 2
+text = "Serial port &1 could not be configured: &2"
+cause = "The port was opened but Windows refused its settings."
+recovery = "Check that the port is a com0com port set up as docs/COM0COM.md describes."
+
+[RMD3007]
+severity = "error"
+vars = 1
+text = "Serial backend &1 is not available on this platform."
+cause = "The backend works on Windows only."
+recovery = "Run the service on Windows."
+
+[RMD3008]
+severity = "info"
+vars = 1
+text = "Serial port &1 opened."
+cause = "The service opened the port for its line."
+recovery = "No action is needed."
