@@ -126,8 +126,12 @@ fn every_method_round_trips() {
                 assert_ne!(info.state, LineState::Disabled);
                 assert!(fixture.config_text().contains("enabled = true"));
                 assert_eq!(client.err(Call::LinesEnable(line(9))), "RMD0019");
-                // The port was released and opened again; its host has to
-                // open it again too.
+                // The port was released and is opened again by the pool's
+                // thread, a moment after the answer; its host has to open
+                // the new port, not the one that was released.
+                eventually("the port to be opened again", || {
+                    fixture.hosts.lock().unwrap()["P2"].backend_alive()
+                });
                 fixture.host("P2").open();
                 client.wait_for_state(2, LineState::Idle);
             }
