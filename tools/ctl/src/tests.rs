@@ -1,0 +1,566 @@
+// Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+// licensed under the terms of the MIT license which can be found in the
+// root directory of this project.
+
+//! Every command against the real control server, over its in-memory
+//! transport, with a pool on memory ports behind it.
+
+use std::collections::BTreeMap;
+use std::io::BufReader;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+use config::{Config, ConfigFile, LineConfig};
+use ctlproto::{CallList, Event, LineInfo, LineList, LineState, ServiceInfo};
+use ctlsrv::memory::{self, MemoryConnector, PipeReader, PipeWriter};
+use ctlsrv::{Hub, Limits, Server, ServerParts};
+use engine::{NullConfig, NullEngine};
+use msg::Message;
+use pool::{EventSink, Now, NullSwitch, Pool, PoolParts, SerialFactory, command_channel};
+use serial::{MemoryHost, SerialBackend, memory_pair};
+
+use crate::args::{self, Options};
+use crate::client::{Client, Failure};
+use crate::{report, run};
+
+type Hosts = Arc<Mutex<BTreeMap<String, MemoryHost>>>;
+type TestClient = Client<BufReader<PipeReader>, PipeWriter>;
+
+struct Factory(Hosts);
+
+impl SerialFactory for Factory {
+    fn open(&mut self, line: &LineConfig) -> Result<Box<dyn SerialBackend>, Message> {
+        let (backend, host) = memory_pair();
+        self.0
+            .lock()
+            .unwrap()
+            .insert(line.serial.port.clone(), host);
+        Ok(Box::new(backend))
+    }
+}
+
+struct HubSink(Hub);
+
+impl EventSink for HubSink {
+    fn publish(&mut self, event: Event) {
+        self.0.publish(&event);
+    }
+}
+
+fn eventually(what: &str, mut check: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !check() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// A service with two idle lines.
+struct Service {
+    hub: Hub,
+    connector: MemoryConnector,
+    hosts: Hosts,
+    directory: PathBuf,
+    config_path: PathBuf,
+    stop: Arc<AtomicBool>,
+    pool_thread: Option<JoinHandle<()>>,
+}
+
+impl Service {
+    fn start() -> Service {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let directory = std::env::temp_dir().join(format!(
+            "rustmodemctl-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let config_path = directory.join("rustmodem.toml");
+        let mut config = Config {
+            lines: vec![LineConfig::new(1, "P1"), LineConfig::new(2, "P2")],
+            ..Config::default()
+        };
+        config.lines[0].name = Some("Front desk".to_string());
+        let file = ConfigFile::from_config(&config).unwrap();
+        file.save(&config_path).unwrap();
+
+        let hub = Hub::new();
+        let hosts: Hosts = Arc::default();
+        let mut pool = Pool::new(PoolParts {
+            router: Box::new(NullSwitch::new()),
+            serial: Box::new(Factory(Arc::clone(&hosts))),
+            engines: Box::new(|_| Box::new(NullEngine::new(NullConfig::default()))),
+            sink: Box::new(HubSink(hub.clone())),
+            call_log: None,
+        });
+        pool.apply_config(&config);
+        let (handle, inbox) = command_channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = Arc::clone(&stop);
+        let pool_thread = std::thread::spawn(move || {
+            let started = Instant::now();
+            while !stopping.load(Ordering::Relaxed) && inbox.serve(&mut pool) {
+                let mono_ms = started.elapsed().as_millis() as u64;
+                pool.service(Now {
+                    mono_ms,
+                    unix_ms: 1_800_000_000_000 + mono_ms,
+                });
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        });
+        let server = Server::new(ServerParts {
+            pool: handle,
+            config: file,
+            config_path: config_path.clone(),
+            version: "9.9.9-test".to_string(),
+            pipe: "test-pipe".to_string(),
+            hub: hub.clone(),
+            log: Arc::new(|_, _| {}),
+            limits: Limits::default(),
+        });
+        let (listener, connector) = memory::listener();
+        std::thread::spawn(move || server.serve(Box::new(listener)));
+
+        let service = Service {
+            hub,
+            connector,
+            hosts,
+            directory,
+            config_path,
+            stop,
+            pool_thread: Some(pool_thread),
+        };
+        for port in ["P1", "P2"] {
+            service.host(port).open();
+        }
+        let mut client = service.client();
+        eventually("both lines to be idle", || {
+            let list: LineList = client.call(&ctlproto::Call::LinesList).unwrap();
+            list.lines.iter().all(|l| l.state == LineState::Idle)
+        });
+        service
+    }
+
+    fn host(&self, port: &str) -> MemoryHost {
+        let mut found = None;
+        eventually("the port to be opened", || {
+            found = self.hosts.lock().unwrap().get(port).cloned();
+            found.is_some()
+        });
+        found.unwrap()
+    }
+
+    /// A client that has said hello.
+    fn client(&self) -> TestClient {
+        let memory::MemoryClient { mut reader, writer } = self.connector.connect().unwrap();
+        reader.set_timeout(Some(Duration::from_secs(10)));
+        let mut client = Client::new(BufReader::new(reader), writer);
+        let hello = client.hello().unwrap();
+        assert_eq!(hello.version, "9.9.9-test");
+        client
+    }
+
+    /// Runs a command line as `rustmodemctl` would and returns the exit
+    /// code, what went to standard output and what went to standard error.
+    fn ctl(&self, words: &[&str]) -> (u8, String, String) {
+        self.ctl_watching(words, None)
+    }
+
+    fn ctl_watching(&self, words: &[&str], limit: Option<usize>) -> (u8, String, String) {
+        let options: Options = args::parse(words.iter().map(|w| w.to_string())).unwrap();
+        let mut client = self.client();
+        let (mut out, mut errors) = (Vec::new(), Vec::new());
+        let outcome = run(&options, &mut client, &mut out, limit);
+        let code = report(outcome, options.verbose, &mut errors);
+        (
+            code,
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(errors).unwrap(),
+        )
+    }
+
+    fn state(&self, id: u16) -> LineState {
+        let mut client = self.client();
+        let line: LineInfo = client
+            .call(&ctlproto::Call::LinesGet(ctlproto::LineRef { id }))
+            .unwrap();
+        line.state
+    }
+
+    /// Does something once a `watch` started after this call has connected
+    /// and had time to subscribe, which it does straight after its hello.
+    fn once_watched(&self, act: impl FnOnce() + Send + 'static) -> JoinHandle<()> {
+        let hub = self.hub.clone();
+        eventually("earlier clients to be gone", || hub.client_count() == 0);
+        std::thread::spawn(move || {
+            eventually("the watcher to connect", || hub.client_count() == 1);
+            std::thread::sleep(Duration::from_millis(100));
+            act();
+        })
+    }
+
+    /// Line 1 dials line 2; waits until line 2 is ringing.
+    fn ring_line_2(&self) {
+        self.host("P1").write(b"ATE0D2\r");
+        eventually("line 2 to ring", || self.state(2) == LineState::Ringing);
+    }
+}
+
+impl Drop for Service {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.pool_thread.take() {
+            let _ = thread.join();
+        }
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
+#[test]
+fn info_prints_the_service() {
+    let service = Service::start();
+    let (code, out, errors) = service.ctl(&["info"]);
+    assert_eq!((code, errors.as_str()), (0, ""));
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "Version:        9.9.9-test");
+    assert_eq!(lines[1], "Protocol:       1");
+    assert_eq!(lines[2], "Pipe:           test-pipe");
+    assert_eq!(
+        lines[3],
+        format!("Configuration:  {}", service.config_path.display())
+    );
+    assert_eq!(lines[4], "Lines:          2");
+    assert!(lines[5].starts_with("Started:        20") && lines[5].ends_with(" UTC"));
+    assert!(lines[6].starts_with("Uptime:         0:00:0"));
+
+    let (code, out, _) = service.ctl(&["info", "--json"]);
+    assert_eq!(code, 0);
+    let info: ServiceInfo = serde_json::from_str(&out).unwrap();
+    assert_eq!(info.lines, 2);
+    assert_eq!(out.lines().count(), 1, "JSON is one line");
+}
+
+#[test]
+fn lines_prints_a_table_or_json() {
+    let service = Service::start();
+    let (code, out, errors) = service.ctl(&["lines"]);
+    assert_eq!((code, errors.as_str()), (0, ""));
+    assert_eq!(
+        out,
+        "ID  NAME        PORT  STATE  IN  OUT  CONNECTS  TX  RX\n \
+          1  Front desk  P1    idle    0    0         0   0   0\n \
+          2  -           P2    idle    0    0         0   0   0\n"
+    );
+
+    let (code, out, _) = service.ctl(&["lines", "--json"]);
+    assert_eq!(code, 0);
+    let list: LineList = serde_json::from_str(&out).unwrap();
+    assert_eq!(list.lines.len(), 2);
+    assert_eq!(list.lines[0].name.as_deref(), Some("Front desk"));
+}
+
+#[test]
+fn line_prints_one_line_and_an_unknown_line_is_an_api_error() {
+    let service = Service::start();
+    let (code, out, _) = service.ctl(&["line", "1"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.starts_with("Line:               1\nName:               Front desk\n"),
+        "{out}"
+    );
+    assert!(out.contains("Port:               P1\n"));
+    assert!(out.contains("State:              idle\n"));
+    assert!(out.contains("Unknown commands:   ok\n"));
+    assert!(!out.contains("Call:"));
+
+    let (code, out, errors) = service.ctl(&["line", "9"]);
+    assert_eq!(code, 1, "an error from the service is exit code 1");
+    assert_eq!(out, "");
+    assert_eq!(errors, "RMD1001: Line 9 does not exist.\n");
+
+    let (code, _, errors) = service.ctl(&["line", "9", "--verbose"]);
+    assert_eq!(code, 1);
+    let lines: Vec<&str> = errors.lines().collect();
+    assert_eq!(lines[0], "RMD1001: Line 9 does not exist.");
+    assert!(lines[1].starts_with("Cause: The request names a line id"));
+    assert!(lines[2].starts_with("Recovery: List the lines"));
+}
+
+#[test]
+fn answer_hangup_and_calls_follow_a_call() {
+    let service = Service::start();
+    let (code, _, errors) = service.ctl(&["answer", "2"]);
+    assert_eq!(code, 1);
+    assert_eq!(
+        errors,
+        "RMD1003: Line 2 is not ringing; its state is idle.\n"
+    );
+
+    service.ring_line_2();
+    let (code, out, errors) = service.ctl(&["answer", "2"]);
+    assert_eq!(
+        (code, out.as_str(), errors.as_str()),
+        (0, "Line 2: online\n", "")
+    );
+    eventually("line 1 to be online", || {
+        service.state(1) == LineState::Online
+    });
+
+    // The line shows its call while it is up.
+    let (_, out, _) = service.ctl(&["line", "1"]);
+    assert!(
+        out.contains(
+            "Call:               outgoing 2 (connected, unknown), 0 bytes sent, 0 received\n"
+        ),
+        "{out}"
+    );
+
+    let (code, out, _) = service.ctl(&["hangup", "1"]);
+    assert_eq!((code, out.as_str()), (0, "Line 1: idle\n"));
+    let (code, _, errors) = service.ctl(&["hangup", "1"]);
+    assert_eq!(code, 1);
+    assert_eq!(errors, "RMD1004: Line 1 has no call to hang up.\n");
+    eventually("line 2 to be idle", || service.state(2) == LineState::Idle);
+
+    let (code, out, _) = service.ctl(&["calls"]);
+    assert_eq!(code, 0);
+    let rows: Vec<&str> = out.lines().collect();
+    assert_eq!(rows.len(), 3);
+    assert!(
+        rows[0].starts_with("CALL  LINE  DIRECTION  NUMBER  STARTED (UTC)"),
+        "{out}"
+    );
+    assert!(
+        rows[0].ends_with("LENGTH  RATE     ENDED     TX  RX"),
+        "{out}"
+    );
+    assert!(
+        rows[1].starts_with("   1     1  outgoing   2       20"),
+        "{out}"
+    );
+    assert!(
+        rows[1].ends_with("0:00:00  unknown  operator   0   0"),
+        "{out}"
+    );
+    assert!(
+        rows[2].starts_with("   2     2  incoming   1       20"),
+        "{out}"
+    );
+    assert!(rows[2].ends_with("unknown  remote     0   0"), "{out}");
+
+    let (_, out, _) = service.ctl(&["calls", "--last", "1"]);
+    assert_eq!(out.lines().count(), 2);
+    let (_, out, _) = service.ctl(&["calls", "--last", "1", "--json"]);
+    let list: CallList = serde_json::from_str(&out).unwrap();
+    assert_eq!(list.calls.len(), 1);
+    assert_eq!(list.calls[0].line, 2);
+}
+
+#[test]
+fn reset_enable_disable_and_reload() {
+    let service = Service::start();
+    let (code, out, _) = service.ctl(&["reset", "1"]);
+    assert_eq!((code, out.as_str()), (0, "Line 1: idle\n"));
+
+    let (code, out, _) = service.ctl(&["disable", "2"]);
+    assert_eq!((code, out.as_str()), (0, "Line 2: disabled\n"));
+    assert!(
+        std::fs::read_to_string(&service.config_path)
+            .unwrap()
+            .contains("enabled = false")
+    );
+    let (_, out, _) = service.ctl(&["lines"]);
+    assert!(out.contains(" 2  -           P2    disabled"), "{out}");
+
+    let (code, out, _) = service.ctl(&["enable", "2"]);
+    assert_eq!((code, out.as_str()), (0, "Line 2: not_ready\n"));
+    let (code, _, errors) = service.ctl(&["enable", "9"]);
+    assert_eq!(code, 1);
+    assert_eq!(errors, "RMD0019: Line 9 is not in the configuration.\n");
+
+    let text = std::fs::read_to_string(&service.config_path).unwrap();
+    let added =
+        format!("{text}\n[[line]]\nid = 5\nserial = {{ backend = \"com0com\", port = \"P5\" }}\n");
+    std::fs::write(&service.config_path, added).unwrap();
+    let (code, out, _) = service.ctl(&["reload"]);
+    assert_eq!(
+        (code, out.as_str()),
+        (0, "Configuration reloaded: 3 lines.\n")
+    );
+    let (_, out, _) = service.ctl(&["reload", "--json"]);
+    assert_eq!(out, "{\"lines\":3}\n");
+
+    std::fs::write(&service.config_path, "[[line]]\nid = 0\n").unwrap();
+    let (code, _, errors) = service.ctl(&["reload"]);
+    assert_eq!(code, 1);
+    assert!(
+        errors.starts_with("RMD0014: Key line.id at line 2 has value 0"),
+        "{errors}"
+    );
+}
+
+#[test]
+fn watch_prints_each_event_as_it_happens() {
+    let service = Service::start();
+    let host = service.host("P1");
+    let dialler = service.once_watched(move || host.write(b"ATE0D9\r"));
+    let (code, out, errors) = service.ctl_watching(&["watch"], Some(3));
+    dialler.join().unwrap();
+    assert_eq!((code, errors.as_str()), (0, ""));
+    let lines: Vec<&str> = out
+        .lines()
+        .filter(|line| !line.starts_with("log "))
+        .collect();
+    assert!(
+        lines.contains(&"line 1 call 1 started: outgoing 9"),
+        "{out}"
+    );
+
+    // As JSON, each event is one line, the frame the service sent.
+    let host = service.host("P2");
+    let dialler = service.once_watched(move || host.set_dtr(false));
+    let (code, out, _) = service.ctl_watching(&["watch", "--json"], Some(1));
+    dialler.join().unwrap();
+    assert_eq!(code, 0);
+    let event: Event = serde_json::from_str(out.trim()).unwrap();
+    assert!(matches!(
+        event,
+        Event::LineState(_) | Event::Log(_) | Event::CallEnded(_)
+    ));
+}
+
+#[test]
+fn every_kind_of_event_has_a_line() {
+    use ctlproto::{
+        CallEvent, CallInfo, CallRecord, ConnectInfo, Direction, EndReason, LogEvent, LogLevel,
+    };
+    let call = CallInfo {
+        id: 7,
+        direction: Direction::Outgoing,
+        number: "2".to_string(),
+        started_ms: 0,
+        connected_ms: Some(1),
+        connect: Some(ConnectInfo {
+            rate: 2400,
+            ..ConnectInfo::default()
+        }),
+        bytes_tx: 0,
+        bytes_rx: 0,
+    };
+    let service = Service::start();
+    let mut client = service.client();
+    let line: LineInfo = client
+        .call(&ctlproto::Call::LinesGet(ctlproto::LineRef { id: 1 }))
+        .unwrap();
+    let cases = [
+        (Event::LineState(Box::new(line)), "line 1 is idle"),
+        (
+            Event::CallStarted(CallEvent {
+                line: 1,
+                call: call.clone(),
+            }),
+            "line 1 call 7 started: outgoing 2",
+        ),
+        (
+            Event::CallConnected(CallEvent { line: 1, call }),
+            "line 1 call 7 connected: 2400 bit/s",
+        ),
+        (
+            Event::CallEnded(CallRecord {
+                id: 7,
+                line: 1,
+                direction: Direction::Outgoing,
+                number: "2".to_string(),
+                started_ms: 0,
+                connected_ms: None,
+                ended_ms: 5,
+                reason: EndReason::NoAnswer,
+                connect: None,
+                bytes_tx: 12,
+                bytes_rx: 34,
+            }),
+            "line 1 call 7 ended: no_answer, 12 bytes sent, 34 received",
+        ),
+        (
+            Event::Log(LogEvent {
+                time_ms: 0,
+                level: LogLevel::Warning,
+                source: "CTL".to_string(),
+                text: "something".to_string(),
+            }),
+            "log WARN [CTL] something",
+        ),
+    ];
+    for (event, text) in cases {
+        assert_eq!(crate::output::event(&event), text);
+    }
+}
+
+#[test]
+fn a_service_that_cannot_be_reached_is_exit_code_2() {
+    let Err(failure) = Client::connect("rustmodem-no-such-pipe-for-the-test") else {
+        panic!("there is no such pipe");
+    };
+    let Failure::Connection(problem) = &failure else {
+        panic!("expected a connection failure, got {failure:?}");
+    };
+    assert_eq!(problem.id, "RMD2008");
+    let mut errors = Vec::new();
+    assert_eq!(report(Err(failure), false, &mut errors), 2);
+    let text = String::from_utf8(errors).unwrap();
+    assert!(
+        text.starts_with(
+            "RMD2008: Control pipe rustmodem-no-such-pipe-for-the-test could not be opened:"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_service_that_goes_away_is_exit_code_2() {
+    let service = Service::start();
+    let mut client = service.client();
+    // The server's side of the connection is closed under the client.
+    let connector = service.connector.clone();
+    drop(service);
+    drop(connector);
+    let options = args::parse(["lines".to_string()].into_iter()).unwrap();
+    let mut out = Vec::new();
+    // The pool has stopped: the first answer is the service saying so.
+    let outcome = run(&options, &mut client, &mut out, None);
+    assert!(matches!(&outcome, Err(Failure::Api(error)) if error.msgid == "RMD2010"));
+    assert_eq!(report(outcome, false, &mut Vec::new()), 1);
+
+    // A connection that ends in the middle of things is a connection error.
+    let mut cut: Client<&[u8], Vec<u8>> = Client::new(&b""[..], Vec::new());
+    let outcome = run(&options, &mut cut, &mut out, None);
+    let Err(Failure::Connection(problem)) = &outcome else {
+        panic!("expected a connection failure");
+    };
+    assert_eq!(problem.id, "RMD2009");
+    assert_eq!(report(outcome, false, &mut Vec::new()), 2);
+}
+
+#[test]
+fn a_service_of_another_protocol_is_reported_from_its_own_error() {
+    let refusal = ctlproto::encode(&ctlproto::ServerFrame::Error {
+        id: None,
+        error: msg::message("RMD2001", &["1", "2"]).into(),
+    });
+    let script = format!("{refusal}\n");
+    let mut client: Client<&[u8], Vec<u8>> = Client::new(script.as_bytes(), Vec::new());
+    let Err(Failure::Api(error)) = client.hello() else {
+        panic!("expected the service's error");
+    };
+    assert_eq!(error.msgid, "RMD2001");
+
+    // Something that is not the control protocol at all.
+    let mut client: Client<&[u8], Vec<u8>> = Client::new(&b"220 smtp ready\n"[..], Vec::new());
+    let Err(Failure::Connection(problem)) = client.hello() else {
+        panic!("expected a connection failure");
+    };
+    assert_eq!(problem.id, "RMD2013");
+}
