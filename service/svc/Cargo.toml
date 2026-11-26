@@ -12,6 +12,27 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
+config.workspace = true
+ctlproto.workspace = true
+ctlsrv.workspace = true
+engine.workspace = true
+msg.workspace = true
+pool.workspace = true
+serial.workspace = true
+
+[target."cfg(windows)".dependencies]
+windows-service.workspace = true
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_EventLog",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
 
 [lints]
 workspace = true

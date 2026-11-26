@@ -1,0 +1,496 @@
+// Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+// licensed under the terms of the MIT license which can be found in the
+// root directory of this project.
+
+//! The control API over a real named pipe: the same round trips the server
+//! is tested with over its in-memory transport, the hello exchange, and
+//! what the pipe itself has to get right.
+
+use std::collections::BTreeMap;
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+use config::{Config, ConfigFile, LineConfig};
+use ctlproto::{
+    Call, CallRecord, ClientFrame, Direction, EndReason, Event as ControlEvent, Hello, LineState,
+    LogLevel, PROTOCOL, ServerFrame, decode_server, doc, encode,
+};
+use ctlsrv::{Hub, Limits, Listener, Server, ServerParts};
+use engine::{NullConfig, NullEngine};
+use msg::Message;
+use pool::{EventSink, Now, NullSwitch, Pool, PoolParts, SerialFactory, command_channel};
+use serial::{MemoryHost, SerialBackend, memory_pair};
+
+use crate::pipe::{PipeListener, PipeSecurity};
+use crate::win::Event;
+
+type Hosts = Arc<Mutex<BTreeMap<String, MemoryHost>>>;
+
+struct Factory(Hosts);
+
+impl SerialFactory for Factory {
+    fn open(&mut self, line: &LineConfig) -> Result<Box<dyn SerialBackend>, Message> {
+        let (backend, host) = memory_pair();
+        self.0
+            .lock()
+            .unwrap()
+            .insert(line.serial.port.clone(), host);
+        Ok(Box::new(backend))
+    }
+}
+
+struct HubSink(Hub);
+
+impl EventSink for HubSink {
+    fn publish(&mut self, event: ControlEvent) {
+        self.0.publish(&event);
+    }
+}
+
+/// A pipe name no other test or process is using.
+fn unique_name() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    format!(
+        "rustmodem-test-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+/// A service on memory ports with its control API on a real pipe.
+struct Fixture {
+    pipe: String,
+    hub: Hub,
+    logs: Arc<Mutex<Vec<String>>>,
+    directory: PathBuf,
+    stop: Arc<Event>,
+    stop_pool: Arc<AtomicBool>,
+    threads: Vec<JoinHandle<()>>,
+}
+
+impl Fixture {
+    fn new(lines: u16, limits: Limits) -> Fixture {
+        let pipe = unique_name();
+        let directory = std::env::temp_dir().join(&pipe);
+        std::fs::create_dir_all(&directory).unwrap();
+        let config_path = directory.join("rustmodem.toml");
+        let config = Config {
+            lines: (1..=lines)
+                .map(|id| LineConfig::new(id, &format!("P{id}")))
+                .collect(),
+            ..Config::default()
+        };
+        let file = ConfigFile::from_config(&config).unwrap();
+        file.save(&config_path).unwrap();
+
+        let hub = Hub::new();
+        let hosts: Hosts = Arc::default();
+        let mut pool = Pool::new(PoolParts {
+            router: Box::new(NullSwitch::new()),
+            serial: Box::new(Factory(Arc::clone(&hosts))),
+            engines: Box::new(|_| Box::new(NullEngine::new(NullConfig::default()))),
+            sink: Box::new(HubSink(hub.clone())),
+            call_log: None,
+        });
+        pool.apply_config(&config);
+        let (handle, inbox) = command_channel();
+        let stop_pool = Arc::new(AtomicBool::new(false));
+        let stopping = Arc::clone(&stop_pool);
+        let pool_thread = std::thread::spawn(move || {
+            let started = Instant::now();
+            while !stopping.load(Ordering::Relaxed) && inbox.serve(&mut pool) {
+                let mono_ms = started.elapsed().as_millis() as u64;
+                pool.service(Now {
+                    mono_ms,
+                    unix_ms: 1_800_000_000_000 + mono_ms,
+                });
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        });
+
+        let logs: Arc<Mutex<Vec<String>>> = Arc::default();
+        let log_to = Arc::clone(&logs);
+        let server = Server::new(ServerParts {
+            pool: handle,
+            config: file,
+            config_path,
+            version: "9.9.9-test".to_string(),
+            pipe: pipe.clone(),
+            hub: hub.clone(),
+            log: Arc::new(move |_: LogLevel, text| log_to.lock().unwrap().push(text)),
+            limits,
+        });
+
+        let stop = Arc::new(Event::new().unwrap());
+        let mut listener =
+            PipeListener::bind(&pipe, PipeSecurity::Creator, Arc::clone(&stop)).unwrap();
+        assert_eq!(listener.name(), pipe);
+        let accept_thread = std::thread::spawn(move || {
+            while let Some(connection) = listener.accept().unwrap() {
+                let server = server.clone();
+                std::thread::spawn(move || server.handle(connection));
+            }
+        });
+
+        // The hosts open their ports, so the lines are idle.
+        for id in 1..=lines {
+            let port = format!("P{id}");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(host) = hosts.lock().unwrap().get(&port) {
+                    host.open();
+                    break;
+                }
+                assert!(Instant::now() < deadline, "port {port} was never opened");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+        Fixture {
+            pipe,
+            hub,
+            logs,
+            directory,
+            stop,
+            stop_pool,
+            threads: vec![pool_thread, accept_thread],
+        }
+    }
+
+    fn connect(&self) -> PipeClient {
+        let mut client = PipeClient::open(&self.pipe).unwrap();
+        let hello = client.hello(PROTOCOL);
+        assert!(matches!(hello, Some(ServerFrame::Hello { hello }) if hello.protocol == PROTOCOL));
+        client
+    }
+
+    fn logged(&self, start: &str) -> bool {
+        self.logs
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|l| l.starts_with(start))
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        self.stop.set();
+        self.stop_pool.store(true, Ordering::Relaxed);
+        for thread in self.threads.drain(..) {
+            let _ = thread.join();
+        }
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
+/// A client on the pipe, as `rustmodemctl` is: the pipe opened as a file.
+struct PipeClient {
+    reader: BufReader<File>,
+    writer: File,
+}
+
+impl PipeClient {
+    fn open(pipe: &str) -> std::io::Result<PipeClient> {
+        let path = format!(r"\\.\pipe\{pipe}");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let file = loop {
+            match OpenOptions::new().read(true).write(true).open(&path) {
+                Ok(file) => break file,
+                // Every instance is taken for a moment between one client
+                // connecting and the next instance being made.
+                Err(e) if e.raw_os_error() == Some(231) && Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => return Err(e),
+            }
+        };
+        Ok(PipeClient {
+            reader: BufReader::new(file.try_clone()?),
+            writer: file,
+        })
+    }
+
+    fn send(&mut self, line: &str) {
+        self.writer
+            .write_all(format!("{line}\n").as_bytes())
+            .unwrap();
+    }
+
+    fn read(&mut self) -> Option<ServerFrame> {
+        let mut line = String::new();
+        match self.reader.read_line(&mut line) {
+            Ok(0) => None,
+            Ok(_) if !line.ends_with('\n') => None,
+            Ok(_) => Some(decode_server(line.trim_end()).unwrap()),
+            // The service closing its end is the end of the stream: the
+            // pipe is broken (109), or was disconnected (233).
+            Err(e) if matches!(e.raw_os_error(), Some(109 | 233)) => None,
+            Err(e) => panic!("reading the pipe: {e}"),
+        }
+    }
+
+    fn hello(&mut self, protocol: u32) -> Option<ServerFrame> {
+        self.send(&encode(&ClientFrame::Hello {
+            hello: Hello {
+                protocol,
+                version: "pipe-test".to_string(),
+            },
+        }));
+        self.read()
+    }
+
+    /// Sends a request and returns its answer; events on the way are
+    /// collected.
+    fn request(&mut self, line: &str, events: &mut Vec<ControlEvent>) -> ServerFrame {
+        self.send(line);
+        loop {
+            match self.read().expect("an answer") {
+                ServerFrame::Event(event) => events.push(event),
+                other => return other,
+            }
+        }
+    }
+}
+
+/// Every method in docs/CONTROL_API.md, with the example the documentation
+/// gives for it, over a real pipe.
+#[test]
+fn every_method_round_trips_over_a_real_pipe() {
+    let fixture = Fixture::new(2, Limits::default());
+    let mut client = fixture.connect();
+    let mut events = Vec::new();
+
+    // What each documented example gets on a fresh service with two idle
+    // lines, when the examples are sent in the documented order.
+    let expected: BTreeMap<&str, Result<(), &str>> = BTreeMap::from([
+        ("service.info", Ok(())),
+        ("lines.list", Ok(())),
+        ("lines.get", Ok(())),
+        ("lines.answer", Err("RMD1003")),
+        ("lines.hangup", Err("RMD1004")),
+        ("lines.reset", Ok(())),
+        ("lines.enable", Ok(())),
+        ("lines.disable", Ok(())),
+        ("lines.add", Ok(())),
+        ("lines.edit", Ok(())),
+        ("lines.remove", Ok(())),
+        ("calls.list", Ok(())),
+        ("config.reload", Ok(())),
+        ("subscribe", Ok(())),
+        ("unsubscribe", Ok(())),
+    ]);
+    assert_eq!(expected.len(), Call::METHODS.len());
+
+    for (index, method) in doc::METHODS.iter().enumerate() {
+        let id = index as u64 + 100;
+        let request = format!(
+            r#"{{"id":{id},"method":"{}","params":{}}}"#,
+            method.name, method.example
+        );
+        let answer = client.request(&request, &mut events);
+        match (answer, expected[method.name]) {
+            (ServerFrame::Result { id: got, result }, Ok(())) => {
+                assert_eq!(got, id, "{}", method.name);
+                assert!(result.is_object(), "{}", method.name);
+            }
+            (ServerFrame::Error { id: got, error }, Err(want)) => {
+                assert_eq!(got, Some(id), "{}", method.name);
+                assert_eq!(error.msgid, want, "{}", method.name);
+            }
+            (answer, want) => panic!("{}: got {answer:?}, expected {want:?}", method.name),
+        }
+    }
+
+    // And the results mean something: line 1 was disabled by its example.
+    let answer = client.request(
+        r#"{"id":1,"method":"lines.get","params":{"id":1}}"#,
+        &mut events,
+    );
+    let ServerFrame::Result { result, .. } = answer else {
+        panic!("lines.get failed");
+    };
+    assert_eq!(result["state"], "disabled");
+    assert_eq!(result["enabled"], false);
+}
+
+#[test]
+fn events_arrive_over_a_real_pipe() {
+    let fixture = Fixture::new(1, Limits::default());
+    let mut client = fixture.connect();
+    let mut events = Vec::new();
+    let subscribed = r#"{"id":1,"method":"subscribe","params":{"events":["line.state"]}}"#;
+    assert!(matches!(
+        client.request(subscribed, &mut events),
+        ServerFrame::Result { id: 1, .. }
+    ));
+    let disable = r#"{"id":2,"method":"lines.disable","params":{"id":1}}"#;
+    assert!(matches!(
+        client.request(disable, &mut events),
+        ServerFrame::Result { id: 2, .. }
+    ));
+    // The event may come before the answer or after it.
+    while !events
+        .iter()
+        .any(|e| matches!(e, ControlEvent::LineState(l) if l.state == LineState::Disabled))
+    {
+        match client.read().expect("the line.state event") {
+            ServerFrame::Event(event) => events.push(event),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_client_of_another_protocol_is_refused_over_a_real_pipe() {
+    let fixture = Fixture::new(0, Limits::default());
+    let mut client = PipeClient::open(&fixture.pipe).unwrap();
+    let Some(ServerFrame::Error { id: None, error }) = client.hello(PROTOCOL + 5) else {
+        panic!("expected an error");
+    };
+    assert_eq!(error.msgid, "RMD2001");
+    assert_eq!(client.read(), None, "the service closed the pipe");
+
+    // The pipe goes on serving other clients.
+    let mut events = Vec::new();
+    let mut other = fixture.connect();
+    assert!(matches!(
+        other.request(r#"{"id":1,"method":"lines.list"}"#, &mut events),
+        ServerFrame::Result { id: 1, .. }
+    ));
+}
+
+#[test]
+fn several_clients_are_served_at_once() {
+    let fixture = Fixture::new(1, Limits::default());
+    let mut clients: Vec<PipeClient> = (0..5).map(|_| fixture.connect()).collect();
+    let mut events = Vec::new();
+    for round in 0..3 {
+        for (number, client) in clients.iter_mut().enumerate() {
+            let id = round * 10 + number as u64;
+            let request = format!(r#"{{"id":{id},"method":"service.info"}}"#);
+            let ServerFrame::Result { id: got, result } = client.request(&request, &mut events)
+            else {
+                panic!("service.info failed");
+            };
+            assert_eq!(got, id);
+            assert_eq!(result["pipe"], fixture.pipe.as_str());
+        }
+    }
+    assert_eq!(fixture.hub.client_count(), 5);
+    drop(clients);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while fixture.hub.client_count() != 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the clients were never forgotten"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn a_client_that_stops_reading_is_disconnected_and_holds_nobody_up() {
+    let limits = Limits {
+        max_queued: 50,
+        max_logs: 10,
+    };
+    let fixture = Fixture::new(0, limits);
+    let mut client = fixture.connect();
+    let mut events = Vec::new();
+    assert!(matches!(
+        client.request(r#"{"id":1,"method":"subscribe"}"#, &mut events),
+        ServerFrame::Result { id: 1, .. }
+    ));
+
+    // Far more state events than the pipe's buffers and the client's queue
+    // hold, while the client reads nothing. Publishing is what the pool's
+    // thread does; it must not wait.
+    let started = Instant::now();
+    for number in 0..20_000 {
+        fixture.hub.publish(&ControlEvent::CallEnded(CallRecord {
+            id: number,
+            line: 1,
+            direction: Direction::Outgoing,
+            number: "2".to_string(),
+            started_ms: 0,
+            connected_ms: None,
+            ended_ms: 0,
+            reason: EndReason::Busy,
+            connect: None,
+            bytes_tx: 0,
+            bytes_rx: 0,
+        }));
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "publishing took {:?}",
+        started.elapsed()
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !fixture.logged("RMD2006") || fixture.hub.client_count() != 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the slow client was never disconnected"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // What the client reads now ends, well short of everything published.
+    let mut delivered = 0;
+    while client.read().is_some() {
+        delivered += 1;
+    }
+    assert!(delivered < 20_000);
+}
+
+#[test]
+fn a_pipe_name_already_in_use_is_message_2007() {
+    let fixture = Fixture::new(0, Limits::default());
+    let stop = Arc::new(Event::new().unwrap());
+    let Err(problem) = PipeListener::bind(&fixture.pipe, PipeSecurity::Creator, stop) else {
+        panic!("a second listener on the same pipe must be refused");
+    };
+    assert_eq!(problem.id, "RMD2007");
+    assert!(problem.text.contains(&fixture.pipe));
+}
+
+#[test]
+fn the_stop_signal_ends_a_wait_for_a_client() {
+    let stop = Arc::new(Event::new().unwrap());
+    let mut listener =
+        PipeListener::bind(&unique_name(), PipeSecurity::Creator, Arc::clone(&stop)).unwrap();
+    let waiting = std::thread::spawn(move || listener.accept().map(|c| c.is_none()));
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(!waiting.is_finished(), "accept waits for a client");
+    stop.set();
+    assert!(
+        waiting.join().unwrap().unwrap(),
+        "accept reports the shutdown"
+    );
+}
+
+#[test]
+fn the_service_pipe_admits_only_system_and_administrators() {
+    let name = unique_name();
+    let stop = Arc::new(Event::new().unwrap());
+    let mut listener =
+        PipeListener::bind(&name, PipeSecurity::AdministratorsOnly, Arc::clone(&stop)).unwrap();
+    let accepting = std::thread::spawn(move || listener.accept().map(|c| c.is_some()));
+
+    // Whether this test may open the pipe depends on whether it runs
+    // elevated. Either it is let in, or it is refused for lack of access;
+    // anything else is wrong.
+    match PipeClient::open(&name) {
+        Ok(_client) => assert!(accepting.join().unwrap().unwrap()),
+        Err(error) => {
+            assert_eq!(error.kind(), ErrorKind::PermissionDenied, "{error}");
+            stop.set();
+            assert!(!accepting.join().unwrap().unwrap());
+        }
+    }
+}

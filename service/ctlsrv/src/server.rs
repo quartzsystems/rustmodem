@@ -157,12 +157,15 @@ impl Server {
             self.shared.hub.remove(&queue);
         }
 
-        // Let what is queued go out, then close.
+        // Let what is queued go out. The connection closes when its two
+        // halves are dropped, the writer's with its thread and the reader's
+        // here; it is not closed by force, which on some transports would
+        // discard what the client has not read yet.
         queue.finish();
         if let Ok(thread) = writer_thread {
             let _ = thread.join();
         }
-        closer.close();
+        drop(reader);
         if queue.overflowed() {
             self.log(&message("RMD2006", &[&client]));
         } else if greeted {
