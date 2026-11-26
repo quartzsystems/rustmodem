@@ -71,6 +71,7 @@ dependencies = [
  "ctlproto",
  "ctlsrv",
  "engine",
+ "glyph",
  "msg",
  "pool",
  "serde",
@@ -141,6 +142,10 @@ dependencies = [
  "r-efi",
  "rand_core",
 ]
+
+[[package]]
+name = "glyph"
+version = "0.0.1"
 
 [[package]]
 name = "hashbrown"
@@ -350,6 +355,7 @@ dependencies = [
  "ctlproto",
  "ctlsrv",
  "engine",
+ "glyph",
  "msg",
  "pipe",
  "pool",

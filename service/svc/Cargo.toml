@@ -22,6 +22,9 @@ pool.workspace = true
 serial.workspace = true
 toml_edit.workspace = true
 
+[build-dependencies]
+glyph.workspace = true
+
 [target."cfg(windows)".dependencies]
 windows-service.workspace = true
 windows = { workspace = true, features = [

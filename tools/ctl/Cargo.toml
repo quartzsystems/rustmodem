@@ -17,6 +17,9 @@ msg.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[build-dependencies]
+glyph.workspace = true
+
 [dev-dependencies]
 config.workspace = true
 ctlsrv.workspace = true

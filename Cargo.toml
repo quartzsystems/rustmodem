@@ -18,6 +18,8 @@ members = [
     "service/pipe",
     "service/pool",
     "service/svc",
+    # UI: the manager.
+    "ui/glyph",
     # Tools: the command-line client and the demo service.
     "tools/ctl",
     "tools/demosvc",
@@ -53,6 +55,7 @@ ctlproto = { path = "service/ctlproto" }
 ctlsrv = { path = "service/ctlsrv" }
 pipe = { path = "service/pipe" }
 pool = { path = "service/pool" }
+glyph = { path = "ui/glyph" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

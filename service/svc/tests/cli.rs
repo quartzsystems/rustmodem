@@ -297,3 +297,40 @@ fn a_second_copy_with_the_same_pipe_is_refused() {
     first.kill().unwrap();
     first.wait().unwrap();
 }
+
+/// The resources `build.rs` links in: looked for in the program file, where
+/// the version strings are UTF-16 and the manifest is UTF-8.
+#[cfg(windows)]
+#[test]
+fn the_program_carries_its_version_information_icon_and_manifest() {
+    let program = std::fs::read(env!("CARGO_BIN_EXE_rustmodem-svc")).unwrap();
+    let has = |needle: &[u8]| program.windows(needle.len()).any(|window| window == needle);
+    let utf16 =
+        |text: &str| -> Vec<u8> { text.encode_utf16().flat_map(u16::to_le_bytes).collect() };
+    let file_version = format!("{}.0", env!("CARGO_PKG_VERSION"));
+    for wanted in [
+        "VS_VERSION_INFO",
+        "Quartz Systems",
+        "rustmodem modem pool service",
+        "rustmodem-svc.exe",
+        "Copyright (C) 2026 Quartz Systems",
+        file_version.as_str(),
+    ] {
+        assert!(
+            has(&utf16(wanted)),
+            "{wanted} is not in the version information"
+        );
+    }
+    for wanted in [
+        "name=\"QuartzSystems.rustmodem.Service\"",
+        "level=\"asInvoker\"",
+        "{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}",
+        "longPathAware",
+    ] {
+        assert!(has(wanted.as_bytes()), "{wanted} is not in the manifest");
+    }
+    // A program with no windows asks for no common controls.
+    assert!(!has(b"Microsoft.Windows.Common-Controls"));
+    // The largest image of the icon is a PNG.
+    assert!(has(b"\x89PNG\r\n\x1a\n"));
+}
