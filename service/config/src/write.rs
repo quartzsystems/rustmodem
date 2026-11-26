@@ -5,9 +5,14 @@
 //! Write-back: changes made to the document in place, so comments and
 //! ordering outside the change survive.
 
-use toml_edit::{ArrayOfTables, DocumentMut, InlineTable, Item, Table, TableLike, Value, value};
+use toml_edit::{
+    Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, TableLike, Value, value,
+};
 
-use crate::schema::{Config, LineConfig, LineEdit, SettingsEdit, UnknownCommand};
+use crate::schema::{
+    Cidr, Config, EngineKind, HuntGroup, LineConfig, LineEdit, MediaConfig, RegisterConfig, Route,
+    SettingsEdit, SipConfig, UnknownCommand,
+};
 
 /// Renders a configuration as a new document with no comments.
 pub(crate) fn render(config: &Config) -> String {
@@ -22,10 +27,89 @@ pub(crate) fn render(config: &Config) -> String {
     control["pipe"] = value(config.control.pipe.as_str());
     document["control"] = Item::Table(control);
 
+    // The sections that came with SIP are written only when they say
+    // something: a configuration without them stays without them.
+    if config.sip != SipConfig::default() {
+        let sip = &config.sip;
+        let mut table = Table::new();
+        table["enabled"] = value(sip.enabled);
+        table["listen"] = value(sip.listen.to_string());
+        table["address"] = value(sip.address.as_str());
+        table["user_agent"] = value(sip.user_agent.as_str());
+        table["trusted_peers"] = value(strings(sip.trusted_peers.iter().map(Cidr::to_string)));
+        table["outbound_peer"] = value(sip.outbound_peer.as_str());
+        table["ring_timeout_s"] = value(i64::from(sip.ring_timeout_s));
+        document["sip"] = Item::Table(table);
+    }
+    if config.media != MediaConfig::default() {
+        let media = &config.media;
+        let mut table = Table::new();
+        table["codecs"] = value(strings(
+            media.codecs.iter().map(|codec| codec.as_str().to_string()),
+        ));
+        table["ptime_ms"] = value(i64::from(media.ptime_ms));
+        table["rtp_ports"] = value(media.rtp_ports.to_string());
+        table["rtp_timeout_s"] = value(i64::from(media.rtp_timeout_s));
+        table["capture_dir"] = value(media.capture_dir.as_str());
+        document["media"] = Item::Table(table);
+    }
+
     for line in &config.lines {
         add_line(&mut document, line);
     }
+    for group in &config.hunt_groups {
+        add_hunt_group(&mut document, group);
+    }
+    for route in &config.routes {
+        add_route(&mut document, route);
+    }
     document.to_string()
+}
+
+/// An array of strings.
+fn strings(values: impl Iterator<Item = String>) -> Array {
+    let mut array = Array::new();
+    for value in values {
+        array.push(value);
+    }
+    array
+}
+
+/// The `register` table of a line, written inline.
+pub(crate) fn register_table(register: &RegisterConfig) -> InlineTable {
+    let mut table = InlineTable::new();
+    table.insert("server", register.server.as_str().into());
+    table.insert("user", register.user.as_str().into());
+    table.insert("password", register.password.as_str().into());
+    if !register.auth_user.is_empty() {
+        table.insert("auth_user", register.auth_user.as_str().into());
+    }
+    if register.expires_s != RegisterConfig::DEFAULT_EXPIRES_S {
+        table.insert("expires_s", i64::from(register.expires_s).into());
+    }
+    table
+}
+
+/// Appends a `[[hunt_group]]` table.
+pub(crate) fn add_hunt_group(document: &mut DocumentMut, group: &HuntGroup) {
+    let mut table = Table::new();
+    table["name"] = value(group.name.as_str());
+    table["pilot"] = value(group.pilot.as_str());
+    let mut lines = Array::new();
+    for line in &group.lines {
+        lines.push(i64::from(*line));
+    }
+    table["lines"] = value(lines);
+    table["strategy"] = value(group.strategy.as_str());
+    tables_mut(document, "hunt_group").push(table);
+}
+
+/// Appends a `[[route]]` table.
+pub(crate) fn add_route(document: &mut DocumentMut, route: &Route) {
+    let mut table = Table::new();
+    table["called"] = value(route.called.as_str());
+    table["target"] = value(route.target.to_string());
+    tables_mut(document, "route").push(table);
 }
 
 /// Appends a `[[line]]` table. Keys at their defaults are left out.
@@ -47,6 +131,12 @@ pub(crate) fn add_line(document: &mut DocumentMut, line: &LineConfig) {
     }
     if line.unknown_command != UnknownCommand::default() {
         table["unknown_command"] = value(line.unknown_command.as_str());
+    }
+    if line.engine != EngineKind::default() {
+        table["engine"] = value(line.engine.as_str());
+    }
+    if let Some(register) = &line.register {
+        table["register"] = value(register_table(register));
     }
     lines_mut(document).push(table);
 }
@@ -144,8 +234,13 @@ pub(crate) fn remove_line(document: &mut DocumentMut, index: usize) {
 
 /// The `line` array of tables, created if the document has none.
 fn lines_mut(document: &mut DocumentMut) -> &mut ArrayOfTables {
+    tables_mut(document, "line")
+}
+
+/// The array of tables called `name`, created if the document has none.
+pub(crate) fn tables_mut<'d>(document: &'d mut DocumentMut, name: &str) -> &'d mut ArrayOfTables {
     let item = document
-        .entry("line")
+        .entry(name)
         .or_insert(Item::ArrayOfTables(ArrayOfTables::new()));
     if !item.is_array_of_tables() {
         // A document that passed validation has an array of tables here or
@@ -153,8 +248,8 @@ fn lines_mut(document: &mut DocumentMut) -> &mut ArrayOfTables {
         *item = Item::ArrayOfTables(ArrayOfTables::new());
     }
     match item {
-        Item::ArrayOfTables(lines) => lines,
-        _ => unreachable!("line was just made an array of tables"),
+        Item::ArrayOfTables(tables) => tables,
+        _ => unreachable!("the item was just made an array of tables"),
     }
 }
 

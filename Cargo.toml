@@ -21,6 +21,7 @@ members = [
     "service/ctlsrv",
     "service/pipe",
     "service/pool",
+    "service/telephony",
     "service/svc",
     # UI: the manager.
     "ui/model",

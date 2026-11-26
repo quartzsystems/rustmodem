@@ -5,8 +5,8 @@
 //! The schema, validation and write-back of the configuration file.
 
 use config::{
-    Backend, Config, ConfigFile, LineConfig, LineEdit, LogLevel, SerialConfig, SettingsEdit,
-    UnknownCommand,
+    Backend, Config, ConfigFile, EngineKind, LineConfig, LineEdit, LogLevel, SerialConfig,
+    SettingsEdit, UnknownCommand,
 };
 
 /// The example from the phase 0 handoff, with a later-phase section added.
@@ -60,6 +60,8 @@ fn the_handoff_example_parses() {
             enabled: true,
             auto_answer_rings: 0,
             unknown_command: UnknownCommand::Ok,
+            engine: EngineKind::Null,
+            register: None,
         }
     );
     assert_eq!(config.lines[1], LineConfig::new(2, "CNCB1"));

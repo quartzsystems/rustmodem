@@ -8,8 +8,10 @@
 //! The file is TOML. [`ConfigFile`] holds both the parsed, validated
 //! [`Config`] and the document it came from, so a change made through the
 //! API is written back without disturbing comments, ordering, or sections
-//! this version does not know (later phases add `[sip]`, `[media]` and
-//! others; they are accepted and preserved untouched).
+//! this version does not know, which are accepted and preserved untouched.
+//!
+//! Every section but the lines is optional. With no `[sip]` the service
+//! speaks no SIP and is as it was before it could.
 //!
 //! Validation reports every problem at once, each as an `RMD` message naming
 //! the offending key and its line number.
@@ -26,8 +28,10 @@ use msg::{Message, message};
 use toml_edit::DocumentMut;
 
 pub use schema::{
-    Backend, Config, ControlConfig, LineConfig, LineEdit, LogLevel, MAX_LINE_ID, SerialConfig,
-    ServiceConfig, SettingsEdit, UnknownCommand,
+    Backend, Cidr, CodecName, Config, ControlConfig, EngineKind, HuntGroup, LineConfig, LineEdit,
+    LogLevel, MAX_LINE_ID, MediaConfig, PortRange, RegisterConfig, Route, SerialConfig,
+    ServiceConfig, SettingsEdit, SipConfig, Strategy, Target, UnknownCommand, pattern_covers,
+    pattern_matches,
 };
 
 /// The directory under `%ProgramData%` that holds rustmodem's files.
@@ -58,14 +62,25 @@ pub fn default_log_dir() -> PathBuf {
 pub struct ConfigFile {
     document: DocumentMut,
     config: Config,
+    warnings: Vec<Message>,
 }
 
 impl ConfigFile {
     /// Parses and validates configuration text. Every problem found is
     /// returned, not just the first.
     pub fn parse(text: &str) -> Result<ConfigFile, Vec<Message>> {
-        let (document, config) = validate::parse(text)?;
-        Ok(ConfigFile { document, config })
+        let parsed = validate::parse(text)?;
+        Ok(ConfigFile {
+            document: parsed.document,
+            config: parsed.config,
+            warnings: parsed.warnings,
+        })
+    }
+
+    /// What is questionable about a configuration that is valid: a route
+    /// that an earlier route keeps from ever getting a call.
+    pub fn warnings(&self) -> &[Message] {
+        &self.warnings
     }
 
     /// Reads, parses and validates the file at `path`.
@@ -152,9 +167,10 @@ impl ConfigFile {
     /// Validates a changed document by reading its text back, exactly as a
     /// later load would, and adopts it only if it is valid.
     fn commit(&mut self, document: DocumentMut) -> Result<(), Vec<Message>> {
-        let (document, config) = validate::parse(&document.to_string())?;
-        self.document = document;
-        self.config = config;
+        let parsed = validate::parse(&document.to_string())?;
+        self.document = parsed.document;
+        self.config = parsed.config;
+        self.warnings = parsed.warnings;
         Ok(())
     }
 }

@@ -9,15 +9,27 @@ use msg::{Message, message};
 use toml_edit::{Document, DocumentMut, Item, TableLike};
 
 use crate::schema::{
-    Backend, Config, ControlConfig, LineConfig, LogLevel, MAX_LINE_ID, SerialConfig, ServiceConfig,
-    UnknownCommand,
+    Backend, Cidr, CodecName, Config, ControlConfig, EngineKind, HuntGroup, LineConfig, LogLevel,
+    MAX_LINE_ID, MediaConfig, PortRange, RegisterConfig, Route, SerialConfig, ServiceConfig,
+    SipConfig, Strategy, Target, UnknownCommand, pattern_covers,
 };
 
 /// The longest pipe or port name accepted.
 const MAX_NAME_LEN: usize = 64;
 
+/// The longest hunt group name, pilot number or route pattern accepted.
+const MAX_NUMBER_LEN: usize = 32;
+
+/// A configuration that is valid: the document, what it says, and the
+/// warnings about it.
+pub(crate) struct Parsed {
+    pub(crate) document: DocumentMut,
+    pub(crate) config: Config,
+    pub(crate) warnings: Vec<Message>,
+}
+
 /// Parses and validates configuration text.
-pub(crate) fn parse(text: &str) -> Result<(DocumentMut, Config), Vec<Message>> {
+pub(crate) fn parse(text: &str) -> Result<Parsed, Vec<Message>> {
     let document = Document::parse(text).map_err(|e| {
         let line = e.span().map(|span| line_of(text, span.start)).unwrap_or(1);
         vec![message("RMD0012", &[&line.to_string(), e.message()])]
@@ -25,13 +37,60 @@ pub(crate) fn parse(text: &str) -> Result<(DocumentMut, Config), Vec<Message>> {
     let mut reader = Reader {
         text,
         problems: Vec::new(),
+        warnings: Vec::new(),
     };
     let config = reader.config(document.as_table());
     if reader.problems.is_empty() {
-        Ok((document.into_mut(), config))
+        Ok(Parsed {
+            document: document.into_mut(),
+            config,
+            warnings: reader.warnings,
+        })
     } else {
         Err(reader.problems)
     }
+}
+
+/// Whether `text` is a host name or an IPv4 address.
+pub(crate) fn is_host(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= 253
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
+}
+
+/// Whether `text` is `host` or `host:port`.
+pub(crate) fn is_host_port(text: &str) -> bool {
+    match text.rsplit_once(':') {
+        Some((host, port)) => {
+            is_host(host)
+                && !port.is_empty()
+                && port.bytes().all(|b| b.is_ascii_digit())
+                && port.parse::<u16>().is_ok_and(|port| port != 0)
+        }
+        None => is_host(text),
+    }
+}
+
+/// Whether `text` can be the user part of a SIP URI as it stands: the
+/// unreserved characters of RFC 3261 section 25.1 and `+`.
+fn is_sip_user(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= MAX_NAME_LEN
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.!~*'()+".contains(&b))
+}
+
+/// Whether `text` is a number someone can be called on: digits, `#` and
+/// `+`.
+fn is_number(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= MAX_NUMBER_LEN
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_digit() || matches!(b, b'#' | b'+'))
 }
 
 /// The 1-based line number of a byte offset.
@@ -47,6 +106,7 @@ fn line_of(text: &str, offset: usize) -> usize {
 struct Reader<'a> {
     text: &'a str,
     problems: Vec<Message>,
+    warnings: Vec<Message>,
 }
 
 impl Reader<'_> {
@@ -137,13 +197,493 @@ impl Reader<'_> {
         if let Some(table) = self.table(root, "control", "control") {
             config.control = self.control(table);
         }
+        if let Some(table) = self.table(root, "sip", "sip") {
+            config.sip = self.sip(table);
+        }
+        if let Some(table) = self.table(root, "media", "media") {
+            config.media = self.media(table);
+        }
         if let Some(item) = root.get("line") {
             match item.as_array_of_tables() {
                 Some(lines) => self.lines(lines, &mut config.lines),
                 None => self.wrong_type("line", item, "array of tables ([[line]])"),
             }
         }
+        if let Some(item) = root.get("hunt_group") {
+            match item.as_array_of_tables() {
+                Some(groups) => self.hunt_groups(groups, &config.lines, &mut config.hunt_groups),
+                None => self.wrong_type("hunt_group", item, "array of tables ([[hunt_group]])"),
+            }
+        }
+        if let Some(item) = root.get("route") {
+            match item.as_array_of_tables() {
+                Some(routes) => {
+                    let (lines, groups) = (&config.lines, &config.hunt_groups);
+                    self.routes(routes, lines, groups, &mut config.routes);
+                }
+                None => self.wrong_type("route", item, "array of tables ([[route]])"),
+            }
+        }
         config
+    }
+
+    /// The strings of an array-valued key, each with its line number.
+    /// `None`, with a problem recorded, if the key is there and is not an
+    /// array of strings.
+    fn strings(
+        &mut self,
+        table: &dyn TableLike,
+        key: &str,
+        path: &str,
+    ) -> Option<Vec<(String, usize)>> {
+        let item = table.get(key)?;
+        let values = item.as_array().and_then(|array| {
+            array
+                .iter()
+                .map(|value| {
+                    let line = value.span().map_or(0, |s| line_of(self.text, s.start));
+                    value.as_str().map(|text| (text.to_string(), line))
+                })
+                .collect::<Option<Vec<_>>>()
+        });
+        if values.is_none() {
+            self.wrong_type(path, item, "array of strings");
+        }
+        values
+    }
+
+    /// The integers of an array-valued key, each with its line number.
+    fn integers(
+        &mut self,
+        table: &dyn TableLike,
+        key: &str,
+        path: &str,
+    ) -> Option<Vec<(i64, usize)>> {
+        let item = table.get(key)?;
+        let values = item.as_array().and_then(|array| {
+            array
+                .iter()
+                .map(|value| {
+                    let line = value.span().map_or(0, |s| line_of(self.text, s.start));
+                    value.as_integer().map(|number| (number, line))
+                })
+                .collect::<Option<Vec<_>>>()
+        });
+        if values.is_none() {
+            self.wrong_type(path, item, "array of integers");
+        }
+        values
+    }
+
+    fn not_allowed_at(&mut self, key: &str, line: usize, value: &str, allowed: &str) {
+        self.problems.push(message(
+            "RMD0014",
+            &[key, &line.to_string(), value, allowed],
+        ));
+    }
+
+    fn sip(&mut self, table: &dyn TableLike) -> SipConfig {
+        let mut sip = SipConfig::default();
+        if let Some(value) = self.boolean(table, "enabled", "sip.enabled") {
+            sip.enabled = value;
+        }
+        if let Some((value, item)) = self.string(table, "listen", "sip.listen") {
+            match value.parse::<std::net::SocketAddrV4>() {
+                Ok(address) if address.port() != 0 => sip.listen = address,
+                _ => self.not_allowed(
+                    "sip.listen",
+                    item,
+                    value,
+                    "an IPv4 address and a port, such as 0.0.0.0:5060",
+                ),
+            }
+        }
+        if let Some((value, item)) = self.string(table, "address", "sip.address") {
+            if value.is_empty() || is_host(value) {
+                sip.address = value.to_string();
+            } else {
+                self.not_allowed(
+                    "sip.address",
+                    item,
+                    value,
+                    "an IPv4 address or a host name, or nothing",
+                );
+            }
+        }
+        if let Some((value, item)) = self.string(table, "user_agent", "sip.user_agent") {
+            if value.len() <= 128 && value.chars().all(|c| (' '..='~').contains(&c)) {
+                sip.user_agent = value.to_string();
+            } else {
+                self.not_allowed(
+                    "sip.user_agent",
+                    item,
+                    value,
+                    "up to 128 printable ASCII characters",
+                );
+            }
+        }
+        if let Some(values) = self.strings(table, "trusted_peers", "sip.trusted_peers") {
+            for (value, line) in values {
+                match Cidr::parse(&value) {
+                    Some(peer) => sip.trusted_peers.push(peer),
+                    None => self.not_allowed_at(
+                        "sip.trusted_peers",
+                        line,
+                        &value,
+                        "an IPv4 address or a CIDR block, such as 10.10.20.11 or 10.10.20.0/24",
+                    ),
+                }
+            }
+        }
+        if let Some((value, item)) = self.string(table, "outbound_peer", "sip.outbound_peer") {
+            if value.is_empty() || is_host_port(value) {
+                sip.outbound_peer = value.to_string();
+            } else {
+                self.not_allowed(
+                    "sip.outbound_peer",
+                    item,
+                    value,
+                    "a host or host:port, or nothing",
+                );
+            }
+        }
+        if let Some((value, item)) = self.integer(table, "ring_timeout_s", "sip.ring_timeout_s") {
+            if (5..=3600).contains(&value) {
+                sip.ring_timeout_s = value as u32;
+            } else {
+                self.not_allowed("sip.ring_timeout_s", item, &value.to_string(), "5 to 3600");
+            }
+        }
+        sip
+    }
+
+    fn media(&mut self, table: &dyn TableLike) -> MediaConfig {
+        let mut media = MediaConfig::default();
+        if let Some(values) = self.strings(table, "codecs", "media.codecs") {
+            let mut codecs: Vec<CodecName> = Vec::new();
+            let mut valid = true;
+            for (value, line) in &values {
+                match CodecName::parse(value) {
+                    Some(codec) if !codecs.contains(&codec) => codecs.push(codec),
+                    _ => {
+                        valid = false;
+                        self.not_allowed_at(
+                            "media.codecs",
+                            *line,
+                            value,
+                            "pcmu and pcma, each once",
+                        );
+                    }
+                }
+            }
+            if codecs.is_empty() && valid {
+                let line = table.get("codecs").map_or(0, |item| self.line(item));
+                self.not_allowed_at("media.codecs", line, "[]", "at least one of pcmu and pcma");
+            } else if valid {
+                media.codecs = codecs;
+            }
+        }
+        if let Some((value, item)) = self.integer(table, "ptime_ms", "media.ptime_ms") {
+            match u32::try_from(value) {
+                Ok(ptime) if MediaConfig::PTIMES.contains(&ptime) => media.ptime_ms = ptime,
+                _ => self.not_allowed("media.ptime_ms", item, &value.to_string(), "10, 20, 30"),
+            }
+        }
+        if let Some((value, item)) = self.string(table, "rtp_ports", "media.rtp_ports") {
+            match PortRange::parse(value) {
+                Some(range) => media.rtp_ports = range,
+                None => self.not_allowed(
+                    "media.rtp_ports",
+                    item,
+                    value,
+                    "a range first-last from 1024 to 65535 that holds an even port, such as 20000-20999",
+                ),
+            }
+        }
+        if let Some((value, item)) = self.integer(table, "rtp_timeout_s", "media.rtp_timeout_s") {
+            if (1..=3600).contains(&value) {
+                media.rtp_timeout_s = value as u32;
+            } else {
+                self.not_allowed("media.rtp_timeout_s", item, &value.to_string(), "1 to 3600");
+            }
+        }
+        if let Some((value, _)) = self.string(table, "capture_dir", "media.capture_dir") {
+            media.capture_dir = value.to_string();
+        }
+        media
+    }
+
+    fn register(&mut self, table: &dyn TableLike, table_line: usize) -> Option<RegisterConfig> {
+        let before = self.problems.len();
+        let mut register = RegisterConfig {
+            server: String::new(),
+            user: String::new(),
+            password: String::new(),
+            auth_user: String::new(),
+            expires_s: RegisterConfig::DEFAULT_EXPIRES_S,
+        };
+        match self.string(table, "server", "line.register.server") {
+            Some((value, _)) if is_host_port(value) => register.server = value.to_string(),
+            Some((value, item)) => {
+                self.not_allowed("line.register.server", item, value, "a host or host:port");
+            }
+            None if table.get("server").is_none() => self.problems.push(message(
+                "RMD0015",
+                &["line.register.server", &table_line.to_string()],
+            )),
+            None => {}
+        }
+        match self.string(table, "user", "line.register.user") {
+            Some((value, _)) if is_sip_user(value) => register.user = value.to_string(),
+            Some((value, item)) => self.not_allowed(
+                "line.register.user",
+                item,
+                value,
+                "1 to 64 letters, digits or any of -_.!~*'()+",
+            ),
+            None if table.get("user").is_none() => self.problems.push(message(
+                "RMD0015",
+                &["line.register.user", &table_line.to_string()],
+            )),
+            None => {}
+        }
+        // The password is never put in a message, not even a wrong one.
+        if let Some((value, _)) = self.string(table, "password", "line.register.password") {
+            register.password = value.to_string();
+        }
+        if let Some((value, item)) = self.string(table, "auth_user", "line.register.auth_user") {
+            if value.len() <= MAX_NAME_LEN && value.chars().all(|c| ('!'..='~').contains(&c)) {
+                register.auth_user = value.to_string();
+            } else {
+                self.not_allowed(
+                    "line.register.auth_user",
+                    item,
+                    value,
+                    "up to 64 printable ASCII characters with no space",
+                );
+            }
+        }
+        if let Some((value, item)) = self.integer(table, "expires_s", "line.register.expires_s") {
+            if (30..=86_400).contains(&value) {
+                register.expires_s = value as u32;
+            } else {
+                self.not_allowed(
+                    "line.register.expires_s",
+                    item,
+                    &value.to_string(),
+                    "30 to 86400",
+                );
+            }
+        }
+        (self.problems.len() == before).then_some(register)
+    }
+
+    fn hunt_groups(
+        &mut self,
+        tables: &toml_edit::ArrayOfTables,
+        lines: &[LineConfig],
+        groups: &mut Vec<HuntGroup>,
+    ) {
+        let mut names: Vec<(String, usize)> = Vec::new();
+        let mut pilots: Vec<(String, usize)> = Vec::new();
+
+        for table in tables.iter() {
+            let table_line = table
+                .span()
+                .map(|s| line_of(self.text, s.start))
+                .unwrap_or(0);
+            let before = self.problems.len();
+            let mut group = HuntGroup {
+                name: String::new(),
+                pilot: String::new(),
+                lines: Vec::new(),
+                strategy: Strategy::default(),
+            };
+
+            match self.string(table, "name", "hunt_group.name") {
+                Some((value, item)) => {
+                    let valid = !value.is_empty()
+                        && value.len() <= MAX_NUMBER_LEN
+                        && value
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+                    if valid {
+                        group.name = value.to_string();
+                        let here = self.line(item);
+                        match names.iter().find(|(name, _)| name == value) {
+                            Some((_, first)) => self.problems.push(message(
+                                "RMD0028",
+                                &[value, &here.to_string(), &first.to_string()],
+                            )),
+                            None => names.push((value.to_string(), here)),
+                        }
+                    } else {
+                        self.not_allowed(
+                            "hunt_group.name",
+                            item,
+                            value,
+                            "1 to 32 letters, digits, _, - or .",
+                        );
+                    }
+                }
+                None if table.get("name").is_none() => self.problems.push(message(
+                    "RMD0015",
+                    &["hunt_group.name", &table_line.to_string()],
+                )),
+                None => {}
+            }
+
+            match self.string(table, "pilot", "hunt_group.pilot") {
+                Some((value, item)) => {
+                    if is_number(value) {
+                        group.pilot = value.to_string();
+                        let here = self.line(item);
+                        match pilots.iter().find(|(pilot, _)| pilot == value) {
+                            Some((_, first)) => self.problems.push(message(
+                                "RMD0029",
+                                &[value, &here.to_string(), &first.to_string()],
+                            )),
+                            None => pilots.push((value.to_string(), here)),
+                        }
+                    } else {
+                        self.not_allowed("hunt_group.pilot", item, value, "1 to 32 digits, # or +");
+                    }
+                }
+                None if table.get("pilot").is_none() => self.problems.push(message(
+                    "RMD0015",
+                    &["hunt_group.pilot", &table_line.to_string()],
+                )),
+                None => {}
+            }
+
+            if let Some(values) = self.integers(table, "lines", "hunt_group.lines") {
+                for (value, line) in values {
+                    let id = u16::try_from(value)
+                        .ok()
+                        .filter(|id| *id >= 1 && *id <= MAX_LINE_ID);
+                    match id {
+                        Some(id) if group.lines.contains(&id) => self.not_allowed_at(
+                            "hunt_group.lines",
+                            line,
+                            &value.to_string(),
+                            "each line once",
+                        ),
+                        Some(id) if lines.iter().any(|l| l.id == id) => group.lines.push(id),
+                        Some(id) => self.problems.push(message(
+                            "RMD0027",
+                            &[&group.name, &line.to_string(), &id.to_string()],
+                        )),
+                        None => self.not_allowed_at(
+                            "hunt_group.lines",
+                            line,
+                            &value.to_string(),
+                            "1 to 999",
+                        ),
+                    }
+                }
+            }
+
+            if let Some((value, item)) = self.string(table, "strategy", "hunt_group.strategy") {
+                match Strategy::parse(value) {
+                    Some(strategy) => group.strategy = strategy,
+                    None => self.not_allowed(
+                        "hunt_group.strategy",
+                        item,
+                        value,
+                        "first-idle, round-robin, least-recent",
+                    ),
+                }
+            }
+
+            if self.problems.len() == before {
+                groups.push(group);
+            }
+        }
+    }
+
+    fn routes(
+        &mut self,
+        tables: &toml_edit::ArrayOfTables,
+        lines: &[LineConfig],
+        groups: &[HuntGroup],
+        routes: &mut Vec<Route>,
+    ) {
+        // The pattern and the line number of every route before this one.
+        let mut earlier: Vec<(String, usize)> = Vec::new();
+
+        for table in tables.iter() {
+            let table_line = table
+                .span()
+                .map(|s| line_of(self.text, s.start))
+                .unwrap_or(0);
+            let before = self.problems.len();
+            let mut route = Route {
+                called: String::new(),
+                target: Target::Line(0),
+            };
+
+            match self.string(table, "called", "route.called") {
+                Some((value, item)) => {
+                    let digits = value.strip_suffix('*').unwrap_or(value);
+                    if (digits.is_empty() && value == "*") || is_number(digits) {
+                        route.called = value.to_string();
+                        let here = self.line(item);
+                        if let Some((first, first_line)) = earlier
+                            .iter()
+                            .find(|(pattern, _)| pattern_covers(pattern, value))
+                        {
+                            self.warnings.push(message(
+                                "RMD0031",
+                                &[value, &here.to_string(), first, &first_line.to_string()],
+                            ));
+                        }
+                        earlier.push((value.to_string(), here));
+                    } else {
+                        self.not_allowed(
+                            "route.called",
+                            item,
+                            value,
+                            "digits, # or +, or a prefix of them ending in *",
+                        );
+                    }
+                }
+                None if table.get("called").is_none() => self.problems.push(message(
+                    "RMD0015",
+                    &["route.called", &table_line.to_string()],
+                )),
+                None => {}
+            }
+
+            match self.string(table, "target", "route.target") {
+                Some((value, item)) => match Target::parse(value) {
+                    Some(target) => {
+                        let exists = match &target {
+                            Target::Line(id) => lines.iter().any(|l| l.id == *id),
+                            Target::Group(name) => groups.iter().any(|g| g.name == *name),
+                        };
+                        if exists {
+                            route.target = target;
+                        } else {
+                            let line = self.line(item).to_string();
+                            self.problems
+                                .push(message("RMD0030", &[&route.called, &line, value]));
+                        }
+                    }
+                    None => {
+                        self.not_allowed("route.target", item, value, "line:<id> or group:<name>")
+                    }
+                },
+                None if table.get("target").is_none() => self.problems.push(message(
+                    "RMD0015",
+                    &["route.target", &table_line.to_string()],
+                )),
+                None => {}
+            }
+
+            if self.problems.len() == before {
+                routes.push(route);
+            }
+        }
     }
 
     fn service(&mut self, table: &dyn TableLike) -> ServiceConfig {
@@ -265,6 +805,17 @@ impl Reader<'_> {
                     Some(setting) => line.unknown_command = setting,
                     None => self.not_allowed("line.unknown_command", item, value, "ok, error"),
                 }
+            }
+
+            if let Some((value, item)) = self.string(table, "engine", "line.engine") {
+                match EngineKind::parse(value) {
+                    Some(engine) => line.engine = engine,
+                    None => self.not_allowed("line.engine", item, value, "null, echo"),
+                }
+            }
+
+            if let Some(register) = self.table(table, "register", "line.register") {
+                line.register = self.register(register, table_line);
             }
 
             if self.problems.len() == before {

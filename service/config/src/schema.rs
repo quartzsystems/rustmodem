@@ -5,6 +5,7 @@
 //! The configuration as the rest of the service uses it.
 
 use std::fmt;
+use std::net::{Ipv4Addr, SocketAddrV4};
 
 /// The highest line id.
 pub const MAX_LINE_ID: u16 = 999;
@@ -173,6 +174,10 @@ pub struct LineConfig {
     pub auto_answer_rings: u8,
     /// What the line answers to an AT command it does not know.
     pub unknown_command: UnknownCommand,
+    /// Which modem engine the line runs.
+    pub engine: EngineKind,
+    /// The line's registration to a PBX, if it is an extension of one.
+    pub register: Option<RegisterConfig>,
 }
 
 impl LineConfig {
@@ -188,6 +193,8 @@ impl LineConfig {
             enabled: true,
             auto_answer_rings: 0,
             unknown_command: UnknownCommand::default(),
+            engine: EngineKind::default(),
+            register: None,
         }
     }
 }
@@ -231,11 +238,420 @@ pub struct Config {
     pub control: ControlConfig,
     /// The `[[line]]` tables, in file order.
     pub lines: Vec<LineConfig>,
+    /// The `[sip]` table.
+    pub sip: SipConfig,
+    /// The `[media]` table.
+    pub media: MediaConfig,
+    /// The `[[hunt_group]]` tables, in file order.
+    pub hunt_groups: Vec<HuntGroup>,
+    /// The `[[route]]` tables, in file order: the order they are tried in.
+    pub routes: Vec<Route>,
 }
 
 impl Config {
     /// The line with the given id.
     pub fn line(&self, id: u16) -> Option<&LineConfig> {
         self.lines.iter().find(|l| l.id == id)
+    }
+
+    /// The hunt group with the given name.
+    pub fn hunt_group(&self, name: &str) -> Option<&HuntGroup> {
+        self.hunt_groups.iter().find(|g| g.name == name)
+    }
+
+    /// The names of the hunt groups a line is in, in file order.
+    pub fn hunt_groups_of(&self, line: u16) -> Vec<&str> {
+        self.hunt_groups
+            .iter()
+            .filter(|g| g.lines.contains(&line))
+            .map(|g| g.name.as_str())
+            .collect()
+    }
+}
+
+/// Which modem engine a line runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum EngineKind {
+    /// The null engine: data framed straight into the octet stream.
+    #[default]
+    Null,
+    /// The echo engine: what is received is sent back.
+    Echo,
+}
+
+impl EngineKind {
+    /// Every engine of this phase.
+    pub const ALL: [EngineKind; 2] = [EngineKind::Null, EngineKind::Echo];
+
+    /// The engine as the configuration spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EngineKind::Null => "null",
+            EngineKind::Echo => "echo",
+        }
+    }
+
+    /// Reads an engine as the configuration spells it.
+    pub fn parse(text: &str) -> Option<EngineKind> {
+        EngineKind::ALL.into_iter().find(|e| e.as_str() == text)
+    }
+}
+
+impl fmt::Display for EngineKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A codec of `media.codecs`. Both are G.711.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CodecName {
+    /// G.711 mu-law.
+    Pcmu,
+    /// G.711 A-law.
+    Pcma,
+}
+
+impl CodecName {
+    /// Every codec, in the default order of preference.
+    pub const ALL: [CodecName; 2] = [CodecName::Pcmu, CodecName::Pcma];
+
+    /// The codec as the configuration spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CodecName::Pcmu => "pcmu",
+            CodecName::Pcma => "pcma",
+        }
+    }
+
+    /// Reads a codec as the configuration spells it.
+    pub fn parse(text: &str) -> Option<CodecName> {
+        CodecName::ALL.into_iter().find(|c| c.as_str() == text)
+    }
+}
+
+impl fmt::Display for CodecName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// How a hunt group chooses among its idle lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum Strategy {
+    /// The first idle line in the order the group lists them.
+    #[default]
+    FirstIdle,
+    /// The first idle line after the one that took the group's last call.
+    RoundRobin,
+    /// The line that has been idle longest.
+    LeastRecent,
+}
+
+impl Strategy {
+    /// Every strategy.
+    pub const ALL: [Strategy; 3] = [
+        Strategy::FirstIdle,
+        Strategy::RoundRobin,
+        Strategy::LeastRecent,
+    ];
+
+    /// The strategy as the configuration spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Strategy::FirstIdle => "first-idle",
+            Strategy::RoundRobin => "round-robin",
+            Strategy::LeastRecent => "least-recent",
+        }
+    }
+
+    /// Reads a strategy as the configuration spells it.
+    pub fn parse(text: &str) -> Option<Strategy> {
+        Strategy::ALL.into_iter().find(|s| s.as_str() == text)
+    }
+}
+
+impl fmt::Display for Strategy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// An address or a block of addresses, as `sip.trusted_peers` lists them:
+/// `10.10.20.11` or `10.10.20.0/24`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Cidr {
+    /// The address as written.
+    pub address: Ipv4Addr,
+    /// How many leading bits must match: 32 for one address.
+    pub prefix: u8,
+}
+
+impl Cidr {
+    /// Reads an address or a CIDR block.
+    pub fn parse(text: &str) -> Option<Cidr> {
+        let (address, prefix) = match text.split_once('/') {
+            Some((address, prefix)) => {
+                if prefix.is_empty() || !prefix.bytes().all(|b| b.is_ascii_digit()) {
+                    return None;
+                }
+                (address, prefix.parse().ok().filter(|p| *p <= 32)?)
+            }
+            None => (text, 32),
+        };
+        Some(Cidr {
+            address: address.parse().ok()?,
+            prefix,
+        })
+    }
+
+    /// Whether `address` is in the block.
+    pub fn contains(&self, address: Ipv4Addr) -> bool {
+        let mask = match self.prefix {
+            0 => 0,
+            bits => u32::MAX << (32 - u32::from(bits)),
+        };
+        u32::from(self.address) & mask == u32::from(address) & mask
+    }
+}
+
+impl fmt::Display for Cidr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.prefix == 32 {
+            write!(f, "{}", self.address)
+        } else {
+            write!(f, "{}/{}", self.address, self.prefix)
+        }
+    }
+}
+
+/// The `[sip]` table. With no such table SIP is off and the service is as
+/// it was before it had SIP.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SipConfig {
+    /// Whether the service speaks SIP at all.
+    pub enabled: bool,
+    /// The UDP address the trunk listener binds.
+    pub listen: SocketAddrV4,
+    /// The address to advertise in Contact and in session descriptions;
+    /// empty for the local address that routes to the peer.
+    pub address: String,
+    /// The User-Agent header; empty for `rustmodem/<version>`.
+    pub user_agent: String,
+    /// The addresses that may send requests to the trunk listener.
+    pub trusted_peers: Vec<Cidr>,
+    /// Where lines that are not registered send the calls they dial, as
+    /// `host` or `host:port`; empty for nowhere.
+    pub outbound_peer: String,
+    /// How long a line may ring before the caller is turned away.
+    pub ring_timeout_s: u32,
+}
+
+impl SipConfig {
+    /// The default trunk listener.
+    pub const DEFAULT_LISTEN: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 5060);
+    /// The default `ring_timeout_s`.
+    pub const DEFAULT_RING_TIMEOUT_S: u32 = 60;
+}
+
+impl Default for SipConfig {
+    fn default() -> Self {
+        SipConfig {
+            enabled: false,
+            listen: SipConfig::DEFAULT_LISTEN,
+            address: String::new(),
+            user_agent: String::new(),
+            trusted_peers: Vec::new(),
+            outbound_peer: String::new(),
+            ring_timeout_s: SipConfig::DEFAULT_RING_TIMEOUT_S,
+        }
+    }
+}
+
+/// The ports RTP may use, both ends included. Only the even ones are used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PortRange {
+    /// The lowest port.
+    pub first: u16,
+    /// The highest port.
+    pub last: u16,
+}
+
+impl PortRange {
+    /// Reads `first-last`. The range must hold an even port and no port
+    /// below 1024.
+    pub fn parse(text: &str) -> Option<PortRange> {
+        let (first, last) = text.split_once('-')?;
+        let number = |text: &str| -> Option<u16> {
+            (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| text.parse().ok())
+                .flatten()
+        };
+        let range = PortRange {
+            first: number(first)?,
+            last: number(last)?,
+        };
+        (range.first >= 1024 && range.first <= range.last && range.even_ports().next().is_some())
+            .then_some(range)
+    }
+
+    /// The even ports of the range, lowest first.
+    pub fn even_ports(&self) -> impl Iterator<Item = u16> + use<> {
+        (self.first..=self.last).filter(|port| port % 2 == 0)
+    }
+}
+
+impl fmt::Display for PortRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}-{}", self.first, self.last)
+    }
+}
+
+/// The `[media]` table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaConfig {
+    /// The codecs, most preferred first.
+    pub codecs: Vec<CodecName>,
+    /// The packet time in milliseconds: 10, 20 or 30.
+    pub ptime_ms: u32,
+    /// The ports RTP may use.
+    pub rtp_ports: PortRange,
+    /// How long a call may go without a packet before it is cleared.
+    pub rtp_timeout_s: u32,
+    /// Where call captures are written; empty for `captures` under the log
+    /// directory.
+    pub capture_dir: String,
+}
+
+impl MediaConfig {
+    /// The packet times a configuration may name, in milliseconds.
+    pub const PTIMES: [u32; 3] = [10, 20, 30];
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        MediaConfig {
+            codecs: CodecName::ALL.to_vec(),
+            ptime_ms: 20,
+            rtp_ports: PortRange {
+                first: 20000,
+                last: 20999,
+            },
+            rtp_timeout_s: 10,
+            capture_dir: String::new(),
+        }
+    }
+}
+
+/// The `register` table of a line: the line is an extension of a PBX.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RegisterConfig {
+    /// The registrar, as `host` or `host:port`.
+    pub server: String,
+    /// The extension: the user of the address of record.
+    pub user: String,
+    /// The password. Never shown: not by the control API, not in a log.
+    pub password: String,
+    /// The user name to authenticate with; empty for `user`.
+    pub auth_user: String,
+    /// The registration time to ask for, in seconds.
+    pub expires_s: u32,
+}
+
+impl RegisterConfig {
+    /// The default `expires_s`.
+    pub const DEFAULT_EXPIRES_S: u32 = 300;
+}
+
+impl fmt::Debug for RegisterConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RegisterConfig")
+            .field("server", &self.server)
+            .field("user", &self.user)
+            .field("has_password", &!self.password.is_empty())
+            .field("auth_user", &self.auth_user)
+            .field("expires_s", &self.expires_s)
+            .finish()
+    }
+}
+
+/// One `[[hunt_group]]` table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HuntGroup {
+    /// The name, unique.
+    pub name: String,
+    /// The number that calls the group, unique.
+    pub pilot: String,
+    /// The lines of the group, in hunting order.
+    pub lines: Vec<u16>,
+    /// How the group chooses among its idle lines.
+    pub strategy: Strategy,
+}
+
+/// Where a route sends a call.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Target {
+    /// `line:<id>`.
+    Line(u16),
+    /// `group:<name>`.
+    Group(String),
+}
+
+impl Target {
+    /// Reads `line:<id>` or `group:<name>`.
+    pub fn parse(text: &str) -> Option<Target> {
+        match text.split_once(':')? {
+            ("line", id) if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) => {
+                id.parse().ok().map(Target::Line)
+            }
+            ("group", name) if !name.is_empty() => Some(Target::Group(name.to_string())),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for Target {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Target::Line(id) => write!(f, "line:{id}"),
+            Target::Group(name) => write!(f, "group:{name}"),
+        }
+    }
+}
+
+/// One `[[route]]` table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Route {
+    /// The called number the route is for: exact, or a prefix ending in
+    /// `*`.
+    pub called: String,
+    /// Where its calls go.
+    pub target: Target,
+}
+
+impl Route {
+    /// Whether the route is for this called number.
+    pub fn matches(&self, number: &str) -> bool {
+        pattern_matches(&self.called, number)
+    }
+}
+
+/// Whether a called-number pattern, exact or a prefix ending in `*`,
+/// matches a number.
+pub fn pattern_matches(pattern: &str, number: &str) -> bool {
+    match pattern.strip_suffix('*') {
+        Some(prefix) => number.starts_with(prefix),
+        None => pattern == number,
+    }
+}
+
+/// Whether every number `later` matches is matched by `earlier` too, so
+/// that a route for `later` after one for `earlier` never gets a call.
+pub fn pattern_covers(earlier: &str, later: &str) -> bool {
+    match (earlier.strip_suffix('*'), later.strip_suffix('*')) {
+        (Some(prefix), Some(longer)) => longer.starts_with(prefix),
+        (Some(prefix), None) => later.starts_with(prefix),
+        (None, None) => earlier == later,
+        (None, Some(_)) => false,
     }
 }

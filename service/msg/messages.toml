@@ -20,6 +20,8 @@
 #   2000-2999  control API
 #   3000-3999  serial
 #   4000-4999  manager
+#   5000-5999  telephony
+#   6000-6999  media
 #
 # The rest is left for later phases.
 
@@ -208,6 +210,41 @@ vars = 3
 text = "The stored profile of line &1 in &2 is not valid: &3"
 cause = "The profile has a value that no AT command could have stored. The line starts from its factory settings."
 recovery = "Correct or delete the profile in the file, or give AT&W on the line to store it again."
+
+[RMD0027]
+severity = "error"
+vars = 3
+text = "Hunt group &1 at line &2 names line &3, which does not exist."
+cause = "A hunt group can only hold lines that the configuration has."
+recovery = "Add the line, or take it out of the hunt group, and try again."
+
+[RMD0028]
+severity = "error"
+vars = 3
+text = "Hunt group name &1 at line &2 is already used at line &3."
+cause = "Two hunt groups have the same name. Routes name a group by its name, so every group needs its own."
+recovery = "Give one of the hunt groups a different name and try again."
+
+[RMD0029]
+severity = "error"
+vars = 3
+text = "Pilot number &1 at line &2 is already used at line &3."
+cause = "Two hunt groups have the same pilot number. A call to the number can go to one group only."
+recovery = "Give one of the hunt groups a different pilot number and try again."
+
+[RMD0030]
+severity = "error"
+vars = 3
+text = "Route &1 at line &2 has target &3, which does not exist."
+cause = "A route sends its calls to a line or to a hunt group that the configuration has."
+recovery = "Correct the target, or add the line or the hunt group, and try again."
+
+[RMD0031]
+severity = "warning"
+vars = 4
+text = "Route &1 at line &2 never gets a call: route &3 at line &4 takes them first."
+cause = "Routes are tried in the order of the file, and an earlier route matches every number this one matches."
+recovery = "Move the more specific route above the other, or remove the route that is not needed."
 
 [RMD0999]
 severity = "error"
