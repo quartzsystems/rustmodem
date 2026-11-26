@@ -14,7 +14,10 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use config::{Config, ConfigFile, LineConfig};
-use ctlproto::{CallList, Event, LineInfo, LineList, LineState, ServiceInfo};
+use ctlproto::{
+    CallList, Event, LineInfo, LineList, LineState, LogTail, PortInfo, PortKind, PortList,
+    ServiceInfo, ServiceMode, Stats,
+};
 use ctlsrv::memory::{self, MemoryConnector, PipeReader, PipeWriter};
 use ctlsrv::{Hub, Limits, Server, ServerParts};
 use engine::{NullConfig, NullEngine};
@@ -120,7 +123,27 @@ impl Service {
             hub: hub.clone(),
             log: Arc::new(|_, _| {}),
             limits: Limits::default(),
+            mode: ServiceMode::Console,
+            ports: Arc::new(vec![
+                PortInfo {
+                    name: "P1".to_string(),
+                    kind: PortKind::Com0com,
+                    pair: Some("A1".to_string()),
+                    host_port: Some("COM11".to_string()),
+                    modem: Some("Standard 56000 bps Modem".to_string()),
+                    line: None,
+                },
+                PortInfo {
+                    name: "COM3".to_string(),
+                    kind: PortKind::Serial,
+                    pair: None,
+                    host_port: None,
+                    modem: None,
+                    line: None,
+                },
+            ]),
         });
+        let binding_server = server.clone();
         let (listener, connector) = memory::listener();
         std::thread::spawn(move || server.serve(Box::new(listener)));
 
@@ -136,6 +159,7 @@ impl Service {
         for port in ["P1", "P2"] {
             service.host(port).open();
         }
+        binding_server.refresh_bindings().unwrap();
         let mut client = service.client();
         eventually("both lines to be idle", || {
             let list: LineList = client.call(&ctlproto::Call::LinesList).unwrap();
@@ -235,6 +259,8 @@ fn info_prints_the_service() {
     assert_eq!(lines[4], "Lines:          2");
     assert!(lines[5].starts_with("Started:        20") && lines[5].ends_with(" UTC"));
     assert!(lines[6].starts_with("Uptime:         0:00:0"));
+    assert_eq!(lines[7], "Mode:           console");
+    assert!(lines[8].starts_with("Config loaded:  20") && lines[8].ends_with(" UTC"));
 
     let (code, out, _) = service.ctl(&["info", "--json"]);
     assert_eq!(code, 0);
@@ -274,7 +300,11 @@ fn line_prints_one_line_and_an_unknown_line_is_an_api_error() {
     assert!(out.contains("Port:               P1\n"));
     assert!(out.contains("State:              idle\n"));
     assert!(out.contains("Unknown commands:   ok\n"));
+    assert!(out.contains("AT commands:        0\n"));
+    assert!(out.contains("Binding:            Standard 56000 bps Modem on COM11\n"));
     assert!(!out.contains("Call:"));
+    let (_, out, _) = service.ctl(&["line", "2"]);
+    assert!(!out.contains("Binding:"), "{out}");
 
     let (code, out, errors) = service.ctl(&["line", "9"]);
     assert_eq!(code, 1, "an error from the service is exit code 1");
@@ -563,4 +593,111 @@ fn a_service_of_another_protocol_is_reported_from_its_own_error() {
         panic!("expected a connection failure");
     };
     assert_eq!(problem.id, "RMD2013");
+}
+
+#[test]
+fn stats_prints_the_statistics_and_what_calls_negotiated() {
+    let service = Service::start();
+    let (code, out, errors) = service.ctl(&["stats"]);
+    assert_eq!((code, errors.as_str()), (0, ""));
+    assert_eq!(
+        out,
+        "Calls answered:     0\n\
+         Connected:          0\n\
+         Failed to connect:  0\n\
+         Rejected:           0\n\
+         Abandoned:          0\n\
+         Average call:       0:00:00\n\
+         Longest call:       0:00:00\n\
+         Lines in use:       0 (peak 0)\n\
+         Bytes in:           0\n\
+         Bytes out:          0\n\
+         AT commands:        0\n\
+         Retrains:           0\n"
+    );
+
+    service.ring_line_2();
+    let (code, _, _) = service.ctl(&["answer", "2"]);
+    assert_eq!(code, 0);
+    eventually("line 1 to be online", || {
+        service.state(1) == LineState::Online
+    });
+    let (code, out, _) = service.ctl(&["stats"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("Calls answered:     1\n"), "{out}");
+    assert!(out.contains("Connected:          1\n"), "{out}");
+    assert!(out.contains("Lines in use:       2 (peak 2)\n"), "{out}");
+    assert!(out.contains("AT commands:        1\n"), "{out}");
+    assert!(
+        out.ends_with("\nNEGOTIATED  WHAT     CALLS\nconnect     unknown      1\n"),
+        "{out}"
+    );
+
+    let (code, out, _) = service.ctl(&["stats", "--json"]);
+    assert_eq!(code, 0);
+    let stats: Stats = serde_json::from_str(&out).unwrap();
+    assert_eq!(stats.calls_connected, 1);
+    assert_eq!(stats.connects[0].count, 1);
+}
+
+#[test]
+fn ports_prints_the_inventory_with_the_lines_that_use_it() {
+    let service = Service::start();
+    let (code, out, errors) = service.ctl(&["ports"]);
+    assert_eq!((code, errors.as_str()), (0, ""));
+    assert_eq!(
+        out,
+        "PORT  KIND     PAIR  HOST PORT  MODEM                     LINE\n\
+         COM3  serial   -     -          -                            -\n\
+         P1    com0com  A1    COM11      Standard 56000 bps Modem     1\n"
+    );
+    let (code, out, _) = service.ctl(&["ports", "--json"]);
+    assert_eq!(code, 0);
+    let list: PortList = serde_json::from_str(&out).unwrap();
+    assert_eq!(list.ports.len(), 2);
+    assert_eq!(list.ports[1].line, Some(1));
+}
+
+#[test]
+fn log_prints_the_last_lines_the_service_logged() {
+    let service = Service::start();
+    service.host("P1").write(b"ATE0\r");
+    eventually("the command to be logged", || {
+        let (_, out, _) = service.ctl(&["log"]);
+        out.contains("DEBUG [Line01] < OK\n")
+    });
+    let (code, out, errors) = service.ctl(&["log"]);
+    assert_eq!((code, errors.as_str()), (0, ""));
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.len() > 4, "{out}");
+    // Each line is the time in UTC to the millisecond, the level, the
+    // source and the text.
+    for line in &lines {
+        let bytes = line.as_bytes();
+        assert_eq!(
+            (bytes[10], bytes[19], bytes[23]),
+            (b' ', b'.', b' '),
+            "{line}"
+        );
+    }
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.ends_with(" INFO  [Line01] RMD1005: Line 1 state is now idle.")),
+        "{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.ends_with(" DEBUG [Line01] > ATE0")),
+        "{out}"
+    );
+
+    let (code, out, _) = service.ctl(&["log", "--last", "2"]);
+    assert_eq!(code, 0);
+    assert_eq!(out.lines().collect::<Vec<_>>(), lines[lines.len() - 2..]);
+    let (_, out, _) = service.ctl(&["log", "--last", "2", "--json"]);
+    let tail: LogTail = serde_json::from_str(&out).unwrap();
+    assert_eq!(tail.lines.len(), 2);
+    assert_eq!(tail.lines[1].text, "< OK");
 }

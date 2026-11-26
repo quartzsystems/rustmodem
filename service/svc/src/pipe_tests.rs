@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use config::{Config, ConfigFile, LineConfig};
 use ctlproto::{
     Call, CallRecord, ClientFrame, Direction, EndReason, Event as ControlEvent, Hello, LineState,
-    LogLevel, PROTOCOL, ServerFrame, decode_server, doc, encode,
+    LogLevel, PROTOCOL, PortInfo, PortKind, ServerFrame, ServiceMode, decode_server, doc, encode,
 };
 use ctlsrv::{Hub, Limits, Listener, Server, ServerParts};
 use engine::{NullConfig, NullEngine};
@@ -124,6 +124,15 @@ impl Fixture {
             hub: hub.clone(),
             log: Arc::new(move |_: LogLevel, text| log_to.lock().unwrap().push(text)),
             limits,
+            mode: ServiceMode::Console,
+            ports: Arc::new(vec![PortInfo {
+                name: "P1".to_string(),
+                kind: PortKind::Com0com,
+                pair: Some("A1".to_string()),
+                host_port: Some("COM11".to_string()),
+                modem: None,
+                line: None,
+            }]),
         });
 
         let stop = Arc::new(Event::new().unwrap());
@@ -281,6 +290,11 @@ fn every_method_round_trips_over_a_real_pipe() {
         ("lines.remove", Ok(())),
         ("calls.list", Ok(())),
         ("config.reload", Ok(())),
+        ("config.get", Ok(())),
+        ("config.set", Ok(())),
+        ("stats.get", Ok(())),
+        ("log.tail", Ok(())),
+        ("ports.list", Ok(())),
         ("subscribe", Ok(())),
         ("unsubscribe", Ok(())),
     ]);
@@ -316,6 +330,41 @@ fn every_method_round_trips_over_a_real_pipe() {
     };
     assert_eq!(result["state"], "disabled");
     assert_eq!(result["enabled"], false);
+    // config.reload looked the ports up, so the line shows its binding.
+    assert_eq!(result["binding"], "COM11");
+    assert_eq!(result["counters"]["at_commands"], 0);
+
+    // The additions of phase 1 carry what they should over the pipe.
+    let mut ask = |method: &str| {
+        let request = format!(r#"{{"id":2,"method":"{method}"}}"#);
+        match client.request(&request, &mut events) {
+            ServerFrame::Result { result, .. } => result,
+            other => panic!("{method}: {other:?}"),
+        }
+    };
+    let info = ask("service.info");
+    assert_eq!(info["mode"], "console");
+    assert!(info["config_loaded_ms"].as_u64().unwrap() >= info["started_ms"].as_u64().unwrap());
+    // config.set's example asked for the debug level, which is not what
+    // the service started with.
+    let settings = ask("config.get");
+    assert_eq!(settings["service"]["log_level"], "debug");
+    assert_eq!(settings["control"]["pipe"], "rustmodem-control");
+    assert!(
+        settings["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("rustmodem.toml")
+    );
+    let stats = ask("stats.get");
+    assert_eq!(stats["calls_answered"], 0);
+    assert!(stats["connects"].as_array().unwrap().is_empty());
+    let tail = ask("log.tail");
+    assert!(!tail["lines"].as_array().unwrap().is_empty());
+    let ports = ask("ports.list");
+    assert_eq!(ports["ports"][0]["name"], "P1");
+    assert_eq!(ports["ports"][0]["line"], 1);
+    assert_eq!(ports["ports"][0]["kind"], "com0com");
 }
 
 #[test]

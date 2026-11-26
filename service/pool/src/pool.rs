@@ -4,14 +4,14 @@
 
 //! The pool: every line, driven from one thread.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::Write;
 
 use at::{Action, HangupCause, Input, LineEvent, Output, Trace};
 use config::{Config, LineConfig};
 use ctlproto::{
     CallEvent, CallRecord, ConnectInfo, Direction, EndReason, Event, LineInfo, LineState, LogEvent,
-    LogLevel,
+    LogLevel, Stats,
 };
 use engine::{FRAME_20MS, ModemEvent};
 use msg::{Message, Severity, message};
@@ -20,6 +20,7 @@ use serial::{ModemSignals, SerialEvent, SerialOperation, WaitHandle};
 use crate::handle::Command;
 use crate::line::{ActiveCall, Line, at_config};
 use crate::router::{CallRouter, LineDirectory, LineId, RouterEvent};
+use crate::stats::Tallies;
 use crate::{CALL_HISTORY, EngineFactory, EventSink, Now, PORT_RETRY_MS, SerialFactory, TICK_MS};
 
 /// How much is read from a port or an engine at a time.
@@ -70,6 +71,10 @@ pub struct Pool {
     now: Now,
     next_tick_ms: Option<u64>,
     scratch: Vec<Output>,
+    tallies: Tallies,
+    /// What the host side of each port is bound to, by port name in lower
+    /// case, as the pool was last told.
+    bindings: BTreeMap<String, String>,
 }
 
 /// The lines, as the router may ask about them.
@@ -99,7 +104,16 @@ impl Pool {
             now: Now::default(),
             next_tick_ms: None,
             scratch: Vec::new(),
+            tallies: Tallies::default(),
+            bindings: BTreeMap::new(),
         }
+    }
+
+    /// Tells the pool the time without a turn of its loop. A pool is given
+    /// its lines before its loop starts; this is how what it logs then
+    /// gets the right time.
+    pub fn set_now(&mut self, now: Now) {
+        self.now = now;
     }
 
     // ----------------------------------------------------------------------
@@ -236,6 +250,7 @@ impl Pool {
                     if line.engine_running {
                         let count = bytes.len() as u64;
                         line.counters.bytes_tx += count;
+                        self.tallies.bytes_out(count);
                         if let Some(call) = &mut line.call {
                             call.bytes_tx += count;
                         }
@@ -252,7 +267,11 @@ impl Pool {
                 Output::Trace(trace) => {
                     let source = line.source();
                     let text = match trace {
-                        Trace::Command(text) => format!("> {text}"),
+                        Trace::Command(text) => {
+                            line.counters.at_commands += 1;
+                            self.tallies.at_command();
+                            format!("> {text}")
+                        }
                         Trace::Result(text) => format!("< {text}"),
                     };
                     self.log(LogLevel::Debug, &source, text);
@@ -279,7 +298,17 @@ impl Pool {
                 self.router
                     .dial(now_ms, id, &number, &Directory(&self.lines));
             }
-            Action::Answer => self.router.answer(now_ms, id),
+            Action::Answer => {
+                let line = &mut self.lines[index];
+                if let Some(call) = &mut line.call
+                    && line.incoming
+                    && !call.answered
+                {
+                    call.answered = true;
+                    self.tallies.answered();
+                }
+                self.router.answer(now_ms, id);
+            }
             Action::Hangup(cause) => {
                 let reason = match cause {
                     HangupCause::Command => EndReason::Hangup,
@@ -350,6 +379,7 @@ impl Pool {
                 self.engine_events(index);
             }
             RouterEvent::Busy(_) => {
+                self.tallies.rejected();
                 self.step(index, Input::Event(LineEvent::Busy));
                 self.end_call(index, EndReason::Busy);
             }
@@ -362,6 +392,14 @@ impl Pool {
                 self.end_call(index, EndReason::NoDialtone);
             }
             RouterEvent::Failed(_) => {
+                // A call a line made that never got through was turned
+                // away: nothing was ready to take it.
+                if let Some(call) = &self.lines[index].call
+                    && call.direction == Direction::Outgoing
+                    && call.connected_ms.is_none()
+                {
+                    self.tallies.rejected();
+                }
                 self.stop_engine(index);
                 self.lines[index].incoming = false;
                 self.step(index, Input::Event(LineEvent::CarrierLost));
@@ -394,6 +432,9 @@ impl Pool {
                         call.connected_ms = Some(unix_ms);
                         call.connect = Some(connect.clone());
                         line.counters.connects += 1;
+                        if call.direction == Direction::Incoming {
+                            self.tallies.connected(&connect);
+                        }
                         let call = call.info();
                         let source = line.source();
                         self.publish(Event::CallConnected(CallEvent { line: id, call }));
@@ -413,8 +454,9 @@ impl Pool {
                     self.end_call(index, EndReason::Remote);
                     self.router.hangup(self.now.mono_ms, id);
                 }
-                // Phase 0 has nothing to show the host for these.
-                ModemEvent::Retrain | ModemEvent::RateChange(_) => {}
+                // There is nothing to show the host for these; they are
+                // counted.
+                ModemEvent::Retrain | ModemEvent::RateChange(_) => self.tallies.retrain(),
             }
         }
     }
@@ -446,6 +488,7 @@ impl Pool {
             connect: None,
             bytes_tx: 0,
             bytes_rx: 0,
+            answered: false,
         };
         self.next_call_id += 1;
         let line = &mut self.lines[index];
@@ -461,6 +504,8 @@ impl Pool {
             &[&id.to_string(), direction.as_str(), &call.number],
         );
         line.call = Some(call);
+        let in_use = self.lines_in_use();
+        self.tallies.in_use(in_use);
         self.publish(Event::CallStarted(CallEvent {
             line: id,
             call: info,
@@ -475,7 +520,9 @@ impl Pool {
         };
         let id = line.id();
         let source = line.source();
+        let answered = call.answered;
         let record = call.record(id, self.now.unix_ms, reason);
+        self.tallies.ended(&record, answered);
         let ended = message(
             "RMD1008",
             &[
@@ -696,6 +743,7 @@ impl Pool {
                 break;
             }
             line.counters.bytes_rx += count as u64;
+            self.tallies.bytes_in(count as u64);
             if let Some(call) = &mut line.call {
                 call.bytes_rx += count as u64;
             }
@@ -800,6 +848,41 @@ impl Pool {
         self.history.iter().skip(skip).cloned().collect()
     }
 
+    /// The statistics since the pool started.
+    pub fn stats(&self) -> Stats {
+        self.tallies.snapshot(self.lines_in_use())
+    }
+
+    fn lines_in_use(&self) -> u32 {
+        self.lines.iter().filter(|line| line.call.is_some()).count() as u32
+    }
+
+    /// Tells the pool what the host side of each port is bound to: pairs
+    /// of port name and text. A line whose binding changes is published,
+    /// so that clients see it.
+    pub fn set_bindings(&mut self, bindings: Vec<(String, String)>) {
+        self.bindings = bindings
+            .into_iter()
+            .map(|(port, text)| (port.to_ascii_lowercase(), text))
+            .collect();
+        for index in 0..self.lines.len() {
+            let binding = self.binding_of(&self.lines[index].config);
+            let line = &mut self.lines[index];
+            if line.binding != binding {
+                line.binding = binding;
+                let info = line.info();
+                self.publish(Event::LineState(Box::new(info)));
+            }
+        }
+    }
+
+    fn binding_of(&self, config: &LineConfig) -> Option<String> {
+        // Windows port names do not distinguish case.
+        self.bindings
+            .get(&config.serial.port.to_ascii_lowercase())
+            .cloned()
+    }
+
     /// Makes the lines match a configuration: adds the lines it has that
     /// the pool does not, removes the lines the pool has that it does not,
     /// and changes the ones that differ.
@@ -823,7 +906,8 @@ impl Pool {
             match self.index_of(wanted.id) {
                 None => {
                     let engine = (self.engines)(wanted.id);
-                    let line = Line::new(wanted.clone(), engine);
+                    let mut line = Line::new(wanted.clone(), engine);
+                    line.binding = self.binding_of(wanted);
                     let source = line.source();
                     self.lines.push(line);
                     self.lines.sort_by_key(Line::id);
@@ -846,8 +930,10 @@ impl Pool {
             // ends and the port is released.
             self.take_down(index);
         }
+        let binding = self.binding_of(wanted);
         let line = &mut self.lines[index];
         line.config = wanted.clone();
+        line.binding = binding;
         line.interpreter.set_config(at_config(wanted));
         line.retry_at_ms = 0;
         let source = line.source();
@@ -910,6 +996,13 @@ impl Pool {
             }
             Command::Calls(last, answer) => {
                 let _ = answer.send(self.calls(last));
+            }
+            Command::Stats(answer) => {
+                let _ = answer.send(self.stats());
+            }
+            Command::SetBindings(bindings, answer) => {
+                self.set_bindings(bindings);
+                let _ = answer.send(());
             }
             Command::ApplyConfig(config, answer) => {
                 self.apply_config(&config);

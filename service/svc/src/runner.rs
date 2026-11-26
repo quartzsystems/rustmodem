@@ -12,7 +12,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use config::{Backend, ConfigFile, LineConfig};
-use ctlproto::{Event as ControlEvent, LogLevel};
+use ctlproto::{Event as ControlEvent, LogLevel, ServiceMode};
 use ctlsrv::{Hub, Limits, Listener, Server, ServerParts};
 use engine::{NullConfig, NullEngine};
 use msg::{Message, message};
@@ -23,6 +23,7 @@ use serial::{Com0comBackend, SerialBackend};
 
 use crate::logger::{self, DEFAULT_MAX_BYTES, Logger};
 use crate::pipe::{PipeListener, PipeSecurity};
+use crate::ports::SystemPorts;
 use crate::win::{Event, MAX_WAIT_HANDLES, wait_any};
 use crate::{VERSION, eventlog};
 
@@ -31,6 +32,9 @@ const SOURCE: &str = "SVC";
 
 /// The tag of the control server in log lines.
 const CONTROL_SOURCE: &str = "CTL";
+
+/// How often the serial ports are looked up again for the lines' bindings.
+const BINDING_REFRESH: Duration = Duration::from_secs(30);
 
 /// The name of the call records file in the log directory.
 const CALLS_FILE: &str = "calls.jsonl";
@@ -88,6 +92,7 @@ pub struct Running {
     stop: Arc<Event>,
     pool: Option<JoinHandle<()>>,
     control: Option<JoinHandle<()>>,
+    bindings: Option<JoinHandle<()>>,
     logger: Logger,
 }
 
@@ -199,6 +204,12 @@ fn start_inner(
             ],
         ),
     );
+    // The lines are added before the pool has a thread and a clock of its
+    // own; they are logged with the time now.
+    pool.set_now(Now {
+        mono_ms: 0,
+        unix_ms: logger::unix_ms(),
+    });
     pool.apply_config(&config);
 
     let (handle, inbox) = command_channel();
@@ -212,7 +223,13 @@ fn start_inner(
         hub,
         log: Arc::new(move |level, text| control_log.log(level, CONTROL_SOURCE, &text)),
         limits: Limits::default(),
+        mode: match mode {
+            RunMode::Console => ServiceMode::Console,
+            RunMode::Service => ServiceMode::Service,
+        },
+        ports: Arc::new(SystemPorts),
     });
+    let binding_server = server.clone();
 
     let spawn_failed = |e: std::io::Error| fail(message("RMD0003", &[&e.to_string()]));
     let pool_stop = Arc::clone(&stop);
@@ -238,6 +255,14 @@ fn start_inner(
         }
     };
 
+    // The lines' bindings are a nicety: the service runs without the
+    // thread that keeps them.
+    let binding_stop = Arc::clone(&stop);
+    let binding_thread = std::thread::Builder::new()
+        .name("bindings".to_string())
+        .spawn(move || refresh_bindings(binding_server, binding_stop))
+        .ok();
+
     let started = message("RMD0001", &[VERSION]);
     logger.message(SOURCE, &started);
     mode.report(&started);
@@ -246,6 +271,7 @@ fn start_inner(
         stop,
         pool: Some(pool_thread),
         control: Some(control_thread),
+        bindings: binding_thread,
         logger,
     })
 }
@@ -260,6 +286,9 @@ impl Running {
             let _ = thread.join();
         }
         if let Some(thread) = self.control.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.bindings.take() {
             let _ = thread.join();
         }
         let stopped = message("RMD0002", &[]);
@@ -294,6 +323,20 @@ fn run_pool(mut pool: Pool, inbox: PoolInbox, stop: Arc<Event>) {
         wait_any(&handles, Duration::from_millis(TICK_MS - into_tick));
     }
     pool.shutdown(now());
+}
+
+/// Looks the serial ports up when the service starts and every
+/// [`BINDING_REFRESH`] after, and tells the pool what each is bound to.
+/// The server does the same itself when the configuration is reloaded.
+fn refresh_bindings(server: Server, stop: Arc<Event>) {
+    loop {
+        // The only failure is the pool having stopped, which the stop
+        // signal says too.
+        let _ = server.refresh_bindings();
+        if stop.wait(BINDING_REFRESH) {
+            break;
+        }
+    }
 }
 
 /// The control server's accepting thread: each client is served on a

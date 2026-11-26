@@ -8,9 +8,12 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
-use ctlproto::{EVENT_NAMES, Event, encode};
+use ctlproto::{EVENT_NAMES, Event, LogEvent, encode};
 
 use crate::Closer;
+
+/// How many of the last log lines the hub remembers, for `log.tail`.
+pub const LOG_RING: usize = 2000;
 
 /// How much may wait for one client.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -211,9 +214,14 @@ fn subscription(state: &State) -> Vec<String> {
 
 /// Where events are published. Every connected client's queue is known to
 /// the hub; each event goes to the clients that have subscribed to it.
+///
+/// The hub also remembers the last [`LOG_RING`] `log` events published,
+/// whether or not any client was there to take them, so that a client that
+/// connects later can ask what was logged before it came.
 #[derive(Clone, Default)]
 pub struct Hub {
     clients: Arc<Mutex<Vec<Arc<ClientQueue>>>>,
+    recent_logs: Arc<Mutex<VecDeque<LogEvent>>>,
 }
 
 impl Hub {
@@ -230,6 +238,13 @@ impl Hub {
     /// blocks on a client: it only queues, and a client whose queue is full
     /// loses log lines or is disconnected.
     pub fn publish(&self, event: &Event) {
+        if let Event::Log(line) = event {
+            let mut recent = self.recent_logs();
+            if recent.len() == LOG_RING {
+                recent.pop_front();
+            }
+            recent.push_back(line.clone());
+        }
         let name = event.name();
         let clients = self.clients();
         if !clients.iter().any(|client| client.wants(name)) {
@@ -239,6 +254,21 @@ impl Hub {
         for client in clients.iter() {
             client.offer(name, event.is_state(), &line);
         }
+    }
+
+    fn recent_logs(&self) -> MutexGuard<'_, VecDeque<LogEvent>> {
+        self.recent_logs.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The last log lines published, oldest first; at most the last
+    /// `last`.
+    pub fn log_tail(&self, last: Option<usize>) -> Vec<LogEvent> {
+        let recent = self.recent_logs();
+        let skip = match last {
+            Some(last) => recent.len().saturating_sub(last),
+            None => 0,
+        };
+        recent.iter().skip(skip).cloned().collect()
     }
 
     /// How many clients are connected.

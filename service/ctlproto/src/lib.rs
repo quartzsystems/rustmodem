@@ -21,11 +21,14 @@ mod model;
 mod wire;
 
 pub use model::{
-    CallEvent, CallInfo, CallRecord, ConnectInfo, Counters, Direction, EndReason, ErrorInfo, Event,
-    LineInfo, LineState, LogEvent, LogLevel,
+    CallEvent, CallInfo, CallRecord, ConnectInfo, ConnectTally, Counters, Direction, EndReason,
+    ErrorInfo, Event, LineInfo, LineState, LogEvent, LogLevel, PortInfo, PortKind, ServiceMode,
+    Stats, Tally,
 };
 pub use wire::{
-    Call, CallList, CallsQuery, ClientFrame, Done, EVENT_NAMES, EventSelection, Hello, LineChange,
-    LineList, LineRef, LineSpec, MAX_MESSAGE_BYTES, PROTOCOL, Reloaded, RequestFrame, ServerFrame,
-    ServiceInfo, Subscription, decode_client, decode_server, encode,
+    Call, CallList, CallsQuery, ClientFrame, ControlChange, ControlSettings, Done, EVENT_NAMES,
+    EventSelection, Hello, LineChange, LineList, LineRef, LineSpec, LogTail, LogTailQuery,
+    MAX_MESSAGE_BYTES, PROTOCOL, PortList, Reloaded, RequestFrame, ServerFrame, ServiceChange,
+    ServiceInfo, ServiceSettings, Settings, SettingsChange, SettingsResult, Subscription,
+    decode_client, decode_server, encode,
 };

@@ -12,11 +12,13 @@ use std::time::{Duration, Instant};
 
 use common::{Fixture, PIPE, TestClient, VERSION, eventually};
 use ctlproto::{
-    Call, CallEvent, CallList, CallRecord, CallsQuery, Direction, Done, EVENT_NAMES, EndReason,
-    Event, EventSelection, LineChange, LineInfo, LineList, LineRef, LineSpec, LineState, LogEvent,
-    LogLevel, PROTOCOL, Reloaded, ServerFrame, ServiceInfo, Subscription,
+    Call, CallEvent, CallList, CallRecord, CallsQuery, ControlChange, Direction, Done, EVENT_NAMES,
+    EndReason, Event, EventSelection, LineChange, LineInfo, LineList, LineRef, LineSpec, LineState,
+    LogEvent, LogLevel, LogTail, LogTailQuery, PROTOCOL, PortKind, PortList, Reloaded, ServerFrame,
+    ServiceChange, ServiceInfo, ServiceMode, Settings, SettingsChange, SettingsResult, Stats,
+    Subscription,
 };
-use ctlsrv::Limits;
+use ctlsrv::{LOG_RING, Limits};
 
 fn line(id: u16) -> LineRef {
     LineRef { id }
@@ -76,6 +78,8 @@ fn every_method_round_trips() {
                 assert_eq!(info.config_path, fixture.config_path.display().to_string());
                 assert_eq!(info.lines, 2);
                 assert!(info.started_ms > 1_600_000_000_000);
+                assert_eq!(info.config_loaded_ms, info.started_ms);
+                assert_eq!(info.mode, ServiceMode::Console);
                 let later: ServiceInfo = client.ok(Call::ServiceInfo);
                 assert!(later.uptime_ms >= info.uptime_ms);
             }
@@ -234,8 +238,11 @@ fn every_method_round_trips() {
                     "{before}\n# added by hand\n[[line]]\nid = 7\nserial = {{ backend = \"com0com\", port = \"P7\" }}\n"
                 );
                 std::fs::write(&fixture.config_path, &added).unwrap();
+                std::thread::sleep(Duration::from_millis(5));
                 let reloaded: Reloaded = client.ok(Call::ConfigReload);
                 assert_eq!(reloaded.lines, 3);
+                let info: ServiceInfo = client.ok(Call::ServiceInfo);
+                assert!(info.config_loaded_ms > info.started_ms);
                 assert_eq!(client.line(7).port, "P7");
 
                 // A file that is not valid changes nothing.
@@ -255,6 +262,116 @@ fn every_method_round_trips() {
                 let text = fixture.config_text();
                 assert!(!text.contains("id = 7"), "{text}");
                 assert_eq!(client.lines().len(), 2);
+            }
+            "config.get" => {
+                let settings: Settings = client.ok(Call::ConfigGet);
+                assert_eq!(settings.service.log_level, LogLevel::Info);
+                assert_eq!(settings.service.log_dir, "");
+                assert_eq!(settings.control.pipe, "rustmodem-control");
+                assert_eq!(settings.path, fixture.config_path.display().to_string());
+            }
+            "config.set" => {
+                let before: Settings = client.ok(Call::ConfigGet);
+                let set = |log_level, log_dir: Option<&str>, pipe: Option<&str>| {
+                    Call::ConfigSet(SettingsChange {
+                        service: Some(ServiceChange {
+                            log_level,
+                            log_dir: log_dir.map(str::to_string),
+                        }),
+                        control: pipe.map(|pipe| ControlChange {
+                            pipe: Some(pipe.to_string()),
+                        }),
+                    })
+                };
+                let result: SettingsResult =
+                    client.ok(set(Some(LogLevel::Debug), Some("logs-here"), Some("other")));
+                assert!(result.restart_required);
+                assert_eq!(result.config.service.log_level, LogLevel::Debug);
+                assert_eq!(result.config.service.log_dir, "logs-here");
+                assert_eq!(result.config.control.pipe, "other");
+                assert_eq!(result.config.path, before.path);
+                let text = fixture.config_text();
+                assert!(text.contains("log_level = \"debug\""), "{text}");
+                assert!(text.contains("pipe = \"other\""), "{text}");
+                assert_eq!(client.ok::<Settings>(Call::ConfigGet), result.config);
+                // The service goes on as it started: the pipe it reports is
+                // the one it listens on.
+                assert_eq!(client.ok::<ServiceInfo>(Call::ServiceInfo).pipe, PIPE);
+
+                // Only the keys given change.
+                let result: SettingsResult = client.ok(set(Some(LogLevel::Warning), None, None));
+                assert_eq!(result.config.service.log_dir, "logs-here");
+                assert_eq!(result.config.control.pipe, "other");
+
+                // A value that is not allowed changes nothing.
+                assert_eq!(
+                    client.err(set(Some(LogLevel::Error), None, Some("not a pipe"))),
+                    "RMD0014"
+                );
+                assert_eq!(client.ok::<Settings>(Call::ConfigGet), result.config);
+                let refused = client.exchange(
+                    r#"{"id":900,"method":"config.set","params":{"service":{"log_level":"loud"}}}"#,
+                );
+                assert!(
+                    matches!(&refused, ServerFrame::Error { error, .. } if error.msgid == "RMD2003"),
+                    "{refused:?}"
+                );
+
+                // Back as the service started, nothing needs a restart;
+                // and a change that names nothing is no change.
+                let result: SettingsResult = client.ok(set(
+                    Some(LogLevel::Info),
+                    Some(""),
+                    Some("rustmodem-control"),
+                ));
+                assert!(!result.restart_required);
+                assert_eq!(result.config, before);
+                let result: SettingsResult = client.ok(Call::ConfigSet(SettingsChange::default()));
+                assert!(!result.restart_required);
+                // The lines were not touched.
+                assert_eq!(client.lines().len(), 2);
+            }
+            "stats.get" => {
+                // So far: one call answered and hung up, and one the caller
+                // was reset out of while line 2 rang.
+                let stats: Stats = client.ok(Call::StatsGet);
+                assert_eq!(stats.calls_answered, 1);
+                assert_eq!(stats.calls_connected, 1);
+                assert_eq!(stats.calls_abandoned, 1);
+                assert_eq!((stats.calls_failed, stats.calls_rejected), (0, 0));
+                assert_eq!((stats.lines_in_use, stats.peak_lines_in_use), (0, 2));
+                assert_eq!(stats.at_commands, 2);
+                assert_eq!(stats.connects.len(), 1);
+                assert_eq!((stats.connects[0].rate, stats.connects[0].count), (0, 1));
+                assert_eq!(stats.retrains, 0);
+                assert!(stats.protocols.is_empty() && stats.compressions.is_empty());
+            }
+            "log.tail" => {
+                let all: LogTail = client.ok(Call::LogTail(LogTailQuery { last: None }));
+                assert!(all.lines.len() > 10 && all.lines.len() <= LOG_RING);
+                assert!(all.lines.is_sorted_by_key(|line| line.time_ms));
+                assert!(
+                    all.lines
+                        .iter()
+                        .any(|line| line.source == "Line02" && line.text.starts_with("RMD1005"))
+                );
+                let last: LogTail = client.ok(Call::LogTail(LogTailQuery { last: Some(3) }));
+                assert_eq!(last.lines, all.lines[all.lines.len() - 3..]);
+                let none: LogTail = client.ok(Call::LogTail(LogTailQuery { last: Some(0) }));
+                assert!(none.lines.is_empty());
+            }
+            "ports.list" => {
+                let list: PortList = client.ok(Call::PortsList);
+                let names: Vec<&str> = list.ports.iter().map(|p| p.name.as_str()).collect();
+                assert_eq!(names, ["COM3", "COM10", "p1", "P2"]);
+                let lines: Vec<Option<u16>> = list.ports.iter().map(|p| p.line).collect();
+                assert_eq!(lines, [None, None, Some(1), Some(2)]);
+                let first = &list.ports[2];
+                assert_eq!(first.kind, PortKind::Com0com);
+                assert_eq!(first.pair.as_deref(), Some("A1"));
+                assert_eq!(first.host_port.as_deref(), Some("COM11"));
+                assert_eq!(first.modem.as_deref(), Some("Standard 56000 bps Modem"));
+                assert_eq!(list.ports[0].kind, PortKind::Serial);
             }
             "subscribe" => {
                 let sub: Subscription = client.ok(Call::Subscribe(selection(&["line.state"])));
@@ -699,4 +816,64 @@ fn requests_are_refused_once_the_pool_has_stopped() {
     assert_eq!(client.err(Call::LinesAnswer(line(1))), "RMD2010");
     drop(server);
     drop(connector);
+}
+
+#[test]
+fn the_log_tail_holds_the_last_two_thousand_lines() {
+    let fixture = Fixture::new(0);
+    let mut client = fixture.connect();
+    let before = client
+        .ok::<LogTail>(Call::LogTail(LogTailQuery::default()))
+        .lines
+        .len();
+    assert!(before < 100, "{before} lines from an empty service");
+    // Nobody is subscribed: the lines are remembered all the same.
+    for number in 1..=(LOG_RING as u64 + 500) {
+        fixture.hub.publish(&log_event(number));
+    }
+    let tail: LogTail = client.ok(Call::LogTail(LogTailQuery::default()));
+    assert_eq!(tail.lines.len(), LOG_RING);
+    assert_eq!(tail.lines[0].time_ms, 501);
+    assert_eq!(tail.lines[LOG_RING - 1].text, "log line 2500");
+    let last: LogTail = client.ok(Call::LogTail(LogTailQuery { last: Some(2) }));
+    let numbers: Vec<u64> = last.lines.iter().map(|line| line.time_ms).collect();
+    assert_eq!(numbers, [2499, 2500]);
+    // Asking for more than there is gives what there is.
+    let all: LogTail = client.ok(Call::LogTail(LogTailQuery { last: Some(99_999) }));
+    assert_eq!(all.lines.len(), LOG_RING);
+}
+
+#[test]
+fn lines_show_what_their_ports_are_bound_to() {
+    let fixture = Fixture::new(3);
+    let mut client = fixture.connect();
+    assert_eq!(client.line(1).binding, None);
+
+    client.ok::<Subscription>(Call::Subscribe(selection(&["line.state"])));
+    fixture.server.refresh_bindings().unwrap();
+    // The lines whose binding became known say so; line 3 is on a port the
+    // inventory does not have.
+    let mut told = Vec::new();
+    for _ in 0..2 {
+        let Event::LineState(info) = client.next_event() else {
+            panic!("expected line.state");
+        };
+        told.push((info.id, info.binding.clone()));
+    }
+    assert_eq!(
+        told,
+        [
+            (1, Some("Standard 56000 bps Modem on COM11".to_string())),
+            (2, Some("COM12".to_string())),
+        ]
+    );
+    assert_eq!(client.line(3).binding, None);
+
+    // A line that moves to a port takes the binding of that port, and
+    // reloading the configuration looks the ports up again.
+    let mut moved = change(3);
+    moved.port = Some("P2x".to_string());
+    assert_eq!(client.ok::<LineInfo>(Call::LinesEdit(moved)).binding, None);
+    client.ok::<Reloaded>(Call::ConfigReload);
+    assert_eq!(client.line(2).binding.as_deref(), Some("COM12"));
 }

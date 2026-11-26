@@ -18,6 +18,7 @@
 
 mod args;
 mod logger;
+mod ports;
 
 #[cfg(windows)]
 #[allow(unsafe_code)]
@@ -30,6 +31,9 @@ mod eventlog;
 mod pipe;
 #[cfg(all(windows, test))]
 mod pipe_tests;
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod registry;
 #[cfg(windows)]
 mod runner;
 #[cfg(windows)]

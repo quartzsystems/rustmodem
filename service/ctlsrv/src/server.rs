@@ -10,11 +10,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use config::{Backend, ConfigFile, LineConfig, LineEdit, UnknownCommand};
+use config::{
+    Backend, Config, ConfigFile, ControlConfig, LineConfig, LineEdit, ServiceConfig, SettingsEdit,
+    UnknownCommand,
+};
 use ctlproto::{
-    Call, CallList, ClientFrame, Done, EVENT_NAMES, EventSelection, Hello, LineChange, LineList,
-    LineSpec, LogLevel, MAX_MESSAGE_BYTES, PROTOCOL, Reloaded, ServerFrame, ServiceInfo,
-    Subscription, decode_client, encode,
+    Call, CallList, ClientFrame, ControlSettings, Done, EVENT_NAMES, EventSelection, Hello,
+    LineChange, LineList, LineSpec, LogLevel, LogTail, MAX_MESSAGE_BYTES, PROTOCOL, PortInfo,
+    PortList, Reloaded, ServerFrame, ServiceInfo, ServiceMode, ServiceSettings, Settings,
+    SettingsChange, SettingsResult, Subscription, decode_client, encode,
 };
 use msg::{Message, Severity, message};
 use pool::PoolHandle;
@@ -22,7 +26,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::queue::{ClientQueue, Hub, Limits};
-use crate::{Connection, Halves, Listener};
+use crate::{Connection, Halves, Listener, PortInventory};
 
 /// Takes the server's own log lines. The source is always `CTL`.
 pub type LogFn = Arc<dyn Fn(LogLevel, String) + Send + Sync>;
@@ -45,6 +49,11 @@ pub struct ServerParts {
     pub log: LogFn,
     /// How much may wait for one client.
     pub limits: Limits,
+    /// How the service is being run, for `service.info`.
+    pub mode: ServiceMode,
+    /// Knows the serial ports of the machine, for `ports.list` and the
+    /// lines' bindings.
+    pub ports: Arc<dyn PortInventory>,
 }
 
 struct Shared {
@@ -56,8 +65,14 @@ struct Shared {
     hub: Hub,
     log: LogFn,
     limits: Limits,
+    mode: ServiceMode,
+    ports: Arc<dyn PortInventory>,
+    /// The `[service]` and `[control]` settings the service started with.
+    /// A change to them is in effect only after a restart.
+    running: (ServiceConfig, ControlConfig),
     started: Instant,
     started_ms: u64,
+    config_loaded_ms: AtomicU64,
     next_client: AtomicU64,
 }
 
@@ -82,12 +97,18 @@ impl Server {
     /// A server. Nothing is served until a transport is given to
     /// [`Server::serve`] or a connection to [`Server::handle`].
     pub fn new(parts: ServerParts) -> Server {
-        let started_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |since| since.as_millis() as u64);
+        let started_ms = unix_ms();
+        let running = (
+            parts.config.config().service.clone(),
+            parts.config.config().control.clone(),
+        );
         Server {
             shared: Arc::new(Shared {
                 pool: parts.pool,
+                mode: parts.mode,
+                ports: parts.ports,
+                running,
+                config_loaded_ms: AtomicU64::new(started_ms),
                 config: Mutex::new(parts.config),
                 config_path: parts.config_path,
                 version: parts.version,
@@ -105,6 +126,21 @@ impl Server {
     /// Where events are published.
     pub fn hub(&self) -> Hub {
         self.shared.hub.clone()
+    }
+
+    /// Looks the serial ports up again and tells the pool what the host
+    /// side of each is bound to, so that the lines show it. The service
+    /// calls this when it starts and every so often after; the server calls
+    /// it itself when the configuration is reloaded.
+    pub fn refresh_bindings(&self) -> Result<(), Message> {
+        let bindings = self
+            .shared
+            .ports
+            .ports()
+            .iter()
+            .filter_map(|port| Some((port.name.clone(), port.binding()?)))
+            .collect();
+        self.shared.pool.set_bindings(bindings)
     }
 
     /// Accepts clients until the listener shuts down, serving each on a
@@ -281,6 +317,8 @@ impl Server {
                     lines,
                     started_ms: shared.started_ms,
                     uptime_ms: shared.started.elapsed().as_millis() as u64,
+                    config_loaded_ms: shared.config_loaded_ms.load(Ordering::Relaxed),
+                    mode: shared.mode,
                 })
             }
             Call::LinesList => value(&LineList {
@@ -338,8 +376,20 @@ impl Server {
                 shared.pool.apply_config(loaded.config().clone())?;
                 let lines = loaded.config().lines.len() as u32;
                 *current = loaded;
+                drop(current);
+                shared.config_loaded_ms.store(unix_ms(), Ordering::Relaxed);
+                self.refresh_bindings()?;
                 value(&Reloaded { lines })
             }
+            Call::ConfigGet => value(&self.settings(self.config().config())),
+            Call::ConfigSet(change) => value(&self.change_settings(&change)?),
+            Call::StatsGet => value(&shared.pool.stats()?),
+            Call::LogTail(query) => value(&LogTail {
+                lines: shared.hub.log_tail(query.last.map(|last| last as usize)),
+            }),
+            Call::PortsList => value(&PortList {
+                ports: self.ports()?,
+            }),
             Call::Subscribe(selection) => {
                 let names = event_names("subscribe", &selection)?;
                 value(&Subscription {
@@ -375,6 +425,74 @@ impl Server {
         Ok(())
     }
 
+    /// The settings of a configuration that are not lines.
+    fn settings(&self, config: &Config) -> Settings {
+        Settings {
+            service: ServiceSettings {
+                log_level: match config.service.log_level {
+                    config::LogLevel::Error => LogLevel::Error,
+                    config::LogLevel::Warning => LogLevel::Warning,
+                    config::LogLevel::Info => LogLevel::Info,
+                    config::LogLevel::Debug => LogLevel::Debug,
+                },
+                log_dir: config.service.log_dir.clone(),
+            },
+            control: ControlSettings {
+                pipe: config.control.pipe.clone(),
+            },
+            path: self.shared.config_path.display().to_string(),
+        }
+    }
+
+    /// `config.set`: the change is made to a copy, checked and written to
+    /// the file, and only then kept. The lines are not touched. What the
+    /// service is doing does not change until it starts again.
+    fn change_settings(&self, change: &SettingsChange) -> Result<SettingsResult, Message> {
+        let service = change.service.as_ref();
+        let edit = SettingsEdit {
+            log_level: service
+                .and_then(|service| service.log_level)
+                .map(|level| match level {
+                    LogLevel::Error => config::LogLevel::Error,
+                    LogLevel::Warning => config::LogLevel::Warning,
+                    LogLevel::Info => config::LogLevel::Info,
+                    LogLevel::Debug => config::LogLevel::Debug,
+                }),
+            log_dir: service.and_then(|service| service.log_dir.clone()),
+            pipe: change
+                .control
+                .as_ref()
+                .and_then(|control| control.pipe.clone()),
+        };
+        let mut current = self.config();
+        let mut next = current.clone();
+        next.edit_settings(&edit).map_err(first)?;
+        next.save(&self.shared.config_path)?;
+        *current = next;
+        let config = current.config();
+        let (service, control) = &self.shared.running;
+        Ok(SettingsResult {
+            restart_required: config.service != *service || config.control != *control,
+            config: self.settings(config),
+        })
+    }
+
+    /// `ports.list`: the ports of the machine in name order, each with the
+    /// line that uses it.
+    fn ports(&self) -> Result<Vec<PortInfo>, Message> {
+        let lines = self.shared.pool.lines()?;
+        let mut ports = self.shared.ports.ports();
+        for port in &mut ports {
+            // Windows port names do not distinguish case.
+            port.line = lines
+                .iter()
+                .find(|line| line.port.eq_ignore_ascii_case(&port.name))
+                .map(|line| line.id);
+        }
+        ports.sort_by_cached_key(|port| name_order(&port.name));
+        Ok(ports)
+    }
+
     fn log(&self, message: &Message) {
         let level = match message.severity {
             Severity::Info => LogLevel::Info,
@@ -383,6 +501,26 @@ impl Server {
         };
         (self.shared.log)(level, message.to_string());
     }
+}
+
+/// Now, in milliseconds since the Unix epoch.
+fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64)
+}
+
+/// The key port names are ordered by: the letters, then the number after
+/// them as a number, so that `COM9` comes before `COM10`.
+fn name_order(name: &str) -> (String, u64, String) {
+    let folded = name.to_ascii_uppercase();
+    let digits = folded.bytes().rev().take_while(u8::is_ascii_digit).count();
+    let (letters, number) = folded.split_at(folded.len() - digits);
+    (
+        letters.to_string(),
+        number.parse().unwrap_or(u64::MAX),
+        folded.clone(),
+    )
 }
 
 /// The first of the problems a configuration change found. The API answers

@@ -13,7 +13,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::model::{CallRecord, ErrorInfo, Event, LineInfo};
+use crate::model::{
+    CallRecord, ErrorInfo, Event, LineInfo, LogEvent, LogLevel, PortInfo, ServiceMode,
+};
 
 /// The protocol number this version speaks.
 pub const PROTOCOL: u32 = 1;
@@ -190,6 +192,48 @@ pub struct EventSelection {
     pub events: Option<Vec<String>>,
 }
 
+/// The parameters of `log.tail`.
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogTailQuery {
+    /// Return at most this many lines, the most recent; all if left out.
+    #[serde(default)]
+    pub last: Option<u32>,
+}
+
+/// The `service` part of `config.set`: the keys of `[service]` to change.
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceChange {
+    /// A new log level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_level: Option<LogLevel>,
+    /// A new log directory; an empty string means the default one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_dir: Option<String>,
+}
+
+/// The `control` part of `config.set`: the keys of `[control]` to change.
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlChange {
+    /// A new control pipe name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipe: Option<String>,
+}
+
+/// The parameters of `config.set`: the settings to change.
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettingsChange {
+    /// Changes to `[service]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<ServiceChange>,
+    /// Changes to `[control]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control: Option<ControlChange>,
+}
+
 /// Parameters of a method that takes none.
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -216,6 +260,11 @@ pub struct ServiceInfo {
     pub started_ms: u64,
     /// How long the service has been running, in milliseconds.
     pub uptime_ms: u64,
+    /// When the configuration was last loaded, in milliseconds since the
+    /// Unix epoch.
+    pub config_loaded_ms: u64,
+    /// How the service is being run.
+    pub mode: ServiceMode,
 }
 
 /// The result of `lines.list`.
@@ -244,6 +293,57 @@ pub struct Reloaded {
 pub struct Subscription {
     /// The events the client is now subscribed to.
     pub events: Vec<String>,
+}
+
+/// The result of `log.tail`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogTail {
+    /// The lines, oldest first.
+    pub lines: Vec<LogEvent>,
+}
+
+/// The `[service]` settings.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServiceSettings {
+    /// How much the service logs.
+    pub log_level: LogLevel,
+    /// The log directory; empty means the default one.
+    pub log_dir: String,
+}
+
+/// The `[control]` settings.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlSettings {
+    /// The control pipe name.
+    pub pipe: String,
+}
+
+/// The result of `config.get`: the settings that are not lines.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Settings {
+    /// The `[service]` settings.
+    pub service: ServiceSettings,
+    /// The `[control]` settings.
+    pub control: ControlSettings,
+    /// The path of the configuration file.
+    pub path: String,
+}
+
+/// The result of `config.set`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingsResult {
+    /// Whether the service must be restarted for the change to take
+    /// effect.
+    pub restart_required: bool,
+    /// The settings as the configuration file now has them.
+    pub config: Settings,
+}
+
+/// The result of `ports.list`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortList {
+    /// The serial ports of the machine, in name order.
+    pub ports: Vec<PortInfo>,
 }
 
 /// The result of a method that has nothing to report.
@@ -283,6 +383,16 @@ pub enum Call {
     CallsList(CallsQuery),
     /// `config.reload`
     ConfigReload,
+    /// `config.get`
+    ConfigGet,
+    /// `config.set`
+    ConfigSet(SettingsChange),
+    /// `stats.get`
+    StatsGet,
+    /// `log.tail`
+    LogTail(LogTailQuery),
+    /// `ports.list`
+    PortsList,
     /// `subscribe`
     Subscribe(EventSelection),
     /// `unsubscribe`
@@ -291,7 +401,7 @@ pub enum Call {
 
 impl Call {
     /// The name of every method, in the order the documentation lists them.
-    pub const METHODS: [&'static str; 15] = [
+    pub const METHODS: [&'static str; 20] = [
         "service.info",
         "lines.list",
         "lines.get",
@@ -305,6 +415,11 @@ impl Call {
         "lines.remove",
         "calls.list",
         "config.reload",
+        "config.get",
+        "config.set",
+        "stats.get",
+        "log.tail",
+        "ports.list",
         "subscribe",
         "unsubscribe",
     ];
@@ -325,6 +440,11 @@ impl Call {
             Call::LinesRemove(_) => "lines.remove",
             Call::CallsList(_) => "calls.list",
             Call::ConfigReload => "config.reload",
+            Call::ConfigGet => "config.get",
+            Call::ConfigSet(_) => "config.set",
+            Call::StatsGet => "stats.get",
+            Call::LogTail(_) => "log.tail",
+            Call::PortsList => "ports.list",
             Call::Subscribe(_) => "subscribe",
             Call::Unsubscribe(_) => "unsubscribe",
         }
@@ -336,7 +456,14 @@ impl Call {
             serde_json::to_value(params).unwrap_or(Value::Null)
         }
         match self {
-            Call::ServiceInfo | Call::LinesList | Call::ConfigReload => value(&NoParams {}),
+            Call::ServiceInfo
+            | Call::LinesList
+            | Call::ConfigReload
+            | Call::ConfigGet
+            | Call::StatsGet
+            | Call::PortsList => value(&NoParams {}),
+            Call::ConfigSet(p) => value(p),
+            Call::LogTail(p) => value(p),
             Call::LinesGet(p)
             | Call::LinesAnswer(p)
             | Call::LinesHangup(p)
@@ -398,6 +525,20 @@ impl Call {
             "config.reload" => {
                 read::<NoParams>(method, params)?;
                 Call::ConfigReload
+            }
+            "config.get" => {
+                read::<NoParams>(method, params)?;
+                Call::ConfigGet
+            }
+            "config.set" => Call::ConfigSet(read(method, params)?),
+            "stats.get" => {
+                read::<NoParams>(method, params)?;
+                Call::StatsGet
+            }
+            "log.tail" => Call::LogTail(read(method, params)?),
+            "ports.list" => {
+                read::<NoParams>(method, params)?;
+                Call::PortsList
             }
             "subscribe" => Call::Subscribe(read(method, params)?),
             "unsubscribe" => Call::Unsubscribe(read(method, params)?),

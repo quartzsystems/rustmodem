@@ -62,11 +62,20 @@ first; every other event reports state and is never dropped. A client that
 falls further behind than that is disconnected (`RMD2006` in the service
 log), and can connect again and ask for the current state.
 
+## Compatibility
+
+The protocol number changes only when an existing message changes its
+meaning or its shape. Methods, events and optional fields may be added
+without a protocol change, and fields may be added to results and to the
+data of events. A client must ignore fields and events it does not know.
+The service refuses a parameter it does not know with `RMD2003`, so a client
+finds out at once that the service is older than it is.
+
 ## Methods
 
 | Method | Result | Summary |
 |---|---|---|
-| [`service.info`](#serviceinfo) | ServiceInfo | Reports the service's version, protocol, pipe name, configuration path, number of lines and how long it has been running. |
+| [`service.info`](#serviceinfo) | ServiceInfo | Reports the service's version, protocol, pipe name, configuration path, number of lines, how long it has been running and how it is being run. |
 | [`lines.list`](#lineslist) | LineList | Lists every line, in id order. |
 | [`lines.get`](#linesget) | LineInfo | Reports one line. |
 | [`lines.answer`](#linesanswer) | LineInfo | Answers the call ringing on a line, as `ATA` from the host would. |
@@ -79,6 +88,11 @@ log), and can connect again and ask for the current state.
 | [`lines.remove`](#linesremove) | Done | Removes a line: any call on it is hung up and its port is released. |
 | [`calls.list`](#callslist) | CallList | Lists the calls that have ended, oldest first. |
 | [`config.reload`](#configreload) | Reloaded | Reads the configuration file again and makes the lines match it. |
+| [`config.get`](#configget) | Settings | Reports the settings that are not lines, as the configuration file has them, and the path of the file. |
+| [`config.set`](#configset) | SettingsResult | Changes the settings that are given and leaves the others alone. |
+| [`stats.get`](#statsget) | Stats | Reports the statistics of the service since it started. |
+| [`log.tail`](#logtail) | LogTail | Returns the last lines the service logged, oldest first. |
+| [`ports.list`](#portslist) | PortList | Lists the serial ports of the machine the service runs on, in name order, with the com0com pairs, the modem devices attached to them and the lines that use them. |
 | [`subscribe`](#subscribe) | Subscription | Starts sending the client events. |
 | [`unsubscribe`](#unsubscribe) | Subscription | Stops sending the client events. |
 
@@ -86,7 +100,7 @@ Every request can also get one of these errors: `RMD2002`, `RMD2003`, `RMD2004`,
 
 ### `service.info`
 
-Reports the service's version, protocol, pipe name, configuration path, number of lines and how long it has been running.
+Reports the service's version, protocol, pipe name, configuration path, number of lines, how long it has been running and how it is being run.
 
 Parameters: none.
 
@@ -292,6 +306,73 @@ Errors: `RMD0010`, `RMD0012`, `RMD0013`, `RMD0014`, `RMD0015`, `RMD0016`, `RMD00
 {"id":1,"method":"config.reload"}
 ```
 
+### `config.get`
+
+Reports the settings that are not lines, as the configuration file has them, and the path of the file.
+
+Parameters: none.
+
+Result: Settings.
+
+```json
+{"id":1,"method":"config.get"}
+```
+
+### `config.set`
+
+Changes the settings that are given and leaves the others alone. The change is checked and written to the configuration file, comments kept. Changes to `[service]` and `[control]` take effect when the service next starts; the result says whether a restart is needed.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `service` | ServiceChange | no | Changes to `[service]`. |
+| `control` | ControlChange | no | Changes to `[control]`. |
+
+Result: SettingsResult.
+
+Errors: `RMD0011`, `RMD0014`.
+
+```json
+{"id":1,"method":"config.set","params":{"service":{"log_level":"debug","log_dir":""},"control":{"pipe":"rustmodem-control"}}}
+```
+
+### `stats.get`
+
+Reports the statistics of the service since it started.
+
+Parameters: none.
+
+Result: Stats.
+
+```json
+{"id":1,"method":"stats.get"}
+```
+
+### `log.tail`
+
+Returns the last lines the service logged, oldest first. The service remembers the last 2000.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `last` | integer | no | Return at most this many, the most recent. Default all. |
+
+Result: LogTail.
+
+```json
+{"id":1,"method":"log.tail","params":{"last":100}}
+```
+
+### `ports.list`
+
+Lists the serial ports of the machine the service runs on, in name order, with the com0com pairs, the modem devices attached to them and the lines that use them.
+
+Parameters: none.
+
+Result: PortList.
+
+```json
+{"id":1,"method":"ports.list"}
+```
+
 ### `subscribe`
 
 Starts sending the client events. The result is everything the client is now subscribed to.
@@ -368,6 +449,8 @@ The result of `service.info`.
 | `lines` | integer | yes | How many lines the service has. |
 | `started_ms` | integer | yes | When the service started, in milliseconds since the Unix epoch. |
 | `uptime_ms` | integer | yes | How long the service has been running, in milliseconds. |
+| `config_loaded_ms` | integer | yes | When the configuration was last loaded, in milliseconds since the Unix epoch. |
+| `mode` | ServiceMode | yes | How the service is being run. |
 
 ### LineList
 
@@ -394,6 +477,7 @@ Everything about one line.
 | `counters` | Counters | yes | The counters of the line. |
 | `call` | CallInfo | no | The call in progress, if there is one. |
 | `error` | Error | no | Why the serial port is not open, if it should be and is not. |
+| `binding` | string | no | What the host side of the line's port is bound to, for example `Standard 56000 bps Modem on COM4`. Absent when unknown. |
 
 ### Counters
 
@@ -406,6 +490,7 @@ The counters of a line since the service started.
 | `connects` | integer | yes | Calls that connected. |
 | `bytes_tx` | integer | yes | Data bytes from the host to the far end. |
 | `bytes_rx` | integer | yes | Data bytes from the far end to the host. |
+| `at_commands` | integer | yes | AT command lines parsed on the line. |
 
 ### CallInfo
 
@@ -442,7 +527,7 @@ A call that has ended. The same object is written, one a line, to `calls.jsonl` 
 
 ### ConnectInfo
 
-What is known about a connection. Phase 0 reports rate 0 and nothing else.
+What is known about a connection. The null engine reports rate 0 and nothing else.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
@@ -486,6 +571,130 @@ The result of `config.reload`.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `lines` | integer | yes | How many lines the configuration has. |
+
+### Settings
+
+The result of `config.get`: the settings that are not lines.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `service` | ServiceSettings | yes | The `[service]` settings. |
+| `control` | ControlSettings | yes | The `[control]` settings. |
+| `path` | string | yes | The path of the configuration file. |
+
+### ServiceSettings
+
+The `[service]` settings.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `log_level` | LogLevel | yes | How much the service logs. |
+| `log_dir` | string | yes | The log directory. Empty means the default one. |
+
+### ControlSettings
+
+The `[control]` settings.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `pipe` | string | yes | The control pipe name. |
+
+### ServiceChange
+
+The `service` part of `config.set`: the keys of `[service]` to change.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `log_level` | LogLevel | no | A new log level. |
+| `log_dir` | string | no | A new log directory. An empty string means the default one. |
+
+### ControlChange
+
+The `control` part of `config.set`: the keys of `[control]` to change.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `pipe` | string | no | A new control pipe name. |
+
+### SettingsResult
+
+The result of `config.set`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `restart_required` | boolean | yes | Whether the service must be restarted for the change to take effect. |
+| `config` | Settings | yes | The settings as the configuration file now has them. |
+
+### Stats
+
+The result of `stats.get`: the statistics of the service since it started. The call counts are of calls offered to lines.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `calls_answered` | integer | yes | Calls a line answered. |
+| `calls_connected` | integer | yes | Calls whose modems connected. |
+| `calls_failed` | integer | yes | Calls answered that never connected. |
+| `calls_rejected` | integer | yes | Calls turned away: the line was busy, or no line was ready. |
+| `calls_abandoned` | integer | yes | Calls the caller gave up on while the line was ringing. |
+| `avg_call_ms` | integer | yes | The mean length of the connected calls that have ended, in milliseconds. |
+| `longest_call_ms` | integer | yes | The length of the longest connected call that has ended, in milliseconds. |
+| `peak_lines_in_use` | integer | yes | The most lines that had a call at one time. |
+| `lines_in_use` | integer | yes | How many lines have a call now. |
+| `bytes_in` | integer | yes | Data bytes from the far ends to the hosts. |
+| `bytes_out` | integer | yes | Data bytes from the hosts to the far ends. |
+| `at_commands` | integer | yes | AT command lines parsed. |
+| `connects` | array of ConnectTally | yes | The connected calls by what they negotiated, largest count first. |
+| `retrains` | integer | yes | Retrains and rate renegotiations. Zero until an engine reports them. |
+| `protocols` | array of Tally | yes | The connected calls by error-control protocol, largest count first. Empty until an engine reports one. |
+| `compressions` | array of Tally | yes | The connected calls by data compression, largest count first. Empty until an engine reports one. |
+
+### ConnectTally
+
+How many connected calls negotiated one rate and carrier.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `rate` | integer | yes | The line rate in bit/s; 0 means not known. |
+| `carrier` | string | no | The carrier (modulation) name, if the engine reported one. |
+| `count` | integer | yes | How many calls. |
+
+### Tally
+
+How many connected calls negotiated something with a name.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `name` | string | yes | The name. |
+| `count` | integer | yes | How many calls. |
+
+### LogTail
+
+The result of `log.tail`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `lines` | array of LogEvent | yes | The lines, oldest first. |
+
+### PortList
+
+The result of `ports.list`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `ports` | array of PortInfo | yes | The serial ports of the machine, in name order. |
+
+### PortInfo
+
+One serial port of the machine the service runs on.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `name` | string | yes | The name the port is opened by, for example `CNCB0`. |
+| `kind` | PortKind | yes | What kind of port it is. |
+| `pair` | string | no | For com0com, the name of the other end of the pair. |
+| `host_port` | string | no | The COM name applications see for the host side of the port. |
+| `modem` | string | no | The friendly name of a modem device attached to the host port. |
+| `line` | integer | no | The id of the line that uses the port. |
 
 ### Subscription
 
@@ -552,6 +761,26 @@ How serious a log line is. A string, one of:
 | `warning` | Something is wrong but the service went on. |
 | `info` | Something happened. |
 | `debug` | Detail, including every AT command line and result code. |
+
+### ServiceMode
+
+How the service is being run. A string, one of:
+
+| Value | Meaning |
+|---|---|
+| `service` | Under the Windows service control manager. |
+| `console` | In the foreground, with `--console`. |
+| `demo` | The demo service: memory ports and scripted calls. |
+
+### PortKind
+
+What kind of serial port a port is. A string, one of:
+
+| Value | Meaning |
+|---|---|
+| `com0com` | One end of a com0com null-modem pair. |
+| `serial` | A serial port with a `COM` name. |
+| `other` | Anything else the system lists as a serial device. |
 
 ## Errors
 

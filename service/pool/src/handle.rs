@@ -13,7 +13,7 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::Duration;
 
 use config::Config;
-use ctlproto::{CallRecord, LineInfo};
+use ctlproto::{CallRecord, LineInfo, Stats};
 use msg::{Message, message};
 
 use crate::pool::Pool;
@@ -36,6 +36,10 @@ pub enum Command {
     Reset(LineId, Sender<Result<(), Message>>),
     /// The calls that have ended, oldest first; at most the last `n`.
     Calls(Option<usize>, Sender<Vec<CallRecord>>),
+    /// The statistics since the pool started.
+    Stats(Sender<Stats>),
+    /// What the host side of each port is bound to: port name and text.
+    SetBindings(Vec<(String, String)>, Sender<()>),
     /// Make the lines match this configuration.
     ApplyConfig(Box<Config>, Sender<()>),
 }
@@ -116,6 +120,16 @@ impl PoolHandle {
     /// The calls that have ended, oldest first; at most the last `last`.
     pub fn calls(&self, last: Option<usize>) -> Result<Vec<CallRecord>, Message> {
         self.ask(|answer| Command::Calls(last, answer))
+    }
+
+    /// The statistics since the pool started.
+    pub fn stats(&self) -> Result<Stats, Message> {
+        self.ask(Command::Stats)
+    }
+
+    /// Tell the pool what the host side of each port is bound to.
+    pub fn set_bindings(&self, bindings: Vec<(String, String)>) -> Result<(), Message> {
+        self.ask(|answer| Command::SetBindings(bindings, answer))
     }
 
     /// Make the lines match this configuration.

@@ -5,7 +5,8 @@
 //! The schema, validation and write-back of the configuration file.
 
 use config::{
-    Backend, Config, ConfigFile, LineConfig, LineEdit, LogLevel, SerialConfig, UnknownCommand,
+    Backend, Config, ConfigFile, LineConfig, LineEdit, LogLevel, SerialConfig, SettingsEdit,
+    UnknownCommand,
 };
 
 /// The example from the phase 0 handoff, with a later-phase section added.
@@ -334,4 +335,88 @@ fn default_paths_are_under_the_data_directory() {
     );
     assert_eq!(config::default_path(), data.join("rustmodem.toml"));
     assert_eq!(config::default_log_dir(), data.join("logs"));
+}
+
+#[test]
+fn editing_the_settings_keeps_comments_and_everything_else() {
+    let mut file = ConfigFile::parse(EXAMPLE).unwrap();
+    file.edit_settings(&SettingsEdit {
+        log_level: Some(LogLevel::Debug),
+        log_dir: Some(r"D:\logs".to_string()),
+        pipe: Some("other-pipe".to_string()),
+    })
+    .unwrap();
+    assert_eq!(file.config().service.log_level, LogLevel::Debug);
+    assert_eq!(file.config().service.log_dir, r"D:\logs");
+    assert_eq!(file.config().control.pipe, "other-pipe");
+    let text = file.to_toml();
+    assert!(
+        text.contains("log_level = \"debug\"            # error, warning, info, debug"),
+        "{text}"
+    );
+    assert!(text.contains("# empty = %ProgramData%"), "{text}");
+    assert!(
+        text.contains("pipe = \"other-pipe\"    # \\\\.\\pipe\\<name>"),
+        "{text}"
+    );
+    // Nothing else moved: putting the old values back gives the old file.
+    file.edit_settings(&SettingsEdit {
+        log_level: Some(LogLevel::Info),
+        log_dir: Some(String::new()),
+        pipe: Some("rustmodem-control".to_string()),
+    })
+    .unwrap();
+    assert_eq!(file.to_toml(), EXAMPLE);
+
+    // Only the keys named change.
+    file.edit_settings(&SettingsEdit {
+        log_level: Some(LogLevel::Error),
+        ..SettingsEdit::default()
+    })
+    .unwrap();
+    assert_eq!(file.config().service.log_level, LogLevel::Error);
+    assert_eq!(file.config().control.pipe, "rustmodem-control");
+    assert_eq!(file.config().lines.len(), 2);
+
+    // An edit that names nothing changes nothing.
+    let before = file.to_toml();
+    file.edit_settings(&SettingsEdit::default()).unwrap();
+    assert_eq!(file.to_toml(), before);
+}
+
+#[test]
+fn editing_the_settings_adds_the_tables_a_file_does_not_have() {
+    let mut file = ConfigFile::parse(
+        "# only a line\n[[line]]\nid = 1\nserial = { backend = \"com0com\", port = \"P1\" }\n",
+    )
+    .unwrap();
+    file.edit_settings(&SettingsEdit {
+        log_level: Some(LogLevel::Warning),
+        log_dir: None,
+        pipe: Some("p".to_string()),
+    })
+    .unwrap();
+    let text = file.to_toml();
+    assert!(text.starts_with("# only a line\n"), "{text}");
+    let again = ConfigFile::parse(&text).unwrap();
+    assert_eq!(again.config().service.log_level, LogLevel::Warning);
+    assert_eq!(again.config().service.log_dir, "");
+    assert_eq!(again.config().control.pipe, "p");
+    assert_eq!(again.config().lines.len(), 1);
+}
+
+#[test]
+fn editing_the_settings_refuses_an_invalid_result_and_changes_nothing() {
+    let mut file = ConfigFile::parse(EXAMPLE).unwrap();
+    let problems = file
+        .edit_settings(&SettingsEdit {
+            log_level: Some(LogLevel::Debug),
+            log_dir: None,
+            pipe: Some("not a pipe name".to_string()),
+        })
+        .unwrap_err();
+    assert_eq!(ids(&problems), ["RMD0014"]);
+    assert!(problems[0].text.contains("control.pipe"));
+    assert_eq!(file.to_toml(), EXAMPLE);
+    assert_eq!(file.config().service.log_level, LogLevel::Info);
 }

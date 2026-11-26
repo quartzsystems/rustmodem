@@ -27,8 +27,8 @@ use std::process::ExitCode;
 use args::{Command, Options};
 use client::{Client, Failure};
 use ctlproto::{
-    Call, CallList, CallsQuery, ErrorInfo, EventSelection, LineInfo, LineList, LineRef, Reloaded,
-    ServiceInfo, encode,
+    Call, CallList, CallsQuery, ErrorInfo, EventSelection, LineInfo, LineList, LineRef, LogTail,
+    LogTailQuery, PortList, Reloaded, ServiceInfo, Stats, encode,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -116,6 +116,14 @@ fn run<R: BufRead, W: Write>(
         Command::Reload => answer::<Reloaded, _, _>(client, &Call::ConfigReload, json, out, |r| {
             format!("Configuration reloaded: {} lines.\n", r.lines)
         }),
+        Command::Stats => answer::<Stats, _, _>(client, &Call::StatsGet, json, out, output::stats),
+        Command::Ports => answer::<PortList, _, _>(client, &Call::PortsList, json, out, |list| {
+            output::ports(&list.ports)
+        }),
+        Command::Log(last) => {
+            let call = Call::LogTail(LogTailQuery { last });
+            answer::<LogTail, _, _>(client, &call, json, out, |tail| output::log(&tail.lines))
+        }
         Command::Watch => watch(client, json, out, watch_limit),
         // Handled before a connection is made.
         Command::Help | Command::Version => Ok(()),

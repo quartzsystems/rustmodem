@@ -210,6 +210,18 @@ pub struct LineEdit {
     pub unknown_command: Option<UnknownCommand>,
 }
 
+/// A change to the settings that are not lines: each `Some` replaces that
+/// key, each `None` leaves it alone.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct SettingsEdit {
+    /// A new `service.log_level`.
+    pub log_level: Option<LogLevel>,
+    /// A new `service.log_dir`; empty means the default directory.
+    pub log_dir: Option<String>,
+    /// A new `control.pipe`.
+    pub pipe: Option<String>,
+}
+
 /// A whole, valid configuration.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Config {

@@ -17,6 +17,9 @@ Usage:
   rustmodemctl [OPTIONS] answer|hangup|reset|enable|disable <id>
   rustmodemctl [OPTIONS] calls [--last N]
   rustmodemctl [OPTIONS] reload
+  rustmodemctl [OPTIONS] stats
+  rustmodemctl [OPTIONS] ports
+  rustmodemctl [OPTIONS] log [--last N]
   rustmodemctl [OPTIONS] watch          prints events until interrupted
 
 Options:
@@ -57,6 +60,12 @@ pub enum Command {
     Calls(Option<u32>),
     /// `reload`
     Reload,
+    /// `stats`
+    Stats,
+    /// `ports`
+    Ports,
+    /// `log [--last N]`
+    Log(Option<u32>),
     /// `watch`
     Watch,
     /// `--help`
@@ -131,12 +140,15 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Options, Message> {
         Some("disable") => Command::Disable(id(&words)?),
         Some("calls") => alone(&words, Command::Calls(last))?,
         Some("reload") => alone(&words, Command::Reload)?,
+        Some("stats") => alone(&words, Command::Stats)?,
+        Some("ports") => alone(&words, Command::Ports)?,
+        Some("log") => alone(&words, Command::Log(last))?,
         Some("watch") => alone(&words, Command::Watch)?,
         Some(other) => return Err(refuse(other)),
         None => Command::Help,
     };
-    // --last belongs to calls and to nothing else.
-    if last.is_some() && !matches!(command, Command::Calls(_)) {
+    // --last belongs to calls and log and to nothing else.
+    if last.is_some() && !matches!(command, Command::Calls(_) | Command::Log(_)) {
         return Err(refuse("--last"));
     }
     Ok(Options {
@@ -173,6 +185,10 @@ mod tests {
         assert_eq!(command(&["calls", "--last", "5"]), Command::Calls(Some(5)));
         assert_eq!(command(&["--last", "5", "calls"]), Command::Calls(Some(5)));
         assert_eq!(command(&["reload"]), Command::Reload);
+        assert_eq!(command(&["stats"]), Command::Stats);
+        assert_eq!(command(&["ports"]), Command::Ports);
+        assert_eq!(command(&["log"]), Command::Log(None));
+        assert_eq!(command(&["log", "--last", "50"]), Command::Log(Some(50)));
         assert_eq!(command(&["watch"]), Command::Watch);
         assert_eq!(command(&["--help"]), Command::Help);
         assert_eq!(command(&["lines", "--help"]), Command::Help);
@@ -210,6 +226,9 @@ mod tests {
             &["calls", "--last"],
             &["calls", "--last", "many"],
             &["lines", "--last", "3"],
+            &["stats", "--last", "3"],
+            &["ports", "extra"],
+            &["log", "7"],
             &["--frob", "lines"],
             &["watch", "now"],
         ] {

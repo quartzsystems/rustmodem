@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use config::{Config, ConfigFile, LineConfig};
 use ctlproto::{
     Call, ClientFrame, ErrorInfo, Event, Hello, LineInfo, LineRef, LineState, LogLevel, PROTOCOL,
-    ServerFrame, decode_server, encode,
+    PortInfo, PortKind, ServerFrame, ServiceMode, decode_server, encode,
 };
 use ctlsrv::memory::{self, MemoryClient, MemoryConnector, PipeReader, PipeWriter};
 use ctlsrv::{Hub, Limits, Server, ServerParts};
@@ -36,6 +36,32 @@ pub const PIPE: &str = "test-pipe";
 
 /// How long a client waits for the service before the test fails.
 pub const PATIENCE: Duration = Duration::from_secs(10);
+
+/// The ports the test service says the machine has, in no particular
+/// order: the two a fixture's first lines use, and two nothing uses.
+pub fn test_ports() -> Vec<PortInfo> {
+    let port =
+        |name: &str, kind, pair: Option<&str>, host: Option<&str>, modem: Option<&str>| PortInfo {
+            name: name.to_string(),
+            kind,
+            pair: pair.map(str::to_string),
+            host_port: host.map(str::to_string),
+            modem: modem.map(str::to_string),
+            line: None,
+        };
+    vec![
+        port("P2", PortKind::Com0com, Some("A2"), Some("COM12"), None),
+        port("COM10", PortKind::Serial, None, None, None),
+        port(
+            "p1",
+            PortKind::Com0com,
+            Some("A1"),
+            Some("COM11"),
+            Some("Standard 56000 bps Modem"),
+        ),
+        port("COM3", PortKind::Serial, None, None, None),
+    ]
+}
 
 type Hosts = Arc<Mutex<BTreeMap<String, MemoryHost>>>;
 
@@ -148,6 +174,8 @@ impl Fixture {
             hub: hub.clone(),
             log: Arc::new(move |level, text| log_to.lock().unwrap().push((level, text))),
             limits,
+            mode: ServiceMode::Console,
+            ports: Arc::new(test_ports()),
         });
 
         let (listener, connector) = memory::listener();

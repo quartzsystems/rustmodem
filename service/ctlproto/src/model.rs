@@ -169,6 +169,8 @@ pub struct Counters {
     pub bytes_tx: u64,
     /// Data bytes from the far end to the host.
     pub bytes_rx: u64,
+    /// AT command lines parsed on the line.
+    pub at_commands: u64,
 }
 
 /// A call in progress.
@@ -287,6 +289,10 @@ pub struct LineInfo {
     /// Why the serial port is not open, if it should be and is not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorInfo>,
+    /// What the host side of the line's port is bound to, for example
+    /// `Standard 56000 bps Modem on COM4`. Absent when unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<String>,
 }
 
 /// How serious a log line is.
@@ -334,6 +340,158 @@ pub struct LogEvent {
     pub source: String,
     /// The text.
     pub text: String,
+}
+
+/// How the service is being run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceMode {
+    /// Under the Windows service control manager.
+    Service,
+    /// In the foreground, with `--console`.
+    Console,
+    /// The demo service: memory ports and scripted calls.
+    Demo,
+}
+
+impl ServiceMode {
+    /// Every mode.
+    pub const ALL: [ServiceMode; 3] = [
+        ServiceMode::Service,
+        ServiceMode::Console,
+        ServiceMode::Demo,
+    ];
+
+    /// The mode as the control API spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ServiceMode::Service => "service",
+            ServiceMode::Console => "console",
+            ServiceMode::Demo => "demo",
+        }
+    }
+}
+
+/// What kind of serial port a port is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PortKind {
+    /// One end of a com0com null-modem pair.
+    Com0com,
+    /// A serial port with a `COM` name.
+    Serial,
+    /// Anything else the system lists as a serial device.
+    Other,
+}
+
+impl PortKind {
+    /// Every kind.
+    pub const ALL: [PortKind; 3] = [PortKind::Com0com, PortKind::Serial, PortKind::Other];
+
+    /// The kind as the control API spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PortKind::Com0com => "com0com",
+            PortKind::Serial => "serial",
+            PortKind::Other => "other",
+        }
+    }
+}
+
+/// One serial port of the machine the service runs on.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortInfo {
+    /// The name the port is opened by, for example `CNCB0`.
+    pub name: String,
+    /// What kind of port it is.
+    pub kind: PortKind,
+    /// For com0com, the name of the other end of the pair.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pair: Option<String>,
+    /// The COM name applications see for the host side of the port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_port: Option<String>,
+    /// The friendly name of a modem device attached to the host port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modem: Option<String>,
+    /// The id of the line that uses the port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u16>,
+}
+
+impl PortInfo {
+    /// What the host side of the port is bound to, as `LineInfo.binding`
+    /// says it: the modem and the host port, the host port alone, or
+    /// nothing when neither is known.
+    pub fn binding(&self) -> Option<String> {
+        match (&self.modem, &self.host_port) {
+            (Some(modem), Some(port)) => Some(format!("{modem} on {port}")),
+            (None, Some(port)) => Some(port.clone()),
+            (Some(modem), None) => Some(modem.clone()),
+            (None, None) => None,
+        }
+    }
+}
+
+/// How many connected calls negotiated one rate and carrier.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectTally {
+    /// The line rate in bit/s; 0 means not known.
+    pub rate: u32,
+    /// The carrier (modulation) name, if the engine reported one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carrier: Option<String>,
+    /// How many calls.
+    pub count: u64,
+}
+
+/// How many connected calls negotiated something with a name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tally {
+    /// The name.
+    pub name: String,
+    /// How many calls.
+    pub count: u64,
+}
+
+/// The statistics of the service since it started. The call counts are of
+/// calls offered to lines.
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Stats {
+    /// Calls a line answered.
+    pub calls_answered: u64,
+    /// Calls whose modems connected.
+    pub calls_connected: u64,
+    /// Calls answered that never connected.
+    pub calls_failed: u64,
+    /// Calls turned away: the line was busy, or no line was ready.
+    pub calls_rejected: u64,
+    /// Calls the caller gave up on while the line was ringing.
+    pub calls_abandoned: u64,
+    /// The mean length of the connected calls that have ended, in
+    /// milliseconds.
+    pub avg_call_ms: u64,
+    /// The length of the longest connected call that has ended, in
+    /// milliseconds.
+    pub longest_call_ms: u64,
+    /// The most lines that had a call at one time.
+    pub peak_lines_in_use: u32,
+    /// How many lines have a call now.
+    pub lines_in_use: u32,
+    /// Data bytes from the far ends to the hosts.
+    pub bytes_in: u64,
+    /// Data bytes from the hosts to the far ends.
+    pub bytes_out: u64,
+    /// AT command lines parsed.
+    pub at_commands: u64,
+    /// The connected calls by what they negotiated, largest count first.
+    pub connects: Vec<ConnectTally>,
+    /// Retrains and rate renegotiations.
+    pub retrains: u64,
+    /// The connected calls by error-control protocol, largest count first.
+    pub protocols: Vec<Tally>,
+    /// The connected calls by data compression, largest count first.
+    pub compressions: Vec<Tally>,
 }
 
 /// A call starting or connecting on a line.

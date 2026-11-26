@@ -21,6 +21,7 @@ mod handle;
 mod line;
 mod pool;
 mod router;
+mod stats;
 
 use config::LineConfig;
 use ctlproto::Event;

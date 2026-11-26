@@ -28,6 +28,8 @@ pub(crate) struct ActiveCall {
     pub connect: Option<ConnectInfo>,
     pub bytes_tx: u64,
     pub bytes_rx: u64,
+    /// The line went off hook to answer the call.
+    pub answered: bool,
 }
 
 impl ActiveCall {
@@ -88,6 +90,9 @@ pub(crate) struct Line {
     pub published: Option<LineState>,
     pub counters: Counters,
     pub call: Option<ActiveCall>,
+    /// What the host side of the port is bound to, when the pool has been
+    /// told.
+    pub binding: Option<String>,
 }
 
 impl Line {
@@ -109,6 +114,7 @@ impl Line {
             published: None,
             counters: Counters::default(),
             call: None,
+            binding: None,
         }
     }
 
@@ -153,6 +159,7 @@ impl Line {
             counters: self.counters,
             call: self.call.as_ref().map(ActiveCall::info),
             error: self.error.as_ref().map(ErrorInfo::from),
+            binding: self.binding.clone(),
         }
     }
 }

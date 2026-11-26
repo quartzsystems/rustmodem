@@ -4,7 +4,10 @@
 
 //! What the client prints: tables by default, for people.
 
-use ctlproto::{CallInfo, CallRecord, ErrorInfo, Event, LineInfo, LogLevel, ServiceInfo};
+use ctlproto::{
+    CallInfo, CallRecord, ErrorInfo, Event, LineInfo, LogEvent, LogLevel, PortInfo, ServiceInfo,
+    Stats,
+};
 
 /// A column of a table.
 struct Column {
@@ -127,7 +130,119 @@ pub fn info(info: &ServiceInfo) -> String {
         ("Lines", info.lines.to_string()),
         ("Started", format!("{} UTC", timestamp(info.started_ms))),
         ("Uptime", duration(info.uptime_ms)),
+        ("Mode", info.mode.as_str().to_string()),
+        (
+            "Config loaded",
+            format!("{} UTC", timestamp(info.config_loaded_ms)),
+        ),
     ])
+}
+
+/// `stats`
+pub fn stats(stats: &Stats) -> String {
+    let mut out = fields(&[
+        ("Calls answered", stats.calls_answered.to_string()),
+        ("Connected", stats.calls_connected.to_string()),
+        ("Failed to connect", stats.calls_failed.to_string()),
+        ("Rejected", stats.calls_rejected.to_string()),
+        ("Abandoned", stats.calls_abandoned.to_string()),
+        ("Average call", duration(stats.avg_call_ms)),
+        ("Longest call", duration(stats.longest_call_ms)),
+        (
+            "Lines in use",
+            format!("{} (peak {})", stats.lines_in_use, stats.peak_lines_in_use),
+        ),
+        ("Bytes in", stats.bytes_in.to_string()),
+        ("Bytes out", stats.bytes_out.to_string()),
+        ("AT commands", stats.at_commands.to_string()),
+        ("Retrains", stats.retrains.to_string()),
+    ]);
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    for connect in &stats.connects {
+        rows.push(vec![
+            "connect".to_string(),
+            match &connect.carrier {
+                Some(carrier) => format!("{}, {carrier}", rate(connect.rate)),
+                None => rate(connect.rate),
+            },
+            connect.count.to_string(),
+        ]);
+    }
+    let named = [
+        ("protocol", &stats.protocols),
+        ("compression", &stats.compressions),
+    ];
+    for (what, tallies) in named {
+        for tally in tallies {
+            rows.push(vec![
+                what.to_string(),
+                tally.name.clone(),
+                tally.count.to_string(),
+            ]);
+        }
+    }
+    if !rows.is_empty() {
+        out.push('\n');
+        out.push_str(&table(
+            &[left("NEGOTIATED"), left("WHAT"), right("CALLS")],
+            &rows,
+        ));
+    }
+    out
+}
+
+/// `ports`
+pub fn ports(ports: &[PortInfo]) -> String {
+    let columns = [
+        left("PORT"),
+        left("KIND"),
+        left("PAIR"),
+        left("HOST PORT"),
+        left("MODEM"),
+        right("LINE"),
+    ];
+    let or_dash = |value: &Option<String>| value.clone().unwrap_or_else(|| "-".to_string());
+    let rows: Vec<Vec<String>> = ports
+        .iter()
+        .map(|port| {
+            vec![
+                port.name.clone(),
+                port.kind.as_str().to_string(),
+                or_dash(&port.pair),
+                or_dash(&port.host_port),
+                or_dash(&port.modem),
+                port.line
+                    .map_or_else(|| "-".to_string(), |id| id.to_string()),
+            ]
+        })
+        .collect();
+    table(&columns, &rows)
+}
+
+fn level(level: LogLevel) -> &'static str {
+    match level {
+        LogLevel::Error => "ERROR",
+        LogLevel::Warning => "WARN",
+        LogLevel::Info => "INFO",
+        LogLevel::Debug => "DEBUG",
+    }
+}
+
+/// `log`: the lines as the service log has them, the time in UTC.
+pub fn log(lines: &[LogEvent]) -> String {
+    lines
+        .iter()
+        .map(|line| {
+            format!(
+                "{}.{:03} {:<5} [{}] {}\n",
+                timestamp(line.time_ms),
+                line.time_ms % 1000,
+                level(line.level),
+                line.source,
+                line.text
+            )
+        })
+        .collect()
 }
 
 /// `lines`
@@ -195,7 +310,11 @@ pub fn line(line: &LineInfo) -> String {
         ("Connects", line.counters.connects.to_string()),
         ("Bytes sent", line.counters.bytes_tx.to_string()),
         ("Bytes received", line.counters.bytes_rx.to_string()),
+        ("AT commands", line.counters.at_commands.to_string()),
     ];
+    if let Some(binding) = &line.binding {
+        pairs.push(("Binding", binding.clone()));
+    }
     if let Some(call) = &line.call {
         pairs.push(("Call", call_summary(call)));
     }
@@ -273,15 +392,7 @@ pub fn event(event: &Event) -> String {
             record.bytes_tx,
             record.bytes_rx
         ),
-        Event::Log(log) => {
-            let level = match log.level {
-                LogLevel::Error => "ERROR",
-                LogLevel::Warning => "WARN",
-                LogLevel::Info => "INFO",
-                LogLevel::Debug => "DEBUG",
-            };
-            format!("log {level} [{}] {}", log.source, log.text)
-        }
+        Event::Log(log) => format!("log {} [{}] {}", level(log.level), log.source, log.text),
     }
 }
 

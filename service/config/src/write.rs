@@ -5,9 +5,9 @@
 //! Write-back: changes made to the document in place, so comments and
 //! ordering outside the change survive.
 
-use toml_edit::{ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value, value};
+use toml_edit::{ArrayOfTables, DocumentMut, InlineTable, Item, Table, TableLike, Value, value};
 
-use crate::schema::{Config, LineConfig, LineEdit, UnknownCommand};
+use crate::schema::{Config, LineConfig, LineEdit, SettingsEdit, UnknownCommand};
 
 /// Renders a configuration as a new document with no comments.
 pub(crate) fn render(config: &Config) -> String {
@@ -89,6 +89,48 @@ pub(crate) fn edit_line(document: &mut DocumentMut, index: usize, edit: &LineEdi
     }
     if let Some(setting) = edit.unknown_command {
         set(table, "unknown_command", setting.as_str().into());
+    }
+}
+
+/// Changes the keys `edit` names in `[service]` and `[control]`. A table
+/// the document does not have yet is added.
+pub(crate) fn edit_settings(document: &mut DocumentMut, edit: &SettingsEdit) {
+    if edit.log_level.is_some() || edit.log_dir.is_some() {
+        let service = section(document, "service");
+        if let Some(level) = edit.log_level {
+            set_item(
+                service.entry("log_level").or_insert(Item::None),
+                level.as_str().into(),
+            );
+        }
+        if let Some(directory) = &edit.log_dir {
+            set_item(
+                service.entry("log_dir").or_insert(Item::None),
+                directory.as_str().into(),
+            );
+        }
+    }
+    if let Some(pipe) = &edit.pipe {
+        let control = section(document, "control");
+        set_item(
+            control.entry("pipe").or_insert(Item::None),
+            pipe.as_str().into(),
+        );
+    }
+}
+
+/// A top-level table, written either as `[name]` or inline, created as
+/// `[name]` if the document has none.
+fn section<'d>(document: &'d mut DocumentMut, name: &str) -> &'d mut dyn TableLike {
+    let item = document.entry(name).or_insert(Item::Table(Table::new()));
+    if item.as_table_like().is_none() {
+        // A document that passed validation has a table here or nothing;
+        // this only replaces what validation would have refused.
+        *item = Item::Table(Table::new());
+    }
+    match item.as_table_like_mut() {
+        Some(table) => table,
+        None => unreachable!("the item was just made a table"),
     }
 }
 

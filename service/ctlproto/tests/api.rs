@@ -10,9 +10,11 @@ use std::path::Path;
 
 use ctlproto::doc::{self, FieldDoc};
 use ctlproto::{
-    Call, CallEvent, CallInfo, CallList, CallRecord, ClientFrame, ConnectInfo, Counters, Direction,
-    Done, EVENT_NAMES, EndReason, ErrorInfo, Event, Hello, LineInfo, LineList, LineState, LogEvent,
-    LogLevel, PROTOCOL, Reloaded, RequestFrame, ServerFrame, ServiceInfo, Subscription,
+    Call, CallEvent, CallInfo, CallList, CallRecord, ClientFrame, ConnectInfo, ConnectTally,
+    ControlChange, ControlSettings, Counters, Direction, Done, EVENT_NAMES, EndReason, ErrorInfo,
+    Event, Hello, LineInfo, LineList, LineState, LogEvent, LogLevel, LogTail, PROTOCOL, PortInfo,
+    PortKind, PortList, Reloaded, RequestFrame, ServerFrame, ServiceChange, ServiceInfo,
+    ServiceMode, ServiceSettings, Settings, SettingsResult, Stats, Subscription, Tally,
     decode_client, decode_server, encode,
 };
 use serde::Serialize;
@@ -102,9 +104,50 @@ fn line_info(full: bool) -> LineInfo {
             connects: 3,
             bytes_tx: 4,
             bytes_rx: 5,
+            at_commands: 6,
         },
         call: full.then(|| call_info(full)),
         error: full.then(error_info),
+        binding: full.then(|| "Standard 56000 bps Modem on COM4".to_string()),
+    }
+}
+
+fn settings() -> Settings {
+    Settings {
+        service: ServiceSettings {
+            log_level: LogLevel::Info,
+            log_dir: String::new(),
+        },
+        control: ControlSettings {
+            pipe: "rustmodem-control".to_string(),
+        },
+        path: r"C:\ProgramData\Quartz Systems\rustmodem\rustmodem.toml".to_string(),
+    }
+}
+
+fn connect_tally(full: bool) -> ConnectTally {
+    ConnectTally {
+        rate: 2400,
+        carrier: full.then(|| "V.22bis".to_string()),
+        count: 3,
+    }
+}
+
+fn tally() -> Tally {
+    Tally {
+        name: "LAPM".to_string(),
+        count: 2,
+    }
+}
+
+fn port_info(full: bool) -> PortInfo {
+    PortInfo {
+        name: "CNCB0".to_string(),
+        kind: PortKind::Com0com,
+        pair: full.then(|| "CNCA0".to_string()),
+        host_port: full.then(|| "COM4".to_string()),
+        modem: full.then(|| "Standard 56000 bps Modem".to_string()),
+        line: full.then_some(1),
     }
 }
 
@@ -133,7 +176,38 @@ fn sample(name: &str, full: bool) -> Value {
             lines: 2,
             started_ms: 1_800_000_000_000,
             uptime_ms: 60_000,
+            config_loaded_ms: 1_800_000_000_000,
+            mode: ServiceMode::Service,
         }),
+        "Settings" => to_value(&settings()),
+        "ServiceSettings" => to_value(&settings().service),
+        "ControlSettings" => to_value(&settings().control),
+        "ServiceChange" => to_value(&ServiceChange {
+            log_level: full.then_some(LogLevel::Debug),
+            log_dir: full.then(String::new),
+        }),
+        "ControlChange" => to_value(&ControlChange {
+            pipe: full.then(|| "rustmodem-control".to_string()),
+        }),
+        "SettingsResult" => to_value(&SettingsResult {
+            restart_required: true,
+            config: settings(),
+        }),
+        "Stats" => to_value(&Stats {
+            connects: vec![connect_tally(full)],
+            protocols: vec![tally()],
+            compressions: vec![tally()],
+            ..Stats::default()
+        }),
+        "ConnectTally" => to_value(&connect_tally(full)),
+        "Tally" => to_value(&tally()),
+        "LogTail" => to_value(&LogTail {
+            lines: vec![log_event()],
+        }),
+        "PortList" => to_value(&PortList {
+            ports: vec![port_info(full)],
+        }),
+        "PortInfo" => to_value(&port_info(full)),
         "LineList" => to_value(&LineList {
             lines: vec![line_info(full)],
         }),
@@ -386,7 +460,42 @@ fn every_enumeration_value_is_documented_and_nothing_else() {
     check("Direction", &Direction::ALL, Direction::as_str);
     check("EndReason", &EndReason::ALL, EndReason::as_str);
     check("LogLevel", &LogLevel::ALL, LogLevel::as_str);
-    assert_eq!(doc::ENUMS.len(), 4);
+    check("ServiceMode", &ServiceMode::ALL, ServiceMode::as_str);
+    check("PortKind", &PortKind::ALL, PortKind::as_str);
+    assert_eq!(doc::ENUMS.len(), 6);
+}
+
+#[test]
+fn a_port_binding_names_the_modem_and_the_host_port() {
+    assert_eq!(
+        port_info(true).binding().as_deref(),
+        Some("Standard 56000 bps Modem on COM4")
+    );
+    let mut port = port_info(true);
+    port.modem = None;
+    assert_eq!(port.binding().as_deref(), Some("COM4"));
+    assert_eq!(port_info(false).binding(), None);
+}
+
+/// The compatibility rule of the documentation: a client reads a result or
+/// an event that has fields it does not know.
+#[test]
+fn a_client_ignores_fields_it_does_not_know() {
+    let mut line = to_value(&line_info(true));
+    line["added_in_a_later_version"] = json!({"x": 1});
+    line["counters"]["new_counter"] = json!(7);
+    assert_eq!(
+        serde_json::from_value::<LineInfo>(line).unwrap(),
+        line_info(true)
+    );
+    let mut stats = sample("Stats", true);
+    stats["later"] = json!(1);
+    assert!(serde_json::from_value::<Stats>(stats).is_ok());
+    let event = r#"{"event":"line.state","data":{"id":1,"backend":"com0com","port":"P1","enabled":true,"state":"idle","auto_answer_rings":0,"unknown_command":"ok","counters":{"calls_out":0,"calls_in":0,"connects":0,"bytes_tx":0,"bytes_rx":0,"at_commands":0},"later":true},"also_later":1}"#;
+    assert!(matches!(
+        decode_server(event).unwrap(),
+        ServerFrame::Event(Event::LineState(_))
+    ));
 }
 
 // --------------------------------------------------------------------------

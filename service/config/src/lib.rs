@@ -27,7 +27,7 @@ use toml_edit::DocumentMut;
 
 pub use schema::{
     Backend, Config, ControlConfig, LineConfig, LineEdit, LogLevel, MAX_LINE_ID, SerialConfig,
-    ServiceConfig, UnknownCommand,
+    ServiceConfig, SettingsEdit, UnknownCommand,
 };
 
 /// The directory under `%ProgramData%` that holds rustmodem's files.
@@ -138,6 +138,14 @@ impl ConfigFile {
         };
         let mut document = self.document.clone();
         write::remove_line(&mut document, index);
+        self.commit(document)
+    }
+
+    /// Changes the keys of `[service]` and `[control]` that `edit` names.
+    /// Fails, changing nothing, if the result would not be valid.
+    pub fn edit_settings(&mut self, edit: &SettingsEdit) -> Result<(), Vec<Message>> {
+        let mut document = self.document.clone();
+        write::edit_settings(&mut document, edit);
         self.commit(document)
     }
 

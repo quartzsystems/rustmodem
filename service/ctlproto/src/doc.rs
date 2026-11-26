@@ -108,7 +108,7 @@ pub const METHODS: &[MethodDoc] = &[
     MethodDoc {
         name: "service.info",
         summary: "Reports the service's version, protocol, pipe name, configuration path, \
-                  number of lines and how long it has been running.",
+                  number of lines, how long it has been running and how it is being run.",
         params: &[],
         result: "ServiceInfo",
         errors: &[],
@@ -273,6 +273,60 @@ pub const METHODS: &[MethodDoc] = &[
         example: "{}",
     },
     MethodDoc {
+        name: "config.get",
+        summary: "Reports the settings that are not lines, as the configuration file has \
+                  them, and the path of the file.",
+        params: &[],
+        result: "Settings",
+        errors: &[],
+        example: "{}",
+    },
+    MethodDoc {
+        name: "config.set",
+        summary: "Changes the settings that are given and leaves the others alone. The \
+                  change is checked and written to the configuration file, comments kept. \
+                  Changes to `[service]` and `[control]` take effect when the service next \
+                  starts; the result says whether a restart is needed.",
+        params: &[
+            optional("service", "ServiceChange", "Changes to `[service]`."),
+            optional("control", "ControlChange", "Changes to `[control]`."),
+        ],
+        result: "SettingsResult",
+        errors: &["RMD0011", "RMD0014"],
+        example: r#"{"service":{"log_level":"debug","log_dir":""},"control":{"pipe":"rustmodem-control"}}"#,
+    },
+    MethodDoc {
+        name: "stats.get",
+        summary: "Reports the statistics of the service since it started.",
+        params: &[],
+        result: "Stats",
+        errors: &[],
+        example: "{}",
+    },
+    MethodDoc {
+        name: "log.tail",
+        summary: "Returns the last lines the service logged, oldest first. The service \
+                  remembers the last 2000.",
+        params: &[optional(
+            "last",
+            "integer",
+            "Return at most this many, the most recent. Default all.",
+        )],
+        result: "LogTail",
+        errors: &[],
+        example: r#"{"last":100}"#,
+    },
+    MethodDoc {
+        name: "ports.list",
+        summary: "Lists the serial ports of the machine the service runs on, in name \
+                  order, with the com0com pairs, the modem devices attached to them and \
+                  the lines that use them.",
+        params: &[],
+        result: "PortList",
+        errors: &[],
+        example: "{}",
+    },
+    MethodDoc {
         name: "subscribe",
         summary: "Starts sending the client events. The result is everything the client \
                   is now subscribed to.",
@@ -381,6 +435,12 @@ pub const TYPES: &[TypeDoc] = &[
                 "integer",
                 "How long the service has been running, in milliseconds.",
             ),
+            required(
+                "config_loaded_ms",
+                "integer",
+                "When the configuration was last loaded, in milliseconds since the Unix epoch.",
+            ),
+            required("mode", "ServiceMode", "How the service is being run."),
         ],
     },
     TypeDoc {
@@ -423,6 +483,12 @@ pub const TYPES: &[TypeDoc] = &[
                 "Error",
                 "Why the serial port is not open, if it should be and is not.",
             ),
+            optional(
+                "binding",
+                "string",
+                "What the host side of the line's port is bound to, for example \
+                 `Standard 56000 bps Modem on COM4`. Absent when unknown.",
+            ),
         ],
     },
     TypeDoc {
@@ -441,6 +507,11 @@ pub const TYPES: &[TypeDoc] = &[
                 "bytes_rx",
                 "integer",
                 "Data bytes from the far end to the host.",
+            ),
+            required(
+                "at_commands",
+                "integer",
+                "AT command lines parsed on the line.",
             ),
         ],
     },
@@ -534,7 +605,8 @@ pub const TYPES: &[TypeDoc] = &[
     },
     TypeDoc {
         name: "ConnectInfo",
-        text: "What is known about a connection. Phase 0 reports rate 0 and nothing else.",
+        text: "What is known about a connection. The null engine reports rate 0 and \
+               nothing else.",
         fields: &[
             required(
                 "rate",
@@ -589,6 +661,213 @@ pub const TYPES: &[TypeDoc] = &[
             "integer",
             "How many lines the configuration has.",
         )],
+    },
+    TypeDoc {
+        name: "Settings",
+        text: "The result of `config.get`: the settings that are not lines.",
+        fields: &[
+            required("service", "ServiceSettings", "The `[service]` settings."),
+            required("control", "ControlSettings", "The `[control]` settings."),
+            required("path", "string", "The path of the configuration file."),
+        ],
+    },
+    TypeDoc {
+        name: "ServiceSettings",
+        text: "The `[service]` settings.",
+        fields: &[
+            required("log_level", "LogLevel", "How much the service logs."),
+            required(
+                "log_dir",
+                "string",
+                "The log directory. Empty means the default one.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "ControlSettings",
+        text: "The `[control]` settings.",
+        fields: &[required("pipe", "string", "The control pipe name.")],
+    },
+    TypeDoc {
+        name: "ServiceChange",
+        text: "The `service` part of `config.set`: the keys of `[service]` to change.",
+        fields: &[
+            optional("log_level", "LogLevel", "A new log level."),
+            optional(
+                "log_dir",
+                "string",
+                "A new log directory. An empty string means the default one.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "ControlChange",
+        text: "The `control` part of `config.set`: the keys of `[control]` to change.",
+        fields: &[optional("pipe", "string", "A new control pipe name.")],
+    },
+    TypeDoc {
+        name: "SettingsResult",
+        text: "The result of `config.set`.",
+        fields: &[
+            required(
+                "restart_required",
+                "boolean",
+                "Whether the service must be restarted for the change to take effect.",
+            ),
+            required(
+                "config",
+                "Settings",
+                "The settings as the configuration file now has them.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "Stats",
+        text: "The result of `stats.get`: the statistics of the service since it started. \
+               The call counts are of calls offered to lines.",
+        fields: &[
+            required("calls_answered", "integer", "Calls a line answered."),
+            required(
+                "calls_connected",
+                "integer",
+                "Calls whose modems connected.",
+            ),
+            required(
+                "calls_failed",
+                "integer",
+                "Calls answered that never connected.",
+            ),
+            required(
+                "calls_rejected",
+                "integer",
+                "Calls turned away: the line was busy, or no line was ready.",
+            ),
+            required(
+                "calls_abandoned",
+                "integer",
+                "Calls the caller gave up on while the line was ringing.",
+            ),
+            required(
+                "avg_call_ms",
+                "integer",
+                "The mean length of the connected calls that have ended, in milliseconds.",
+            ),
+            required(
+                "longest_call_ms",
+                "integer",
+                "The length of the longest connected call that has ended, in milliseconds.",
+            ),
+            required(
+                "peak_lines_in_use",
+                "integer",
+                "The most lines that had a call at one time.",
+            ),
+            required("lines_in_use", "integer", "How many lines have a call now."),
+            required(
+                "bytes_in",
+                "integer",
+                "Data bytes from the far ends to the hosts.",
+            ),
+            required(
+                "bytes_out",
+                "integer",
+                "Data bytes from the hosts to the far ends.",
+            ),
+            required("at_commands", "integer", "AT command lines parsed."),
+            required(
+                "connects",
+                "array of ConnectTally",
+                "The connected calls by what they negotiated, largest count first.",
+            ),
+            required(
+                "retrains",
+                "integer",
+                "Retrains and rate renegotiations. Zero until an engine reports them.",
+            ),
+            required(
+                "protocols",
+                "array of Tally",
+                "The connected calls by error-control protocol, largest count first. Empty \
+                 until an engine reports one.",
+            ),
+            required(
+                "compressions",
+                "array of Tally",
+                "The connected calls by data compression, largest count first. Empty until \
+                 an engine reports one.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "ConnectTally",
+        text: "How many connected calls negotiated one rate and carrier.",
+        fields: &[
+            required(
+                "rate",
+                "integer",
+                "The line rate in bit/s; 0 means not known.",
+            ),
+            optional(
+                "carrier",
+                "string",
+                "The carrier (modulation) name, if the engine reported one.",
+            ),
+            required("count", "integer", "How many calls."),
+        ],
+    },
+    TypeDoc {
+        name: "Tally",
+        text: "How many connected calls negotiated something with a name.",
+        fields: &[
+            required("name", "string", "The name."),
+            required("count", "integer", "How many calls."),
+        ],
+    },
+    TypeDoc {
+        name: "LogTail",
+        text: "The result of `log.tail`.",
+        fields: &[required(
+            "lines",
+            "array of LogEvent",
+            "The lines, oldest first.",
+        )],
+    },
+    TypeDoc {
+        name: "PortList",
+        text: "The result of `ports.list`.",
+        fields: &[required(
+            "ports",
+            "array of PortInfo",
+            "The serial ports of the machine, in name order.",
+        )],
+    },
+    TypeDoc {
+        name: "PortInfo",
+        text: "One serial port of the machine the service runs on.",
+        fields: &[
+            required(
+                "name",
+                "string",
+                "The name the port is opened by, for example `CNCB0`.",
+            ),
+            required("kind", "PortKind", "What kind of port it is."),
+            optional(
+                "pair",
+                "string",
+                "For com0com, the name of the other end of the pair.",
+            ),
+            optional(
+                "host_port",
+                "string",
+                "The COM name applications see for the host side of the port.",
+            ),
+            optional(
+                "modem",
+                "string",
+                "The friendly name of a modem device attached to the host port.",
+            ),
+            optional("line", "integer", "The id of the line that uses the port."),
+        ],
     },
     TypeDoc {
         name: "Subscription",
@@ -672,6 +951,27 @@ pub const ENUMS: &[EnumDoc] = &[
             (
                 "debug",
                 "Detail, including every AT command line and result code.",
+            ),
+        ],
+    },
+    EnumDoc {
+        name: "ServiceMode",
+        text: "How the service is being run.",
+        values: &[
+            ("service", "Under the Windows service control manager."),
+            ("console", "In the foreground, with `--console`."),
+            ("demo", "The demo service: memory ports and scripted calls."),
+        ],
+    },
+    EnumDoc {
+        name: "PortKind",
+        text: "What kind of serial port a port is.",
+        values: &[
+            ("com0com", "One end of a com0com null-modem pair."),
+            ("serial", "A serial port with a `COM` name."),
+            (
+                "other",
+                "Anything else the system lists as a serial device.",
             ),
         ],
     },
@@ -790,6 +1090,18 @@ pub fn render() -> String {
          first; every other event reports state and is never dropped. A client that\n\
          falls further behind than that is disconnected (`RMD2006` in the service\n\
          log), and can connect again and ask for the current state."
+    );
+    let _ = writeln!(o);
+    let _ = writeln!(o, "## Compatibility");
+    let _ = writeln!(o);
+    let _ = writeln!(
+        o,
+        "The protocol number changes only when an existing message changes its\n\
+         meaning or its shape. Methods, events and optional fields may be added\n\
+         without a protocol change, and fields may be added to results and to the\n\
+         data of events. A client must ignore fields and events it does not know.\n\
+         The service refuses a parameter it does not know with `RMD2003`, so a client\n\
+         finds out at once that the service is older than it is."
     );
     let _ = writeln!(o);
     let _ = writeln!(o, "## Methods");

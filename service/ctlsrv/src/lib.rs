@@ -28,8 +28,25 @@ mod server;
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 
-pub use queue::{Hub, Limits};
+use ctlproto::PortInfo;
+
+pub use queue::{Hub, LOG_RING, Limits};
 pub use server::{LogFn, Server, ServerParts};
+
+/// Knows the serial ports of the machine. The service looks them up in
+/// Windows; the tests and the demo service give a fixed list.
+pub trait PortInventory: Send + Sync {
+    /// The ports as they are now. The `line` of each is left empty: the
+    /// server fills it in from the lines.
+    fn ports(&self) -> Vec<PortInfo>;
+}
+
+/// A fixed list of ports.
+impl PortInventory for Vec<PortInfo> {
+    fn ports(&self) -> Vec<PortInfo> {
+        self.clone()
+    }
+}
 
 /// Closes a connection from another thread, so that a reader or writer
 /// blocked on it returns. `close` must not block: the pool's thread calls
