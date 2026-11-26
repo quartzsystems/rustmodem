@@ -9,6 +9,7 @@ members = [
     "dsp/g711",
     "dsp/dspkit",
     "dsp/tones",
+    "dsp/chansim",
     # Modem: the engine trait every softmodem implements, and the null engine.
     "modem/engine",
     # DTE: what the host sees on the COM port.
@@ -107,6 +108,22 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# The signal processing is optimised in debug builds too. Its tests run
+# minutes of signal a sample at a time, and unoptimised they would take as
+# long as the calls they simulate. Overflow checks and debug assertions
+# stay on.
+[profile.dev.package.g711]
+opt-level = 3
+
+[profile.dev.package.dspkit]
+opt-level = 3
+
+[profile.dev.package.tones]
+opt-level = 3
+
+[profile.dev.package.chansim]
+opt-level = 3
 
 [profile.release]
 panic = "abort"

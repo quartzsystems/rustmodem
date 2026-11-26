@@ -1,0 +1,22 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+[package]
+name = "chansim"
+description = "A deterministic channel simulator for modem tests (pure)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+dspkit.workspace = true
+engine.workspace = true
+g711.workspace = true
+
+[dev-dependencies]
+
+[lints]
+workspace = true

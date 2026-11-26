@@ -200,8 +200,8 @@ The pure crates on Linux (CI does this; WSL works locally):
 
 ```
 cargo fmt --check
-cargo clippy -p g711 -p dspkit -p tones -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p glyph -p model --all-targets -- -D warnings
-cargo test -p g711 -p dspkit -p tones -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p glyph -p model
+cargo clippy -p g711 -p dspkit -p tones -p chansim -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p glyph -p model --all-targets -- -D warnings
+cargo test -p g711 -p dspkit -p tones -p chansim -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p glyph -p model
 cargo clippy -p ctlsrv --all-targets -- -D warnings
 cargo clippy -p svc --lib --test '*' -- -D warnings
 cargo test -p ctlsrv
