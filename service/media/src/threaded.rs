@@ -206,9 +206,9 @@ fn carry(job: Job, waker: &Waker) -> Box<dyn ModemEngine> {
         done: _,
     } = job;
 
-    // Everything the loop needs is made here, before the first tick.
-    os::size_buffers(&endpoint.socket);
-    let _ = endpoint.socket.set_read_timeout(Some(WAIT));
+    // Everything the loop needs is made here, before the first tick. The
+    // socket's buffers were sized when it was bound.
+    let _ = os::prepare_socket(&endpoint.socket, WAIT);
     let mut transport = UdpTransport {
         socket: &endpoint.socket,
     };
@@ -261,11 +261,13 @@ struct UdpTransport<'a> {
 
 impl Transport for UdpTransport<'_> {
     fn receive(&mut self, buffer: &mut [u8]) -> Received {
-        match self.socket.recv_from(buffer) {
-            Ok((len, SocketAddr::V4(from))) => Received::Datagram { len, from },
+        // The wait must not be the socket's read timeout: on Windows a
+        // datagram that arrives as that runs out is lost. See `os`.
+        match os::receive_within(self.socket, buffer, WAIT) {
+            Some((len, SocketAddr::V4(from))) => Received::Datagram { len, from },
             // Not IPv4, the wait ran out, or the system passed on an ICMP
             // error for something we sent: none of them is a datagram.
-            Ok(_) | Err(_) => Received::Nothing,
+            Some(_) | None => Received::Nothing,
         }
     }
 

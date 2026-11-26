@@ -356,3 +356,45 @@ fn sockets_come_from_the_even_ports_of_the_range() {
             .is_err()
     );
 }
+
+/// The wait for a datagram loses none when it runs out. On Windows a
+/// socket read timeout does: a datagram that arrives as the timeout fires
+/// goes with the receive that was cancelled. Here the waits are far
+/// shorter than the gaps between datagrams, so that every datagram is
+/// preceded by a wait that ran out, some of them at the very moment it
+/// arrives.
+#[test]
+fn a_wait_that_runs_out_loses_no_datagram() {
+    const DATAGRAMS: u16 = 400;
+    const WAIT: Duration = Duration::from_millis(2);
+    let (receiving, at) = loopback();
+    let (sending, _) = loopback();
+    media::prepare_socket(&receiving, WAIT).unwrap();
+
+    // Nothing has been sent: the wait runs out, and takes about as long
+    // as it was given.
+    let mut buffer = [0u8; 64];
+    let began = Instant::now();
+    assert_eq!(media::receive_within(&receiving, &mut buffer, WAIT), None);
+    assert!(began.elapsed() >= Duration::from_millis(1));
+    assert!(began.elapsed() < Duration::from_secs(1));
+
+    let sender = std::thread::spawn(move || {
+        for n in 0..DATAGRAMS {
+            sending.send_to(&n.to_be_bytes(), at).unwrap();
+            // A gap that drifts against the waits of the receiver.
+            std::thread::sleep(Duration::from_micros(2500 + 37 * u64::from(n % 20)));
+        }
+    });
+    let mut seen = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while seen.len() < usize::from(DATAGRAMS) && Instant::now() < deadline {
+        if let Some((len, _)) = media::receive_within(&receiving, &mut buffer, WAIT) {
+            assert_eq!(len, 2);
+            seen.push(u16::from_be_bytes([buffer[0], buffer[1]]));
+        }
+    }
+    sender.join().unwrap();
+    let expected: Vec<u16> = (0..DATAGRAMS).collect();
+    assert_eq!(seen, expected, "every datagram, once, in order");
+}

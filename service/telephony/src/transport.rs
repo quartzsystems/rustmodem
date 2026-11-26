@@ -26,6 +26,10 @@ pub type Waker = Arc<dyn Fn() + Send + Sync>;
 /// a sender that is not answered sends again.
 const QUEUE: usize = 1024;
 
+/// How long the reading thread waits for a datagram before it looks at
+/// whether it is to stop.
+const WAIT: Duration = Duration::from_millis(250);
+
 /// How long a name stays resolved.
 const RESOLVE_FOR: Duration = Duration::from_secs(300);
 
@@ -68,8 +72,10 @@ impl UdpTransport {
             return Err(io::Error::other("the SIP socket is not IPv4"));
         };
         let reading = socket.try_clone()?;
-        // The wait ends now and then so that the thread sees it is to stop.
-        reading.set_read_timeout(Some(Duration::from_millis(250)))?;
+        // The wait ends now and then so that the thread sees it is to
+        // stop. It is not the socket's read timeout: on Windows a datagram
+        // that arrives as that runs out is lost.
+        media::prepare_socket(&reading, WAIT)?;
         let stop = Arc::new(AtomicBool::new(false));
         let (queue, inbox) = sync_channel(QUEUE);
         let reader = {
@@ -107,7 +113,7 @@ fn read(
     while !stop.load(Ordering::Relaxed) {
         // An error is the wait running out, or the system passing on an
         // ICMP error for something we sent: neither is a datagram.
-        let Ok((len, from)) = socket.recv_from(&mut buffer) else {
+        let Some((len, from)) = media::receive_within(socket, &mut buffer, WAIT) else {
             continue;
         };
         match queue.try_send((from, buffer[..len].to_vec())) {

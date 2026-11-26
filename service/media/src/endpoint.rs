@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rtp::FRAME;
 
+use crate::os;
+
 /// The media endpoint of a call over RTP: its socket, bound when the
 /// session description was built, and what was negotiated.
 #[derive(Debug)]
@@ -127,9 +129,9 @@ impl RtpPorts {
         }
     }
 
-    /// Binds a socket to the next even port that is free, at `address`.
-    /// Each port is tried once; the error is that of the last when none
-    /// is free.
+    /// Binds a socket to the next even port that is free, at `address`,
+    /// with buffers that hold more than a second of packets. Each port is
+    /// tried once; the error is that of the last when none is free.
     pub fn bind(&mut self, address: Ipv4Addr) -> io::Result<UdpSocket> {
         let span = u32::from(self.last.saturating_sub(self.first)) + 1;
         let mut failure = io::Error::new(
@@ -144,6 +146,10 @@ impl RtpPorts {
             }
             match UdpSocket::bind(SocketAddrV4::new(address, port)) {
                 Ok(socket) => {
+                    // The buffers are sized now, while the socket is
+                    // empty: the far end may send before the call's media
+                    // thread has started.
+                    os::size_buffers(&socket);
                     self.next = if port >= self.last {
                         self.first
                     } else {

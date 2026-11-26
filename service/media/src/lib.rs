@@ -32,8 +32,11 @@
 //! system call, only when the engine reports an event or the call stalls,
 //! not for data: the pool looks for data every turn of its own clock.
 //!
-//! `unsafe` is used in [`os`] only: for the two things `std` cannot do,
-//! the size of a socket's buffers and the thread's scheduling class.
+//! `unsafe` is used in `os` only, for the three things `std` cannot do:
+//! the size of a socket's buffers, a wait for a datagram that loses none,
+//! and the thread's scheduling class. [`prepare_socket`] and
+//! [`receive_within`] are that wait, for anything else in the service that
+//! reads a UDP socket with a time limit.
 
 mod endpoint;
 mod os;
@@ -41,5 +44,6 @@ mod threaded;
 mod ticker;
 
 pub use endpoint::{Negotiation, RtpEndpoint, RtpParams, RtpPorts};
+pub use os::{prepare_socket, receive_within};
 pub use threaded::{ThreadedRunner, Waker};
 pub use ticker::{Clock, MAX_DATAGRAM, Received, Ticker, Transport, histogram_bucket};
