@@ -3,5 +3,71 @@
 // root directory of this project.
 
 //! The lines, the line state machine and the null switch.
+//!
+//! A [`Pool`] owns the lines. Each line joins one AT interpreter, one modem
+//! engine and one serial port. The pool is driven from one thread: every
+//! call to [`Pool::service`] reads the serial ports, steps the
+//! interpreters, carries out what they ask for, ticks the engines of lines
+//! in a call, moves data and applies the signals.
+//!
+//! The pool reads no clock and opens no files. The caller gives it the time
+//! ([`Now`]), the serial ports ([`SerialFactory`]), somewhere to send
+//! events ([`EventSink`]) and somewhere to append call records, so the
+//! whole of it runs in a test with memory ports and a clock the test moves.
 
 #![forbid(unsafe_code)]
+
+mod handle;
+mod line;
+mod pool;
+mod router;
+
+use config::LineConfig;
+use ctlproto::Event;
+use engine::ModemEngine;
+use msg::Message;
+use serial::SerialBackend;
+
+pub use handle::{Command, PoolHandle, PoolInbox, command_channel};
+pub use pool::{Pool, PoolParts};
+pub use router::{
+    CallRouter, LineDirectory, LineId, NullSwitch, RING_OFF_MS, RING_ON_MS, RouterEvent,
+    UNOBTAINABLE_DELAY_MS,
+};
+
+/// How often the engines are ticked, in milliseconds.
+/// BLOCKED(phase2): ticks move from this timer to RTP packet arrival on
+/// media threads.
+pub const TICK_MS: u64 = 20;
+
+/// How long the pool waits before trying again to open a serial port that
+/// would not open, in milliseconds.
+pub const PORT_RETRY_MS: u64 = 5000;
+
+/// How many ended calls the pool remembers.
+pub const CALL_HISTORY: usize = 1000;
+
+/// The time, as the caller of the pool tells it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Now {
+    /// Milliseconds on a clock that only goes forward. Timers use this.
+    pub mono_ms: u64,
+    /// Milliseconds since the Unix epoch. Records and log lines use this.
+    pub unix_ms: u64,
+}
+
+/// Where the pool sends what happens: state changes, calls and log lines.
+/// `publish` must not block; the pool calls it from its one thread.
+pub trait EventSink: Send {
+    /// Takes one event.
+    fn publish(&mut self, event: Event);
+}
+
+/// Opens the serial port of a line.
+pub trait SerialFactory: Send {
+    /// Opens the port the line's configuration names.
+    fn open(&mut self, line: &LineConfig) -> Result<Box<dyn SerialBackend>, Message>;
+}
+
+/// Makes the modem engine of a line.
+pub type EngineFactory = Box<dyn FnMut(LineId) -> Box<dyn ModemEngine> + Send>;

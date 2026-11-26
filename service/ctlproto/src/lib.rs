@@ -5,3 +5,10 @@
 //! The control API message types.
 
 #![forbid(unsafe_code)]
+
+mod model;
+
+pub use model::{
+    CallEvent, CallInfo, CallRecord, ConnectInfo, Counters, Direction, EndReason, ErrorInfo, Event,
+    LineInfo, LineState, LogEvent, LogLevel,
+};
