@@ -88,7 +88,7 @@ pub fn error(id: &str, args: &[&str]) -> ErrorInfo {
 /// A service with `lines` lines that has been up for `uptime_s` seconds.
 pub fn service(mode: ServiceMode, lines: u32, uptime_s: u64) -> ServiceInfo {
     ServiceInfo {
-        version: "0.0.2".to_string(),
+        version: "0.0.3".to_string(),
         protocol: PROTOCOL,
         pipe: "rustmodem-control".to_string(),
         config_path: r"C:\ProgramData\Quartz Systems\rustmodem\rustmodem.toml".to_string(),

@@ -65,15 +65,22 @@ No `crates/` directory: a folder per category at the root, one crate per
 subfolder, package names equal to folder names.
 
 ```
-modem/engine        ModemEngine trait, events, NullEngine
+modem/engine        ModemEngine trait, events, NullEngine, EchoEngine
 dte/at              Hayes interpreter (pure)
 dte/serial          SerialBackend trait, memory backend, com0com backend
+voip/sdp            session descriptions, offer/answer for G.711 (pure)
+voip/rtp            RTP packets, the tick-on-receive receiver, captures (pure)
+voip/sip            SIP messages, transactions, dialogs, digest, registration
+                    (pure, sans-I/O)
 service/msg         RMD message catalogue
 service/config      TOML schema, validation, write-back
 service/ctlproto    control API message types
 service/ctlsrv      control API server
 service/pipe        named pipe transport: listener and client
-service/pool        lines, line state machine, null switch, statistics
+service/pool        lines, line state machine, the media seam, null switch,
+                    statistics
+service/media       media threads: RTP sockets, the tick loop, call capture
+service/telephony   the SIP call router: trunk, registrations, hunt groups
 service/svc         rustmodem-svc.exe
 ui/model            the manager's data model (pure)
 ui/glyph            icons drawn in code; .ico and .res writers (pure)
@@ -81,12 +88,26 @@ ui/win32            safe wrappers over the Win32 controls the manager uses
 ui/manager          rustmodem-manager.exe, "RustModem Manager"
 tools/ctl           rustmodemctl.exe
 tools/demosvc       rustmodem-demosvc.exe: a pool on memory ports, scripted
+tools/sippeer       rustmodem-sippeer.exe: a scriptable SIP and RTP peer for
+                    tests (not shipped)
 tools/fuzz          cargo-fuzz targets (own lockfile, outside the workspace)
 ```
 
-Pure crates (no OS calls, must pass on Linux): `engine`, `at`, `msg`,
-`config`, `ctlproto`, `pool`, `glyph`, `model`, and the trait and memory
-backend of `serial`.
+Pure crates (no OS calls, must pass on Linux): `engine`, `at`, `sdp`, `rtp`,
+`sip`, `msg`, `config`, `ctlproto`, `pool`, `glyph`, `model`, and the trait
+and memory backend of `serial`. `media`, `telephony` and `sippeer` use
+sockets and threads and nothing of Windows that has no counterpart: they
+build and pass on Linux too, and CI runs them there.
+
+The `voip` crates and the router are sans-I/O: they are given bytes and the
+time and give back bytes, timers and events. No async runtime anywhere:
+threads and wait handles. No SIP, SDP or RTP crate: these are in-house.
+
+The media path is sample-exact, and that is the property to keep: for every
+10 ms frame a call delivers to its modem, exactly one frame is sent back,
+with no jitter buffer and no clock but the far end's. `docs/TELEPHONY.md`
+says how the service behaves on a SIP network, `docs/CAPTURE.md` how a call
+is captured and checked, and `docs/GATEWAYS.md` what to set on a gateway.
 
 ## Phases
 
@@ -101,8 +122,8 @@ backend of `serial`.
 | 6 to 8 | V.32bis, V.34, V.90 |
 | 9 | Extensions |
 
-The record of each phase is in `docs/`: `docs/PHASE0.md`, `docs/PHASE1.md`.
-Phases 0 and 1 are built.
+The record of each phase is in `docs/`: `docs/PHASE0.md`, `docs/PHASE1.md`,
+`docs/PHASE2.md`. Phases 0, 1 and 2 are built.
 
 ## Running the manager
 
@@ -117,7 +138,9 @@ cargo run -p manager -- --demo
 
 `--script frozen` gives the same lines, calls and statistics on every run,
 which is what the screenshot tests use; `--script idle` gives lines and no
-calls. Against the real service the manager is `rustmodem-manager.exe` with no
+calls; `--script sip` runs the real SIP router and media threads on the
+loopback interface, with test peers calling a hunt group of every line and
+the last line registered to one of them. Against the real service the manager is `rustmodem-manager.exe` with no
 arguments, and needs administrator rights, which it offers to get.
 
 ## Checks
@@ -137,12 +160,22 @@ cargo build --release -p svc -p ctl -p manager
 The pure crates on Linux (CI does this; WSL works locally):
 
 ```
-cargo test -p engine -p at -p serial -p msg -p config -p ctlproto -p pool -p glyph -p model
+cargo fmt --check
+cargo clippy -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p glyph -p model --all-targets -- -D warnings
+cargo test -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p glyph -p model
 ```
 
+Run that job whole before a push, not the tests alone: code that is dead on
+Linux only fails its clippy and nothing else. The list is `PURE` in
+`.github/workflows/ci.yml`.
+
 `cargo test --workspace` opens the manager's window many times over: its
-tests run it against the demo service on the desktop of whoever runs them,
-and one of them, the smoke test, takes a minute.
+tests run it against the demo service on the desktop of whoever runs them.
+Two tests take a minute each: the manager's smoke test, and the soak test
+(`service/telephony/tests/soak.rs`), which holds 24 calls over SIP and RTP
+on loopback and fails on one packet lost. `RM_SOAK_MINUTES=10` makes the
+soak ten minutes, and `RM_CAPTURE_MINUTES=10` does the same for the
+captured calls of `service/telephony/tests/peer.rs`.
 
 The screenshot tests (`ui/manager/tests/screenshots.rs`) compare the main
 window and every dialog with the goldens in `ui/manager/tests/goldens/`. The
@@ -155,7 +188,8 @@ run, look at each, and commit them. `RM_BLESS=1` writes the pictures of the
 machine at hand as goldens, `RM_SCREENSHOTS=strict` fails on a difference
 anywhere, and `RM_SCREENSHOTS=skip` takes no pictures.
 
-The fuzz target (nightly toolchain and cargo-fuzz, on Linux or WSL):
+The fuzz targets, `at_input`, `sdp_parse`, `rtp_packet` and `sip_message`
+(nightly toolchain and cargo-fuzz, on Linux or WSL):
 
 ```
 cargo +nightly fuzz run --fuzz-dir tools/fuzz at_input -- -max_total_time=600

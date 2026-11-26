@@ -40,7 +40,7 @@ exclude = ["tools/fuzz"]
 
 [workspace.package]
 # Kept equal to the VERSION file; ci/version.sh checks it.
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 license = "MIT"
 authors = ["Quartz Systems"]

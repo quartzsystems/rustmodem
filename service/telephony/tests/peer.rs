@@ -187,7 +187,10 @@ lines = [1]
 
     fn run(&mut self, time: Duration) {
         let until = Instant::now() + time;
-        self.until("the time has passed", |_| Instant::now() >= until);
+        while Instant::now() < until {
+            self.turn();
+            std::thread::sleep(Duration::from_micros(200));
+        }
     }
 
     /// The peer calls the pilot number, the host answers, and the call is
@@ -280,7 +283,15 @@ fn clean_echo(ptime: u32) {
         peer(MediaKind::Pattern, ptime, Impairments::default()),
     );
     bench.connect();
-    bench.run(Duration::from_secs(3));
+    // Three seconds, or as many minutes as `RM_CAPTURE_MINUTES` says: the
+    // ten-minute call of the phase's exit criteria is this test with 10.
+    let length = std::env::var("RM_CAPTURE_MINUTES")
+        .ok()
+        .and_then(|minutes| minutes.parse::<u64>().ok())
+        .map_or(Duration::from_secs(3), |minutes| {
+            Duration::from_secs(minutes * 60)
+        });
+    bench.run(length);
     let seen = bench.agent.report().unwrap();
     assert_eq!(bench.agent.negotiated().unwrap().ptime_ms, ptime);
     assert!(seen.echoed_frames > 200, "{seen:?}");
@@ -294,8 +305,22 @@ fn clean_echo(ptime: u32) {
     let (report, frames) = bench.finish();
     assert!(report.is_clean(), "{report:?}");
     assert_eq!((report.lost, report.resync, report.slips), (0, 0, 0));
-    assert!(report.received > 3000 / u64::from(ptime) - 10, "{report:?}");
-    assert!(frames >= 290, "{frames} frames in the WAV");
+    let packets = length.as_millis() as u64 / u64::from(ptime);
+    assert!(report.received > packets - 10, "{report:?}");
+    assert!(
+        frames >= length.as_millis() as u64 / 10 - 10,
+        "{frames} frames in the WAV"
+    );
+    println!(
+        "capture check at {ptime} ms for {} s: {} received, {} sent, lost {}, resync {}, slips {},          largest gap {} us",
+        length.as_secs(),
+        report.received,
+        report.sent,
+        report.lost,
+        report.resync,
+        report.slips,
+        report.largest_gap_us
+    );
 }
 
 #[test]

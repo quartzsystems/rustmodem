@@ -276,9 +276,13 @@ policy, which the installer creates in phase 5.
 
 Every SIP message sent and received is offered to the control API as a
 `sip.trace` event, with its direction, the other end's address and the
-time, and is logged at `debug`. `sip.trace` is sent only to a client that
-subscribed to it by name. A request that was dropped because its source is
-not trusted is not traced.
+time. `sip.trace` is sent only to a client that subscribed to it by name,
+and is not made at all while no client has: the manager's SIP trace window
+asks for it while it is open. It is not written to the log. A request that
+was dropped because its source is not trusted is not traced.
+
+A call's audio is traced by capturing it: see `docs/CAPTURE.md`. What to
+set on the gateway in front of the service is in `docs/GATEWAYS.md`.
 
 ## Configuration reference
 
