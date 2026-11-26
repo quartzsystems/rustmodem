@@ -51,6 +51,9 @@ toml_edit = "0.25.21"
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 windows = "0.62.2"
 windows-service = "0.8.1"
+# Digest authentication in voip/sip.
+md-5 = "0.11.0"
+sha2 = "0.11.2"
 # For the screenshot tests of the manager, which read their goldens.
 png = "0.18.1"
 

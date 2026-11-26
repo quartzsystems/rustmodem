@@ -225,6 +225,45 @@ impl Request {
         let start = format!("{} {} SIP/2.0", self.method, self.uri);
         build(&start, &self.headers, &self.body)
     }
+
+    /// A response to this request (section 8.2.6.2): its Via headers, its
+    /// From, its To, its Call-ID and its CSeq. `to_tag` is put on a To
+    /// that has no tag; every response but a 100 needs one.
+    pub fn response(&self, status: u16, to_tag: Option<&str>) -> Response {
+        let mut response = Response::new(status);
+        for via in self.headers.all("Via") {
+            response.headers.push("Via", via);
+        }
+        if let Some(from) = self.headers.get("From") {
+            response.headers.push("From", from);
+        }
+        if let Some(to) = self.headers.get("To") {
+            let tagged = self.headers.to().is_some_and(|to| to.tag().is_some());
+            match to_tag {
+                Some(tag) if !tagged => response.headers.push("To", format!("{to};tag={tag}")),
+                _ => response.headers.push("To", to),
+            }
+        }
+        if let Some(call_id) = self.headers.get("Call-ID") {
+            response.headers.push("Call-ID", call_id);
+        }
+        if let Some(cseq) = self.headers.get("CSeq") {
+            response.headers.push("CSeq", cseq);
+        }
+        response
+    }
+}
+
+impl From<Request> for Message {
+    fn from(request: Request) -> Message {
+        Message::Request(request)
+    }
+}
+
+impl From<Response> for Message {
+    fn from(response: Response) -> Message {
+        Message::Response(response)
+    }
 }
 
 impl Response {

@@ -133,6 +133,29 @@ impl Headers {
         self.get(name).is_some()
     }
 
+    /// Writes `via` in place of the topmost Via and leaves the ones under
+    /// it as they are. Nothing happens when there is no Via.
+    pub fn replace_top_via(&mut self, via: &Via) {
+        let Some(header) = self
+            .0
+            .iter_mut()
+            .find(|h| h.name.eq_ignore_ascii_case("Via") && !h.value.trim().is_empty())
+        else {
+            return;
+        };
+        let mut elements = split_top(&header.value, ',')
+            .into_iter()
+            .map(str::trim)
+            .filter(|element| !element.is_empty());
+        elements.next();
+        let mut value = via.to_string();
+        for element in elements {
+            value.push_str(", ");
+            value.push_str(element);
+        }
+        header.value = value;
+    }
+
     /// Every element of a header that may be given several times or as a
     /// comma-separated list (RFC 3261 section 7.3.1), in order.
     fn elements(&self, name: &str) -> Vec<&str> {
