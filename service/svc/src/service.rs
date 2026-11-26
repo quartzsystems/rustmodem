@@ -11,6 +11,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use msg::{Message, message};
+use pipe::Event;
 use windows_service::service::{
     ServiceAccess, ServiceControl, ServiceControlAccept, ServiceErrorControl, ServiceExitCode,
     ServiceInfo, ServiceStartType, ServiceState, ServiceStatus, ServiceType,
@@ -20,7 +21,6 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 use windows_service::{define_windows_service, service_dispatcher};
 
 use crate::runner::RunMode;
-use crate::win::Event;
 use crate::{SERVICE_DISPLAY_NAME, SERVICE_NAME, eventlog, runner};
 
 /// What the service says about itself in the Services console.

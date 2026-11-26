@@ -10,9 +10,10 @@
 //! thread and serves the control API on a named pipe.
 //!
 //! This crate is where the operating system is: the service control
-//! manager, the event log, the console, the named pipe and the wait on the
-//! serial ports. It is one of the two crates that may use `unsafe`; every
-//! use is a Win32 call and says why it is sound.
+//! manager, the event log, the console, the registry and the wait on the
+//! serial ports. The named pipe is in the `pipe` crate, which the demo
+//! service and the manager share. This is one of the crates that may use
+//! `unsafe`; every use is a Win32 call and says why it is sound.
 
 #![deny(unsafe_code)]
 
@@ -29,19 +30,11 @@ mod console;
 mod eventlog;
 #[cfg(windows)]
 #[allow(unsafe_code)]
-mod pipe;
-#[cfg(all(windows, test))]
-mod pipe_tests;
-#[cfg(windows)]
-#[allow(unsafe_code)]
 mod registry;
 #[cfg(windows)]
 mod runner;
 #[cfg(windows)]
 mod service;
-#[cfg(windows)]
-#[allow(unsafe_code)]
-mod win;
 
 use std::process::ExitCode;
 

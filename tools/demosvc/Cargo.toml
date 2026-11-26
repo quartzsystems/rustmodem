@@ -1,0 +1,33 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+[package]
+name = "demosvc"
+description = "The rustmodem demo service: a pool on memory ports with scripted calls"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+config.workspace = true
+ctlproto.workspace = true
+ctlsrv.workspace = true
+engine.workspace = true
+msg.workspace = true
+pipe.workspace = true
+pool.workspace = true
+serial.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "rustmodem-demosvc"
+path = "src/main.rs"

@@ -2,19 +2,16 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! The named pipe transport of the control API.
+//! The service's end of the control pipe.
 //!
-//! [`PipeListener`] is a `ctlsrv::Listener` on `\\.\pipe\<name>`. The pipe
-//! is created with a security descriptor that gives full access to SYSTEM
-//! and Administrators and nothing to anyone else, and it refuses remote
-//! clients.
+//! [`PipeListener`] is a `ctlsrv::Listener` on `\\.\pipe\<name>`. The
+//! service creates the pipe with a security descriptor that gives full
+//! access to SYSTEM and Administrators and nothing to anyone else. The pipe
+//! refuses remote clients.
 //!
 //! Every handle is opened for overlapped I/O, so that a connection can be
 //! read on one thread while it is written on another, and so that waiting
 //! for a client can be interrupted when the service stops.
-//!
-//! This lives here and not in `ctlsrv` because it needs `unsafe` for the
-//! Win32 calls, and `ctlsrv` forbids it.
 
 use std::io::{self, Read, Write};
 use std::sync::Arc;
@@ -42,7 +39,7 @@ use windows::Win32::System::Pipes::{
 };
 use windows::core::{HSTRING, w};
 
-use crate::win::{Event, wait_any};
+use crate::event::{Event, wait_any};
 
 /// The size asked for each of the pipe's buffers, in bytes.
 const BUFFER_SIZE: u32 = 64 * 1024;
@@ -53,17 +50,19 @@ pub enum PipeSecurity {
     /// SYSTEM and Administrators, with full access; nobody else. This is
     /// what the service uses.
     AdministratorsOnly,
-    /// The default security of a named pipe, which lets its creator in.
-    /// For tests, which do not run elevated.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// The default security of a named pipe, which lets in the user who
+    /// created it. For the demo service and for tests, neither of which
+    /// runs elevated.
     Creator,
 }
 
-/// One instance of the pipe: a handle that is closed when the last user of
-/// it goes.
-struct Instance {
-    handle: HANDLE,
-    closed: AtomicBool,
+/// One end of one instance of the pipe: a handle that is closed when the
+/// last user of it goes.
+pub(crate) struct Instance {
+    pub(crate) handle: HANDLE,
+    /// The handle is the service's end, which can disconnect the client.
+    pub(crate) server: bool,
+    pub(crate) closed: AtomicBool,
 }
 
 // SAFETY: a pipe handle opened for overlapped I/O may be used from several
@@ -78,9 +77,13 @@ impl Closer for Instance {
         self.closed.store(true, Ordering::SeqCst);
         // SAFETY: the handle is open for as long as this object lives.
         // Neither call blocks: disconnecting fails whatever I/O is started
-        // from now on, and cancelling ends whatever is already waiting.
+        // from now on, and cancelling ends whatever is already waiting. A
+        // client's end has nothing to disconnect; the flag above is what
+        // stops its I/O from starting again.
         unsafe {
-            let _ = DisconnectNamedPipe(self.handle);
+            if self.server {
+                let _ = DisconnectNamedPipe(self.handle);
+            }
             let _ = CancelIoEx(self.handle, None);
         }
     }
@@ -88,8 +91,8 @@ impl Closer for Instance {
 
 impl Drop for Instance {
     fn drop(&mut self) {
-        // SAFETY: the handle was returned by CreateNamedPipeW and is closed
-        // nowhere else. The reader and the writer each hold an `Arc` of
+        // SAFETY: the handle was returned by CreateNamedPipeW or, for a
+        // client, by CreateFileW, and is closed nowhere else. The reader and the writer each hold an `Arc` of
         // this object, so no I/O on the handle is outstanding by now.
         //
         // The pipe is closed without being disconnected first: what has
@@ -104,10 +107,10 @@ impl Drop for Instance {
 
 /// One direction of a connection: its own event and OVERLAPPED, so that it
 /// does not disturb the other direction.
-struct Half {
-    instance: Arc<Instance>,
-    event: Event,
-    overlapped: Box<OVERLAPPED>,
+pub(crate) struct Half {
+    pub(crate) instance: Arc<Instance>,
+    pub(crate) event: Event,
+    pub(crate) overlapped: Box<OVERLAPPED>,
 }
 
 // SAFETY: the OVERLAPPED is used only by the thread that owns this half,
@@ -411,6 +414,7 @@ impl Listener for PipeListener {
         // From here the instance closes the handle when it is dropped.
         let instance = Arc::new(Instance {
             handle,
+            server: true,
             closed: AtomicBool::new(false),
         });
         if !self.wait_for_client(handle)? {

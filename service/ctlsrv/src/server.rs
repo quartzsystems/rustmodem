@@ -8,7 +8,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use config::{
     Backend, Config, ConfigFile, ControlConfig, LineConfig, LineEdit, ServiceConfig, SettingsEdit,
@@ -27,6 +27,20 @@ use serde_json::Value;
 
 use crate::queue::{ClientQueue, Hub, Limits};
 use crate::{Connection, Halves, Listener, PortInventory};
+
+/// Tells the server the time, in milliseconds since the Unix epoch. The
+/// service gives [`system_clock`]; the demo service, for screenshots, gives
+/// one that stands still.
+pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
+
+/// The clock of the machine.
+pub fn system_clock() -> Clock {
+    Arc::new(|| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis() as u64)
+    })
+}
 
 /// Takes the server's own log lines. The source is always `CTL`.
 pub type LogFn = Arc<dyn Fn(LogLevel, String) + Send + Sync>;
@@ -54,6 +68,8 @@ pub struct ServerParts {
     /// Knows the serial ports of the machine, for `ports.list` and the
     /// lines' bindings.
     pub ports: Arc<dyn PortInventory>,
+    /// Tells the time, for `service.info`.
+    pub clock: Clock,
 }
 
 struct Shared {
@@ -70,7 +86,7 @@ struct Shared {
     /// The `[service]` and `[control]` settings the service started with.
     /// A change to them is in effect only after a restart.
     running: (ServiceConfig, ControlConfig),
-    started: Instant,
+    clock: Clock,
     started_ms: u64,
     config_loaded_ms: AtomicU64,
     next_client: AtomicU64,
@@ -97,7 +113,7 @@ impl Server {
     /// A server. Nothing is served until a transport is given to
     /// [`Server::serve`] or a connection to [`Server::handle`].
     pub fn new(parts: ServerParts) -> Server {
-        let started_ms = unix_ms();
+        let started_ms = (parts.clock)();
         let running = (
             parts.config.config().service.clone(),
             parts.config.config().control.clone(),
@@ -116,7 +132,7 @@ impl Server {
                 hub: parts.hub,
                 log: parts.log,
                 limits: parts.limits,
-                started: Instant::now(),
+                clock: parts.clock,
                 started_ms,
                 next_client: AtomicU64::new(1),
             }),
@@ -316,7 +332,7 @@ impl Server {
                     config_path: shared.config_path.display().to_string(),
                     lines,
                     started_ms: shared.started_ms,
-                    uptime_ms: shared.started.elapsed().as_millis() as u64,
+                    uptime_ms: (shared.clock)().saturating_sub(shared.started_ms),
                     config_loaded_ms: shared.config_loaded_ms.load(Ordering::Relaxed),
                     mode: shared.mode,
                 })
@@ -377,7 +393,9 @@ impl Server {
                 let lines = loaded.config().lines.len() as u32;
                 *current = loaded;
                 drop(current);
-                shared.config_loaded_ms.store(unix_ms(), Ordering::Relaxed);
+                shared
+                    .config_loaded_ms
+                    .store((shared.clock)(), Ordering::Relaxed);
                 self.refresh_bindings()?;
                 value(&Reloaded { lines })
             }
@@ -501,13 +519,6 @@ impl Server {
         };
         (self.shared.log)(level, message.to_string());
     }
-}
-
-/// Now, in milliseconds since the Unix epoch.
-fn unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis() as u64)
 }
 
 /// The key port names are ordered by: the letters, then the number after

@@ -14,7 +14,7 @@ use windows::Win32::System::Console::SetConsoleCtrlHandler;
 use windows::core::BOOL;
 
 use crate::runner::{self, RunMode};
-use crate::win::Event;
+use pipe::Event;
 
 /// Set by the console control handler to ask the service to stop.
 static STOP: OnceLock<Arc<Event>> = OnceLock::new();

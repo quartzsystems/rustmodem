@@ -15,10 +15,12 @@ members = [
     "service/config",
     "service/ctlproto",
     "service/ctlsrv",
+    "service/pipe",
     "service/pool",
     "service/svc",
-    # Tools: the command-line client.
+    # Tools: the command-line client and the demo service.
     "tools/ctl",
+    "tools/demosvc",
 ]
 # The fuzz targets build with cargo-fuzz on a nightly toolchain and keep
 # their own lockfile.
@@ -49,6 +51,7 @@ msg = { path = "service/msg" }
 config = { path = "service/config" }
 ctlproto = { path = "service/ctlproto" }
 ctlsrv = { path = "service/ctlsrv" }
+pipe = { path = "service/pipe" }
 pool = { path = "service/pool" }
 
 [workspace.lints.rust]

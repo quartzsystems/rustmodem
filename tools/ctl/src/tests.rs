@@ -127,6 +127,7 @@ impl Service {
             log: Arc::new(|_, _| {}),
             limits: Limits::default(),
             mode: ServiceMode::Console,
+            clock: ctlsrv::system_clock(),
             ports: Arc::new(vec![
                 PortInfo {
                     name: "P1".to_string(),

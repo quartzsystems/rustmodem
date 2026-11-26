@@ -178,6 +178,7 @@ impl Fixture {
             log: Arc::new(move |level, text| log_to.lock().unwrap().push((level, text))),
             limits,
             mode: ServiceMode::Console,
+            clock: ctlsrv::system_clock(),
             ports: Arc::new(test_ports()),
         });
 

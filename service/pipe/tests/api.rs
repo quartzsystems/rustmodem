@@ -2,6 +2,8 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
+#![cfg(windows)]
+
 //! The control API over a real named pipe: the same round trips the server
 //! is tested with over its in-memory transport, the hello exchange, and
 //! what the pipe itself has to get right.
@@ -23,13 +25,11 @@ use ctlproto::{
 use ctlsrv::{Hub, Limits, Listener, Server, ServerParts};
 use engine::{NullConfig, NullEngine};
 use msg::Message;
+use pipe::{Event, PipeClient as OverlappedClient, PipeListener, PipeSecurity};
 use pool::{
     EventSink, MemoryProfiles, Now, NullSwitch, Pool, PoolParts, SerialFactory, command_channel,
 };
 use serial::{MemoryHost, SerialBackend, memory_pair};
-
-use crate::pipe::{PipeListener, PipeSecurity};
-use crate::win::Event;
 
 type Hosts = Arc<Mutex<BTreeMap<String, MemoryHost>>>;
 
@@ -128,6 +128,7 @@ impl Fixture {
             log: Arc::new(move |_: LogLevel, text| log_to.lock().unwrap().push(text)),
             limits,
             mode: ServiceMode::Console,
+            clock: ctlsrv::system_clock(),
             ports: Arc::new(vec![PortInfo {
                 name: "P1".to_string(),
                 kind: PortKind::Com0com,
@@ -545,4 +546,126 @@ fn the_service_pipe_admits_only_system_and_administrators() {
             assert!(!accepting.join().unwrap().unwrap());
         }
     }
+}
+
+/// The client the manager uses: it reads on one thread while it writes on
+/// another, which a pipe opened as an ordinary file cannot do.
+#[test]
+fn a_client_reads_on_one_thread_while_it_writes_on_another() {
+    let fixture = Fixture::new(1, Limits::default());
+    let halves = OverlappedClient::connect(&fixture.pipe, Duration::from_secs(5))
+        .unwrap()
+        .split();
+    let mut writer = halves.writer;
+    let (frames, received) = std::sync::mpsc::channel();
+    let reading = std::thread::spawn(move || {
+        let mut reader = BufReader::new(halves.reader);
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if frames
+                        .send(decode_server(line.trim_end()).unwrap())
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    let mut send = |line: &str| writer.write_all(format!("{line}\n").as_bytes()).unwrap();
+    let next = || received.recv_timeout(Duration::from_secs(10)).unwrap();
+
+    send(&encode(&ClientFrame::Hello {
+        hello: Hello {
+            protocol: PROTOCOL,
+            version: "overlapped".to_string(),
+        },
+    }));
+    assert!(matches!(next(), ServerFrame::Hello { .. }));
+
+    // The reader is now waiting with nothing to read. A write must go
+    // through all the same; with an ordinary file handle it would wait for
+    // the read to end, which would be never.
+    std::thread::sleep(Duration::from_millis(100));
+    send(r#"{"id":1,"method":"subscribe"}"#);
+    assert!(matches!(next(), ServerFrame::Result { id: 1, .. }));
+    for id in 2..50 {
+        send(&format!(
+            r#"{{"id":{id},"method":"lines.disable","params":{{"id":1}}}}"#
+        ));
+        send(&format!(
+            r#"{{"id":{id},"method":"lines.enable","params":{{"id":1}}}}"#
+        ));
+    }
+    let mut answers = 0;
+    let mut events = 0;
+    while answers < 96 {
+        match next() {
+            ServerFrame::Result { .. } => answers += 1,
+            ServerFrame::Event(_) => events += 1,
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert!(events > 0, "events arrive between the answers");
+
+    // Closing from another thread ends the read that is waiting.
+    halves.closer.close();
+    reading.join().unwrap();
+    assert!(
+        writer.write_all(b"x\n").is_err(),
+        "a closed client writes nothing"
+    );
+}
+
+#[test]
+fn a_client_is_told_why_it_cannot_connect() {
+    let missing = OverlappedClient::connect(&unique_name(), Duration::ZERO)
+        .err()
+        .expect("nothing listens on that name");
+    assert_eq!(missing.kind(), ErrorKind::NotFound, "{missing}");
+
+    // The service's own pipe: this test is let in when it runs elevated,
+    // and is refused for lack of access when it does not.
+    let name = unique_name();
+    let stop = Arc::new(Event::new().unwrap());
+    let mut listener =
+        PipeListener::bind(&name, PipeSecurity::AdministratorsOnly, Arc::clone(&stop)).unwrap();
+    let accepting = std::thread::spawn(move || listener.accept().map(|c| c.is_some()));
+    match OverlappedClient::connect(&name, Duration::from_secs(1)) {
+        Ok(_client) => assert!(accepting.join().unwrap().unwrap()),
+        Err(error) => {
+            assert_eq!(error.kind(), ErrorKind::PermissionDenied, "{error}");
+            stop.set();
+            assert!(!accepting.join().unwrap().unwrap());
+        }
+    }
+}
+
+#[test]
+fn a_client_sees_the_end_of_the_stream_when_the_service_hangs_up() {
+    let fixture = Fixture::new(0, Limits::default());
+    let halves = OverlappedClient::connect(&fixture.pipe, Duration::from_secs(5))
+        .unwrap()
+        .split();
+    let mut writer = halves.writer;
+    let mut reader = BufReader::new(halves.reader);
+    // Not a hello: the service says so and closes the connection.
+    writer
+        .write_all(b"{\"id\":1,\"method\":\"lines.list\"}\n")
+        .unwrap();
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    let ServerFrame::Error { error, .. } = decode_server(line.trim_end()).unwrap() else {
+        panic!("expected an error, got {line}");
+    };
+    assert_eq!(error.msgid, "RMD2005");
+    line.clear();
+    assert_eq!(
+        reader.read_line(&mut line).unwrap(),
+        0,
+        "the end of the stream"
+    );
 }

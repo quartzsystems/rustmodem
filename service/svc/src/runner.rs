@@ -16,16 +16,15 @@ use ctlproto::{Event as ControlEvent, LogLevel, ServiceMode};
 use ctlsrv::{Hub, Limits, Listener, Server, ServerParts};
 use engine::{NullConfig, NullEngine};
 use msg::{Message, message};
+use pipe::{Event, MAX_WAIT_HANDLES, PipeListener, PipeSecurity, wait_any};
 use pool::{
     EventSink, Now, NullSwitch, Pool, PoolInbox, PoolParts, SerialFactory, TICK_MS, command_channel,
 };
 use serial::{Com0comBackend, SerialBackend};
 
 use crate::logger::{self, DEFAULT_MAX_BYTES, Logger};
-use crate::pipe::{PipeListener, PipeSecurity};
 use crate::ports::SystemPorts;
 use crate::profiles::ProfileFile;
-use crate::win::{Event, MAX_WAIT_HANDLES, wait_any};
 use crate::{VERSION, eventlog};
 
 /// The tag of the service itself in log lines.
@@ -237,6 +236,7 @@ fn start_inner(
             RunMode::Service => ServiceMode::Service,
         },
         ports: Arc::new(SystemPorts),
+        clock: ctlsrv::system_clock(),
     });
     let binding_server = server.clone();
 
