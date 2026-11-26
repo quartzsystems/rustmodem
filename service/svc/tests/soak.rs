@@ -15,6 +15,8 @@
 //! slipped on any call, the data must be whole, and every call must end
 //! cleanly when its peer hangs up.
 
+mod support;
+
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -28,9 +30,8 @@ use msg::Message;
 use pool::{EventSink, MemoryProfiles, Now, Pool, PoolParts, SerialFactory, engine_for};
 use serial::{MemoryHost, SerialBackend, memory_pair};
 use sippeer::{Agent, AgentConfig, MediaKind, MediaReport, PeerEvent, loopback};
-use telephony::{
-    RouterParts, Settings, SipRouter, TelephonyHandle, UdpTransport, Unobserved, system_random,
-};
+use support::sip_socket;
+use telephony::{RouterParts, Settings, SipRouter, TelephonyHandle, Unobserved, system_random};
 
 /// How many lines, and calls.
 const LINES: u16 = 24;
@@ -254,8 +255,7 @@ fn far_end(service: SocketAddrV4, shared: &Shared) -> Vec<Outcome> {
 #[test]
 fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
     let held = soak();
-    let transport =
-        UdpTransport::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0), Arc::new(|| {})).unwrap();
+    let transport = sip_socket(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0), Arc::new(|| {})).unwrap();
     let service = transport.local();
     let config = configuration(service);
     let router = SipRouter::new(RouterParts {

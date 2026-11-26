@@ -105,6 +105,10 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).map_err(|e| one(unusable(e)))?;
     let mut config = starting_config(options);
+    // The control server and the SIP socket run on the runtime the
+    // service's do, and are made on it.
+    let runtime = svc::runtime::build().map_err(|e| one(message("RMD0003", &[&e.to_string()])))?;
+    let _on_runtime = runtime.enter();
     // The `sip` script binds its sockets first: the configuration says
     // where they are.
     let mut far_end = None;
@@ -118,13 +122,7 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
     let file = ConfigFile::from_config(&config)?;
     file.save(&config_path).map_err(one)?;
 
-    // The control server runs on the runtime the service's does.
-    let runtime = svc::runtime::build().map_err(|e| one(message("RMD0003", &[&e.to_string()])))?;
-    let mut listener = {
-        // The pipe is registered with the runtime's I/O driver.
-        let _on_runtime = runtime.enter();
-        PipeListener::bind(&options.pipe, PipeSecurity::Creator).map_err(one)?
-    };
+    let mut listener = PipeListener::bind(&options.pipe, PipeSecurity::Creator).map_err(one)?;
 
     let hub = Hub::new();
     let hosts = Hosts::default();

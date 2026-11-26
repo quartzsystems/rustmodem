@@ -8,6 +8,8 @@
 //! of the call is then read and checked as `rustmodemctl capture check`
 //! does.
 
+mod support;
+
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::BufReader;
@@ -25,9 +27,8 @@ use pool::{EventSink, MemoryProfiles, Now, Pool, PoolParts, SerialFactory, engin
 use rtp::capture::{Reader, Report, check, write_wav};
 use serial::{MemoryHost, SerialBackend, memory_pair};
 use sippeer::{Agent, AgentConfig, Impairments, MediaKind, PeerEvent, loopback};
-use telephony::{
-    RouterParts, Settings, SipRouter, TelephonyHandle, UdpTransport, Unobserved, system_random,
-};
+use support::sip_socket;
+use telephony::{RouterParts, Settings, SipRouter, TelephonyHandle, Unobserved, system_random};
 
 type Hosts = Arc<Mutex<BTreeMap<u16, MemoryHost>>>;
 
@@ -67,7 +68,7 @@ impl Bench {
     fn new(engine: &str, ptime: u32, agent: AgentConfig) -> Bench {
         let test = TESTS.fetch_add(1, Ordering::Relaxed);
         let transport =
-            UdpTransport::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0), Arc::new(|| {})).unwrap();
+            sip_socket(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0), Arc::new(|| {})).unwrap();
         let sip = transport.local();
         // A stretch of ports the tests of this program, and the other
         // test programs, do not fight over.

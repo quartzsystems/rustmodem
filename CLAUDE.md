@@ -172,10 +172,10 @@ Linux only fails its clippy and nothing else. The list is `PURE` in
 `cargo test --workspace` opens the manager's window many times over: its
 tests run it against the demo service on the desktop of whoever runs them.
 Two tests take a minute each: the manager's smoke test, and the soak test
-(`service/telephony/tests/soak.rs`), which holds 24 calls over SIP and RTP
+(`service/svc/tests/soak.rs`), which holds 24 calls over SIP and RTP
 on loopback and fails on one packet lost. `RM_SOAK_MINUTES=10` makes the
 soak ten minutes, and `RM_CAPTURE_MINUTES=10` does the same for the
-captured calls of `service/telephony/tests/peer.rs`.
+captured calls of `service/svc/tests/peer.rs`.
 
 The screenshot tests (`ui/manager/tests/screenshots.rs`) compare the main
 window and every dialog with the goldens in `ui/manager/tests/goldens/`. The

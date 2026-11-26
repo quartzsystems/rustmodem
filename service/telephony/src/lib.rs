@@ -9,9 +9,11 @@
 //! - [`SipRouter`]: the call router that takes the place of the null
 //!   switch when SIP is enabled. It accepts calls on the trunk listener
 //!   and for registered lines, places the calls the lines dial, and
-//!   registers lines to a PBX. Sans-I/O: it runs on the pool's thread and
+//!   registers lines to a PBX. Sans-I/O: it runs on the pool's task and
 //!   is given datagrams and the time.
-//! - [`UdpTransport`]: the thread that owns the SIP socket.
+//! - [`SipTransport`]: where the router's datagrams come from and go to.
+//!   The socket itself is the service's, in `service/svc`: this crate
+//!   opens none and has no runtime.
 //!
 //! `docs/TELEPHONY.md` is the reference for what the router does.
 
@@ -30,4 +32,4 @@ pub use status::{
     Direction, Observer, RegistrationState, RegistrationStatus, SipStatus, TelephonyHandle,
     Unobserved,
 };
-pub use transport::{SipTransport, UdpTransport, Waker};
+pub use transport::SipTransport;

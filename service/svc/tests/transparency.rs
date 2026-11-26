@@ -8,6 +8,8 @@
 //! through their null engines. One octet altered, dropped, doubled or
 //! slipped anywhere on the path shows as wrong data or a lost carrier.
 
+mod support;
+
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::{Arc, Mutex};
@@ -19,9 +21,9 @@ use media::ThreadedRunner;
 use msg::Message;
 use pool::{EventSink, MemoryProfiles, Now, Pool, PoolParts, SerialFactory, engine_for};
 use serial::{MemoryHost, SerialBackend, memory_pair};
-use telephony::{
-    RouterParts, Settings, SipRouter, TelephonyHandle, UdpTransport, Unobserved, system_random,
-};
+use support::sip_socket;
+use svc::sipsock::SipSocket;
+use telephony::{RouterParts, Settings, SipRouter, TelephonyHandle, Unobserved, system_random};
 
 type Hosts = Arc<Mutex<BTreeMap<u16, MemoryHost>>>;
 
@@ -57,7 +59,7 @@ struct Service {
 impl Service {
     /// `engine` is the line's engine; `outbound` is where the line's
     /// calls go.
-    fn new(transport: UdpTransport, engine: &str, outbound: Option<SocketAddrV4>) -> Service {
+    fn new(transport: SipSocket, engine: &str, outbound: Option<SocketAddrV4>) -> Service {
         let sip = transport.local();
         // A stretch of ports the two services and the other test programs
         // do not fight over.
@@ -141,8 +143,8 @@ impl Pair {
     /// `a` sends the calls its line dials to `b`. Neither has a host yet.
     fn new(engine_a: &str, engine_b: &str) -> Pair {
         let loopback = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0);
-        let transport_a = UdpTransport::bind(loopback, Arc::new(|| {})).unwrap();
-        let transport_b = UdpTransport::bind(loopback, Arc::new(|| {})).unwrap();
+        let transport_a = sip_socket(loopback, Arc::new(|| {})).unwrap();
+        let transport_b = sip_socket(loopback, Arc::new(|| {})).unwrap();
         let b_at = transport_b.local();
         let mut pair = Pair {
             a: Service::new(transport_a, engine_a, Some(b_at)),

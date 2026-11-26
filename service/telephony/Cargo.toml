@@ -22,10 +22,7 @@ sdp.workspace = true
 sip.workspace = true
 
 [dev-dependencies]
-engine.workspace = true
 proptest.workspace = true
-rtp.workspace = true
-serial.workspace = true
 sippeer.workspace = true
 
 [lints]

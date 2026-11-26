@@ -28,9 +28,9 @@ use media::{CaptureEvent, CaptureWriter, ThreadedRunner};
 use msg::{Message, Severity, message};
 use pool::{CallRouter, LineId, MediaRunner};
 use sippeer::{Agent, AgentConfig, Impairments, MediaKind, PeerEvent};
+use svc::sipsock::SipSocket;
 use telephony::{
-    Direction, Observer, RouterParts, Settings, SipRouter, TelephonyHandle, UdpTransport,
-    system_random,
+    Direction, Observer, RouterParts, Settings, SipRouter, TelephonyHandle, system_random,
 };
 
 use crate::busy::Rng;
@@ -255,10 +255,11 @@ impl Observer for Watcher {
 }
 
 /// The SIP listener, bound before the configuration is written, so that
-/// the configuration can say where it is.
-pub fn listen() -> Result<UdpTransport, Message> {
+/// the configuration can say where it is. It is bound on the runtime its
+/// task is to run on.
+pub fn listen() -> Result<SipSocket, Message> {
     let any = loopback(0);
-    UdpTransport::bind(any, Arc::new(|| {}))
+    SipSocket::bind(any, Arc::new(|| {}))
         .map_err(|error| message("RMD5002", &[&any.to_string(), &error.to_string()]))
 }
 
@@ -268,7 +269,7 @@ pub type Parts = (Box<dyn CallRouter>, Box<dyn MediaRunner>);
 /// The router on `transport` and the media runner, for a pool.
 pub fn start(
     config: &Config,
-    transport: UdpTransport,
+    transport: SipSocket,
     directory: &Path,
     hub: &Hub,
     clock: &Clock,

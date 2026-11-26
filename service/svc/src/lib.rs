@@ -4,7 +4,8 @@
 
 //! The runner of the rustmodem service: the Tokio runtime its I/O shell
 //! runs on, the task that owns the pool, the threads that own the serial
-//! ports, and the signal that stops them all.
+//! ports, the task that owns the SIP socket, and the signal that stops
+//! them all.
 //!
 //! This is the part of the service that `rustmodem-svc.exe` and the demo
 //! service share. It needs nothing of Windows, so it builds and is tested
@@ -21,3 +22,4 @@ pub mod bridge;
 pub mod pooltask;
 pub mod runtime;
 pub mod shutdown;
+pub mod sipsock;

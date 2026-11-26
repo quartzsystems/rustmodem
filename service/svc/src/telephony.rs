@@ -16,9 +16,9 @@ use ctlsrv::Hub;
 use media::{CaptureEvent, CaptureWriter, ThreadedRunner};
 use msg::{Message, message};
 use pool::{CallRouter, LineId, MediaRunner};
+use svc::sipsock::SipSocket;
 use telephony::{
-    Direction, Observer, RouterParts, Settings, SipRouter, TelephonyHandle, UdpTransport,
-    system_random,
+    Direction, Observer, RouterParts, Settings, SipRouter, TelephonyHandle, system_random,
 };
 use tokio::sync::Notify;
 
@@ -80,7 +80,8 @@ pub type Parts = (Box<dyn CallRouter>, Box<dyn MediaRunner>);
 
 /// Binds the SIP listener and makes the router and the media runner. An
 /// error is why there can be no SIP: the listener could not be bound, or
-/// a thread could not be started.
+/// a thread could not be started. This is called on the runtime, which
+/// the listener's task is started on.
 pub fn start(
     config: &Config,
     log_dir: &Path,
@@ -93,7 +94,7 @@ pub fn start(
         let wake = Arc::clone(wake);
         Arc::new(move || wake.notify_one())
     };
-    let transport = UdpTransport::bind(config.sip.listen, waker.clone())
+    let transport = SipSocket::bind(config.sip.listen, waker.clone())
         .map_err(|error| message("RMD5002", &[&listen, &error.to_string()]))?;
     let listening = message("RMD5001", &[&transport.local().to_string()]);
 

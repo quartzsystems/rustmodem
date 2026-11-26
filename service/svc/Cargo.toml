@@ -38,6 +38,13 @@ windows = { workspace = true, features = [
     "Win32_System_Threading",
 ] }
 
+[dev-dependencies]
+# The far end of the tests that run calls over real sockets.
+rtp.workspace = true
+sdp.workspace = true
+sip.workspace = true
+sippeer.workspace = true
+
 [lints]
 workspace = true
 

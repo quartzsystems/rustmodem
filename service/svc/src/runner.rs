@@ -143,6 +143,9 @@ fn start_inner(
     shutdown: &Shutdown,
 ) -> Result<Running, Vec<Message>> {
     let console = mode == RunMode::Console;
+    // What is made here is the runtime's: the pipe and the SIP socket are
+    // registered with its I/O driver, and their tasks run on it.
+    let _on_runtime = runtime.enter();
     let config_path = config_path.unwrap_or_else(config::default_path);
     let file = ConfigFile::load(&config_path)?;
     let config = file.config().clone();
@@ -182,11 +185,8 @@ fn start_inner(
         logger.message(SOURCE, problem);
     }
 
-    let listener = {
-        // The pipe is registered with the runtime's I/O driver.
-        let _on_runtime = runtime.enter();
-        PipeListener::bind(&config.control.pipe, PipeSecurity::AdministratorsOnly).map_err(fail)?
-    };
+    let listener =
+        PipeListener::bind(&config.control.pipe, PipeSecurity::AdministratorsOnly).map_err(fail)?;
 
     // What wakes the pool's task between its ticks: a serial port's
     // thread with something from its host, a media thread with something

@@ -5,7 +5,9 @@
 //! The router on a real SIP socket: its reading thread, the queue, the
 //! waker, and a peer over UDP on the loopback interface.
 
+#[path = "../../telephony/tests/common/mod.rs"]
 mod common;
+mod support;
 
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
@@ -18,9 +20,10 @@ use config::ConfigFile;
 use ctlproto::LineState;
 use pool::{CallRouter, LineDirectory, LineId, RouterEvent};
 use sippeer::Peer;
+use support::sip_socket;
+use svc::sipsock::Waker;
 use telephony::{
-    RouterParts, Settings, SipRouter, SipTransport, TelephonyHandle, UdpTransport, Unobserved,
-    Waker, system_random,
+    RouterParts, Settings, SipRouter, SipTransport, TelephonyHandle, Unobserved, system_random,
 };
 
 struct Lines(BTreeMap<LineId, LineState>);
@@ -59,8 +62,7 @@ impl Loopback {
                 wakes.fetch_add(1, Ordering::Relaxed);
             })
         };
-        let transport =
-            UdpTransport::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0), waker).unwrap();
+        let transport = sip_socket(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0), waker).unwrap();
         let router_at = SocketAddr::V4(transport.local());
 
         let text = common::CONFIG
@@ -188,8 +190,7 @@ fn the_transport_by_itself() {
             wakes,
         )
     };
-    let mut transport =
-        UdpTransport::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0), waker).unwrap();
+    let mut transport = sip_socket(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0), waker).unwrap();
     let at = transport.local();
     assert_eq!(transport.local_port(), at.port());
     assert_eq!(transport.receive(), None);
@@ -231,7 +232,7 @@ fn the_transport_by_itself() {
     );
 
     // Any address: the address is the one the system routes from.
-    let any = UdpTransport::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0), Arc::new(|| {}));
+    let any = sip_socket(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0), Arc::new(|| {}));
     let mut any = any.unwrap();
     assert_eq!(any.local_address(loopback), Ipv4Addr::LOCALHOST);
     // Dropping the transport ends its thread.
