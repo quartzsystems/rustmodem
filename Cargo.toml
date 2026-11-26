@@ -12,6 +12,7 @@ members = [
     "dte/serial",
     # VoIP: the telephone side.
     "voip/sdp",
+    "voip/rtp",
     # Service: the pool, its configuration, its messages and its control API.
     "service/msg",
     "service/config",
