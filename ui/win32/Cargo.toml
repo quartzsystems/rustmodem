@@ -44,6 +44,10 @@ glyph.workspace = true
 
 [dev-dependencies]
 glyph.workspace = true
+
+# The tests post a message of their own. Windows only, like the crate: the
+# `windows` crate does not build elsewhere with these features.
+[target."cfg(windows)".dev-dependencies]
 windows = { workspace = true, features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [lints]

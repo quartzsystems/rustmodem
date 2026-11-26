@@ -42,7 +42,7 @@ jobs:
     name: Linux (pure crates)
     runs-on: ubuntu-latest
     env:
-      PURE: -p engine -p at -p serial -p msg -p config -p ctlproto -p pool -p glyph
+      PURE: -p engine -p at -p serial -p msg -p config -p ctlproto -p pool -p glyph -p model
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain

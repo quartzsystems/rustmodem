@@ -19,6 +19,7 @@ members = [
     "service/pool",
     "service/svc",
     # UI: the manager.
+    "ui/model",
     "ui/glyph",
     "ui/win32",
     # Tools: the command-line client and the demo service.
@@ -56,6 +57,7 @@ ctlproto = { path = "service/ctlproto" }
 ctlsrv = { path = "service/ctlsrv" }
 pipe = { path = "service/pipe" }
 pool = { path = "service/pool" }
+model = { path = "ui/model" }
 glyph = { path = "ui/glyph" }
 win32 = { path = "ui/win32" }
 

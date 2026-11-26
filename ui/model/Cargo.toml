@@ -1,0 +1,22 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+[package]
+name = "model"
+description = "The data model of the rustmodem manager: everything the window knows, with no Win32"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+ctlproto.workspace = true
+
+[dev-dependencies]
+msg.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true
