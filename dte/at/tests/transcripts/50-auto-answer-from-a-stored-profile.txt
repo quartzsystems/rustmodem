@@ -1,0 +1,10 @@
+# The auto-answer setting of a stored profile is in effect from the start,
+# with no command from the host: this is how a line keeps answering after
+# the service restarts.
+@ stored S0=1
+@ ring
+< \r\nRING\r\n
+! answer
+! mode handshaking
+@ connected
+< \r\nCONNECT\r\n

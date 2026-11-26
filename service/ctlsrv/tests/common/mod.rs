@@ -24,7 +24,9 @@ use ctlsrv::memory::{self, MemoryClient, MemoryConnector, PipeReader, PipeWriter
 use ctlsrv::{Hub, Limits, Server, ServerParts};
 use engine::{NullConfig, NullEngine};
 use msg::Message;
-use pool::{EventSink, Now, NullSwitch, Pool, PoolParts, SerialFactory, command_channel};
+use pool::{
+    EventSink, MemoryProfiles, Now, NullSwitch, Pool, PoolParts, SerialFactory, command_channel,
+};
 use serde_json::Value;
 use serial::{MemoryHost, SerialBackend, memory_pair};
 
@@ -140,6 +142,7 @@ impl Fixture {
             serial: Box::new(Factory(Arc::clone(&hosts))),
             engines: Box::new(|_| Box::new(NullEngine::new(NullConfig::default()))),
             sink: Box::new(HubSink(hub.clone())),
+            profiles: Box::new(MemoryProfiles::new()),
             call_log: None,
         });
         pool.apply_config(&config);

@@ -7,17 +7,16 @@
 //! clause 5.4.
 
 use crate::interp::{AtInterpreter, State};
-use crate::profile::{FACTORY_DS, FACTORY_ES, FACTORY_MS, RANGE_DS, RANGE_ES, RANGE_MS, REGISTERS};
-use crate::{Action, HangupCause, Output, ResultCode, Trace, UnknownCommand};
+use crate::profile::{
+    FACTORY_DS, FACTORY_ES, FACTORY_MS, RANGE_DS, RANGE_ES, RANGE_MS, acceptable_parameter,
+};
+use crate::{Action, HangupCause, Output, Profile, ResultCode, Trace, UnknownCommand};
 
 /// What `I0` reports: the product code.
 const PRODUCT_CODE: &str = "rustmodem";
 
 /// What `I4` reports: the capability line.
 const CAPABILITIES: &str = "NULL MODEM,V.250,+MS,+ES,+DS";
-
-/// The longest value an extended-syntax parameter may be set to.
-const MAX_EXTENDED_VALUE: usize = 64;
 
 /// What executing one command means for the rest of the line.
 enum Next {
@@ -219,9 +218,9 @@ impl AtInterpreter {
                 }
                 None => Next::Fail,
             },
-            // V.250 clause 6.1.1: reset to the stored profile, which in
-            // phase 0 is the factory one. Any call is cleared, and the rest
-            // of the line is not processed.
+            // V.250 clause 6.1.1: reset to the stored profile, or to the
+            // factory one if nothing has been stored. Any call is cleared,
+            // and the rest of the line is not processed.
             b'Z' => {
                 if parameter(cursor, 0).is_none() {
                     return Next::Fail;
@@ -230,7 +229,7 @@ impl AtInterpreter {
                     out.push(Output::Action(Action::Hangup(HangupCause::Reset)));
                     self.go_on_hook();
                 }
-                self.reset_profile();
+                self.restore_profile();
                 self.result(ResultCode::Ok, out);
                 Next::Done
             }
@@ -369,7 +368,7 @@ impl AtInterpreter {
             // V.250 clause 6.1.2: factory defaults.
             Some(b'F') => match parameter(cursor, 0) {
                 Some(_) => {
-                    self.reset_profile();
+                    self.factory_profile();
                     Next::Continue
                 }
                 None => Next::Fail,
@@ -389,10 +388,13 @@ impl AtInterpreter {
                 }
                 None => Next::Fail,
             },
-            // BLOCKED(phase1): &W is accepted but stores nothing; stored
-            // profiles come with the manager.
+            // Store the active profile. There is one stored profile, so
+            // &W0 and &W1 write the same one.
             Some(b'W') => match parameter(cursor, 1) {
-                Some(_) => Next::Continue,
+                Some(_) => {
+                    self.store_profile(out);
+                    Next::Continue
+                }
                 None => Next::Fail,
             },
             Some(_) => self.skip_unknown(cursor),
@@ -402,34 +404,42 @@ impl AtInterpreter {
 
     /// `&V`: the current settings and registers.
     fn view(&mut self, out: &mut Vec<Output>) {
-        let p = &self.profile;
-        let settings = format!(
-            "E{} Q{} V{} X{} L{} M{} &C{} &D{} &K{}",
-            u8::from(p.echo),
-            u8::from(p.quiet),
-            u8::from(p.verbose),
-            p.x,
-            p.volume,
-            p.speaker,
-            u8::from(p.dcd_follows_carrier),
-            p.dtr_action,
-            p.flow,
-        );
-        let registers = REGISTERS
-            .iter()
-            .map(|number| {
-                let value = p.register(u32::from(*number)).unwrap_or(0);
-                format!("S{number:02}:{value:03}")
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        let ms = format!("+MS: {}", p.ms);
-        let es = format!("+ES: {}", p.es);
-        let ds = format!("+DS: {}", p.ds);
-        self.info(
-            &["ACTIVE PROFILE:", &settings, &registers, &ms, &es, &ds],
-            out,
-        );
+        /// The lines that describe one profile.
+        fn lines(p: &Profile) -> [String; 5] {
+            let settings = format!(
+                "E{} Q{} V{} X{} L{} M{} &C{} &D{} &K{}",
+                u8::from(p.echo),
+                u8::from(p.quiet),
+                u8::from(p.verbose),
+                p.x,
+                p.volume,
+                p.speaker,
+                u8::from(p.dcd_follows_carrier),
+                p.dtr_action,
+                p.flow,
+            );
+            let registers = p
+                .registers()
+                .map(|(number, value)| format!("S{number:02}:{value:03}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            [
+                settings,
+                registers,
+                format!("+MS: {}", p.ms),
+                format!("+ES: {}", p.es),
+                format!("+DS: {}", p.ds),
+            ]
+        }
+        let mut text = vec!["ACTIVE PROFILE:".to_string()];
+        text.extend(lines(&self.profile));
+        // The stored profile is shown once there is one.
+        if let Some(stored) = self.stored_profile() {
+            text.push("STORED PROFILE:".to_string());
+            text.extend(lines(stored));
+        }
+        let text: Vec<&str> = text.iter().map(String::as_str).collect();
+        self.info(&text, out);
     }
 
     /// V.250 clause 5.4: an extended-syntax command, `+<name>` followed by
@@ -477,11 +487,7 @@ impl AtInterpreter {
         }
         match form {
             Form::Set(value) => {
-                let acceptable = value.len() <= MAX_EXTENDED_VALUE
-                    && value
-                        .iter()
-                        .all(|b| b.is_ascii_alphanumeric() || matches!(*b, b',' | b'.'));
-                if !acceptable {
+                if !acceptable_parameter(value) {
                     return Next::Fail;
                 }
                 // The value is ASCII, checked just above. An empty value

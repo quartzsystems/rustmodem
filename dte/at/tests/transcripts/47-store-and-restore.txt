@@ -1,0 +1,15 @@
+# &W stores the settings and the registers, and Z returns to them: echo is
+# off again afterwards, as it was when the profile was stored.
+> ATE0S0=2S7=20X1&W\r
+< ATE0S0=2S7=20X1&W\r\r\nOK\r\n
+! store 0=2 7=20
+> ATS0=0S7=50E1\r
+< \r\nOK\r\n
+> ATS7?\r
+< ATS7?\r\r\n050\r\n\r\nOK\r\n
+> ATZ\r
+< ATZ\r\r\nOK\r\n
+! s 0=2
+! s 7=20
+> AT\r
+< \r\nOK\r\n

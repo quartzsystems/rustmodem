@@ -7,7 +7,7 @@
 
 use std::collections::VecDeque;
 
-use at::{AtConfig, AtInterpreter, Mode, ModemSignals};
+use at::{AtConfig, AtInterpreter, Mode, ModemSignals, Profile};
 use config::{LineConfig, UnknownCommand};
 use ctlproto::{CallInfo, CallRecord, ConnectInfo, Counters, Direction, EndReason, LineInfo};
 use ctlproto::{ErrorInfo, LineState};
@@ -96,8 +96,9 @@ pub(crate) struct Line {
 }
 
 impl Line {
-    pub fn new(config: LineConfig, engine: Box<dyn ModemEngine>) -> Line {
-        let interpreter = AtInterpreter::new(at_config(&config));
+    /// A line that starts from its stored profile, if it has one.
+    pub fn new(config: LineConfig, engine: Box<dyn ModemEngine>, stored: Option<Profile>) -> Line {
+        let interpreter = AtInterpreter::with_profile(at_config(&config), stored);
         Line {
             config,
             interpreter,

@@ -323,6 +323,7 @@ dependencies = [
  "msg",
  "pool",
  "serial",
+ "toml_edit",
  "windows",
  "windows-service",
 ]

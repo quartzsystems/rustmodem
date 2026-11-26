@@ -22,7 +22,9 @@ use ctlsrv::memory::{self, MemoryConnector, PipeReader, PipeWriter};
 use ctlsrv::{Hub, Limits, Server, ServerParts};
 use engine::{NullConfig, NullEngine};
 use msg::Message;
-use pool::{EventSink, Now, NullSwitch, Pool, PoolParts, SerialFactory, command_channel};
+use pool::{
+    EventSink, MemoryProfiles, Now, NullSwitch, Pool, PoolParts, SerialFactory, command_channel,
+};
 use serial::{MemoryHost, SerialBackend, memory_pair};
 
 use crate::args::{self, Options};
@@ -97,6 +99,7 @@ impl Service {
             serial: Box::new(Factory(Arc::clone(&hosts))),
             engines: Box::new(|_| Box::new(NullEngine::new(NullConfig::default()))),
             sink: Box::new(HubSink(hub.clone())),
+            profiles: Box::new(MemoryProfiles::new()),
             call_log: None,
         });
         pool.apply_config(&config);

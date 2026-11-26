@@ -24,6 +24,7 @@ use serial::{Com0comBackend, SerialBackend};
 use crate::logger::{self, DEFAULT_MAX_BYTES, Logger};
 use crate::pipe::{PipeListener, PipeSecurity};
 use crate::ports::SystemPorts;
+use crate::profiles::ProfileFile;
 use crate::win::{Event, MAX_WAIT_HANDLES, wait_any};
 use crate::{VERSION, eventlog};
 
@@ -177,6 +178,13 @@ fn start_inner(
             ))
         })?;
 
+    // What is wrong with the stored profiles does not stop the service:
+    // the lines concerned start from their factory settings.
+    let (profiles, profile_problems) = ProfileFile::open(&ProfileFile::path_beside(&config_path));
+    for problem in &profile_problems {
+        logger.message(SOURCE, problem);
+    }
+
     let listener = PipeListener::bind(
         &config.control.pipe,
         PipeSecurity::AdministratorsOnly,
@@ -192,6 +200,7 @@ fn start_inner(
             logger: logger.clone(),
             hub: hub.clone(),
         }),
+        profiles: Box::new(profiles),
         call_log: Some(Box::new(call_log)),
     });
     logger.message(

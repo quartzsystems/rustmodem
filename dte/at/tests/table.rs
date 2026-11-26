@@ -525,12 +525,21 @@ $ONLINE_COMMAND
     Row {
         row: "&W",
         script: "\
-> AT&W\\r
+> ATS0=3S7=20&W\\r
+! store 0=3 7=20
 < \\r\\nOK\\r\\n
 > AT&W0&W1\\r
+! store 0=3
+! store 0=3
 < \\r\\nOK\\r\\n
 > AT&W2\\r
 < \\r\\nERROR\\r\\n
+> ATS0=0S7=50\\r
+< \\r\\nOK\\r\\n
+> ATZ\\r
+< \\r\\nOK\\r\\n
+! s 0=3
+! s 7=20
 ",
     },
     Row {

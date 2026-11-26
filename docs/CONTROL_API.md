@@ -80,7 +80,7 @@ finds out at once that the service is older than it is.
 | [`lines.get`](#linesget) | LineInfo | Reports one line. |
 | [`lines.answer`](#linesanswer) | LineInfo | Answers the call ringing on a line, as `ATA` from the host would. |
 | [`lines.hangup`](#lineshangup) | LineInfo | Hangs up the call on a line, or turns away the call ringing on it. |
-| [`lines.reset`](#linesreset) | LineInfo | Resets a line: hangs up any call and returns the modem's settings to their defaults. |
+| [`lines.reset`](#linesreset) | LineInfo | Resets a line, as switching its modem off and on would: hangs up any call and returns the modem's settings to its stored profile, or to the factory defaults if it has none. |
 | [`lines.enable`](#linesenable) | LineInfo | Puts a line in service. |
 | [`lines.disable`](#linesdisable) | LineInfo | Takes a line out of service: any call on it is hung up and its port is released. |
 | [`lines.add`](#linesadd) | LineInfo | Adds a line. |
@@ -172,7 +172,7 @@ Errors: `RMD1001`, `RMD1004`.
 
 ### `lines.reset`
 
-Resets a line: hangs up any call and returns the modem's settings to their defaults. The result is the line afterwards.
+Resets a line, as switching its modem off and on would: hangs up any call and returns the modem's settings to its stored profile, or to the factory defaults if it has none. The result is the line afterwards.
 
 | Parameter | Type | Required | Meaning |
 |---|---|---|---|

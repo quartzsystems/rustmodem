@@ -1,0 +1,19 @@
+# With &D3, dropping DTR hangs up and resets as Z does: to the stored
+# profile, which here has &D3 and echo off.
+> ATE0&D3S0=3&W\r
+< ATE0&D3S0=3&W\r\r\nOK\r\n
+! store 0=3
+> ATS0=0E1\r
+< \r\nOK\r\n
+> ATD2\r
+< ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+@ dtr off
+! hangup dtr
+< \r\nOK\r\n
+! s 0=3
+@ dtr on
+> AT\r
+< \r\nOK\r\n

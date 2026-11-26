@@ -21,7 +21,10 @@ use crate::handle::Command;
 use crate::line::{ActiveCall, Line, at_config};
 use crate::router::{CallRouter, LineDirectory, LineId, RouterEvent};
 use crate::stats::Tallies;
-use crate::{CALL_HISTORY, EngineFactory, EventSink, Now, PORT_RETRY_MS, SerialFactory, TICK_MS};
+use crate::{
+    CALL_HISTORY, EngineFactory, EventSink, Now, PORT_RETRY_MS, ProfileStore, SerialFactory,
+    TICK_MS,
+};
 
 /// How much is read from a port or an engine at a time.
 const CHUNK: usize = 4096;
@@ -48,6 +51,8 @@ pub struct PoolParts {
     pub engines: EngineFactory,
     /// Takes the events.
     pub sink: Box<dyn EventSink>,
+    /// Keeps the lines' stored profiles.
+    pub profiles: Box<dyn ProfileStore>,
     /// Where call records are appended, one JSON object a line.
     pub call_log: Option<Box<dyn Write + Send>>,
 }
@@ -59,6 +64,7 @@ pub struct Pool {
     serial: Box<dyn SerialFactory>,
     engines: EngineFactory,
     sink: Box<dyn EventSink>,
+    profiles: Box<dyn ProfileStore>,
     call_log: Option<Box<dyn Write + Send>>,
     /// The call log failed and the failure has been reported.
     call_log_failed: bool,
@@ -95,6 +101,7 @@ impl Pool {
             serial: parts.serial,
             engines: parts.engines,
             sink: parts.sink,
+            profiles: parts.profiles,
             call_log: parts.call_log,
             call_log_failed: false,
             history: VecDeque::new(),
@@ -322,6 +329,17 @@ impl Pool {
                 self.lines[index].incoming = false;
                 self.end_call(index, reason);
                 self.router.hangup(now_ms, id);
+            }
+            Action::StoreProfile(profile) => {
+                let source = self.lines[index].source();
+                // The interpreter has the profile already; this is what
+                // makes it outlast the interpreter. The host has its OK
+                // either way, so a failure can only be logged.
+                let outcome = match self.profiles.store(id, &profile) {
+                    Ok(()) => message("RMD1014", &[&id.to_string()]),
+                    Err(problem) => problem,
+                };
+                self.log_message(&source, &outcome);
             }
         }
     }
@@ -826,8 +844,8 @@ impl Pool {
         Ok(())
     }
 
-    /// Resets a line: hangs up, and returns its modem settings to their
-    /// defaults.
+    /// Resets a line: hangs up, and returns its modem settings to its
+    /// stored profile, or to their defaults if it has none.
     pub fn reset(&mut self, id: LineId) -> Result<(), Message> {
         let index = self.index(id)?;
         let source = self.lines[index].source();
@@ -898,6 +916,11 @@ impl Pool {
             let source = self.lines[index].source();
             self.take_down(index);
             self.lines.remove(index);
+            // A line added later with the same id is another line, and
+            // does not start from what this one stored.
+            if let Err(problem) = self.profiles.remove(id) {
+                self.log_message(&source, &problem);
+            }
             self.log_message(&source, &message("RMD1011", &[&id.to_string()]));
         }
 
@@ -906,7 +929,8 @@ impl Pool {
             match self.index_of(wanted.id) {
                 None => {
                     let engine = (self.engines)(wanted.id);
-                    let mut line = Line::new(wanted.clone(), engine);
+                    let stored = self.profiles.load(wanted.id);
+                    let mut line = Line::new(wanted.clone(), engine, stored);
                     line.binding = self.binding_of(wanted);
                     let source = line.source();
                     self.lines.push(line);

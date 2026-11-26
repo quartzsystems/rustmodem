@@ -12,8 +12,9 @@
 //!
 //! The pool reads no clock and opens no files. The caller gives it the time
 //! ([`Now`]), the serial ports ([`SerialFactory`]), somewhere to send
-//! events ([`EventSink`]) and somewhere to append call records, so the
-//! whole of it runs in a test with memory ports and a clock the test moves.
+//! events ([`EventSink`]), somewhere to keep the lines' stored profiles
+//! ([`ProfileStore`]) and somewhere to append call records, so the whole
+//! of it runs in a test with memory ports and a clock the test moves.
 
 #![forbid(unsafe_code)]
 
@@ -23,12 +24,15 @@ mod pool;
 mod router;
 mod stats;
 
+use std::collections::BTreeMap;
+
 use config::LineConfig;
 use ctlproto::Event;
 use engine::ModemEngine;
 use msg::Message;
 use serial::SerialBackend;
 
+pub use at::Profile;
 pub use handle::{Command, PoolHandle, PoolInbox, command_channel};
 pub use pool::{Pool, PoolParts};
 pub use router::{
@@ -68,6 +72,47 @@ pub trait EventSink: Send {
 pub trait SerialFactory: Send {
     /// Opens the port the line's configuration names.
     fn open(&mut self, line: &LineConfig) -> Result<Box<dyn SerialBackend>, Message>;
+}
+
+/// Keeps the lines' stored profiles: what each host's `AT&W` saved. A line
+/// starts from its stored profile, so one kept where it outlasts the
+/// service is how a line's settings survive a restart.
+pub trait ProfileStore: Send {
+    /// The stored profile of a line, if it has one.
+    fn load(&mut self, line: LineId) -> Option<Profile>;
+
+    /// Keeps a line's stored profile, in place of any it had.
+    fn store(&mut self, line: LineId, profile: &Profile) -> Result<(), Message>;
+
+    /// Forgets a line's stored profile: the line has been removed.
+    fn remove(&mut self, line: LineId) -> Result<(), Message>;
+}
+
+/// Stored profiles kept in memory, for as long as the pool lives.
+#[derive(Debug, Default)]
+pub struct MemoryProfiles(BTreeMap<LineId, Profile>);
+
+impl MemoryProfiles {
+    /// No profiles.
+    pub fn new() -> MemoryProfiles {
+        MemoryProfiles::default()
+    }
+}
+
+impl ProfileStore for MemoryProfiles {
+    fn load(&mut self, line: LineId) -> Option<Profile> {
+        self.0.get(&line).cloned()
+    }
+
+    fn store(&mut self, line: LineId, profile: &Profile) -> Result<(), Message> {
+        self.0.insert(line, profile.clone());
+        Ok(())
+    }
+
+    fn remove(&mut self, line: LineId) -> Result<(), Message> {
+        self.0.remove(&line);
+        Ok(())
+    }
 }
 
 /// Makes the modem engine of a line.

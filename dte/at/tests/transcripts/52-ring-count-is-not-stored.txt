@@ -1,0 +1,11 @@
+# S1 counts the rings of a call in progress; it is not a setting, so a
+# profile stored while the line rings has it at zero.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+@ ring
+< \r\nRING\r\n
+! s 1=1
+> AT&W\r
+! store 1=0
+< \r\nOK\r\n
+! s 1=1

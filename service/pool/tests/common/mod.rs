@@ -14,7 +14,10 @@ use config::{Config, LineConfig};
 use ctlproto::{CallRecord, Event, LineState, LogEvent};
 use engine::{NullConfig, NullEngine};
 use msg::{Message, message};
-use pool::{EventSink, Now, NullSwitch, Pool, PoolParts, SerialFactory, TICK_MS};
+use pool::{
+    EventSink, LineId, Now, NullSwitch, Pool, PoolParts, Profile, ProfileStore, SerialFactory,
+    TICK_MS,
+};
 use serial::{MemoryHost, SerialBackend, memory_pair};
 
 /// The wall clock at the start of every test, in Unix milliseconds.
@@ -53,6 +56,45 @@ impl EventSink for Sink {
     }
 }
 
+/// Stored profiles the test can read back, keep from one pool to the next,
+/// and make fail.
+#[derive(Clone, Default)]
+pub struct SharedProfiles {
+    pub stored: Arc<Mutex<BTreeMap<LineId, Profile>>>,
+    pub fail: Arc<Mutex<bool>>,
+}
+
+impl SharedProfiles {
+    fn check(&self) -> Result<(), Message> {
+        if *self.fail.lock().unwrap() {
+            Err(message(
+                "RMD0025",
+                &["profiles.toml", "refused by the test"],
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl ProfileStore for SharedProfiles {
+    fn load(&mut self, line: LineId) -> Option<Profile> {
+        self.stored.lock().unwrap().get(&line).cloned()
+    }
+
+    fn store(&mut self, line: LineId, profile: &Profile) -> Result<(), Message> {
+        self.check()?;
+        self.stored.lock().unwrap().insert(line, profile.clone());
+        Ok(())
+    }
+
+    fn remove(&mut self, line: LineId) -> Result<(), Message> {
+        self.check()?;
+        self.stored.lock().unwrap().remove(&line);
+        Ok(())
+    }
+}
+
 /// A call log the test can read back.
 #[derive(Clone, Default)]
 pub struct SharedLog(pub Arc<Mutex<Vec<u8>>>);
@@ -72,6 +114,7 @@ pub struct Harness {
     pub pool: Pool,
     pub ports: Arc<Mutex<Ports>>,
     pub call_log: SharedLog,
+    pub profiles: SharedProfiles,
     events: Arc<Mutex<Vec<Event>>>,
     pub config: Config,
     pub mono_ms: u64,
@@ -102,6 +145,12 @@ impl Harness {
 
     /// A pool with the given configuration. No host has opened its port.
     pub fn with_config(config: Config, null: NullConfig) -> Harness {
+        Harness::with_profiles(config, null, SharedProfiles::default())
+    }
+
+    /// A pool with the given configuration and stored profiles. No host
+    /// has opened its port.
+    pub fn with_profiles(config: Config, null: NullConfig, profiles: SharedProfiles) -> Harness {
         let ports = Arc::new(Mutex::new(Ports::default()));
         let events = Arc::new(Mutex::new(Vec::new()));
         let call_log = SharedLog::default();
@@ -110,12 +159,14 @@ impl Harness {
             serial: Box::new(Factory(Arc::clone(&ports))),
             engines: Box::new(move |_| Box::new(NullEngine::new(null))),
             sink: Box::new(Sink(Arc::clone(&events))),
+            profiles: Box::new(profiles.clone()),
             call_log: Some(Box::new(call_log.clone())),
         });
         let mut harness = Harness {
             pool,
             ports,
             call_log,
+            profiles,
             events,
             config,
             mono_ms: 0,

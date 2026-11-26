@@ -19,6 +19,9 @@
 //!
 //! ```text
 //! @ config unknown_command=error auto_answer_rings=2    first line only
+//! @ stored E0S0=2                the modem starts with a stored profile:
+//!                                what these commands and &W would store;
+//!                                before anything is given to the modem
 //! @ elapsed 1000                 milliseconds pass (one Elapsed input)
 //! @ ring | ringend | carrierlost | busy | noanswer | nodialtone
 //! @ connected [rate [carrier [protocol [compression]]]]
@@ -30,6 +33,8 @@
 //!
 //! ```text
 //! ! dial 5551234 | answer | hangup command|dtr|abort|timeout|reset
+//! ! store 0=2 7=10               the modem asked for its profile to be
+//!                                stored, with these S-register values
 //! ! line bytes                   the modem sent these to the far end
 //! ! mode command|ringing|handshaking|online|onlinecommand
 //! ! signals dcd=1 ri=0           any of dcd, dsr, cts, ri
@@ -50,7 +55,7 @@ use std::collections::VecDeque;
 
 use at::{
     Action, AtConfig, AtInterpreter, ConnectInfo, HangupCause, Input, LineEvent, Mode, Output,
-    UnknownCommand,
+    Profile, UnknownCommand,
 };
 
 /// Runs a transcript and panics, naming it, if the modem does not follow it.
@@ -94,6 +99,9 @@ pub fn try_run(text: &str) -> Result<(), String> {
 }
 
 struct Runner {
+    config: AtConfig,
+    /// Something has been given to the modem since it was made.
+    touched: bool,
     interpreter: AtInterpreter,
     dte: Vec<u8>,
     line: Vec<u8>,
@@ -102,17 +110,25 @@ struct Runner {
 
 impl Runner {
     fn new(config: AtConfig) -> Runner {
+        Runner::with_profile(config, None)
+    }
+
+    fn with_profile(config: AtConfig, stored: Option<Profile>) -> Runner {
         let mut runner = Runner {
-            interpreter: AtInterpreter::new(config),
+            config,
+            touched: false,
+            interpreter: AtInterpreter::with_profile(config, stored),
             dte: Vec::new(),
             line: Vec::new(),
             actions: VecDeque::new(),
         };
         runner.feed(Input::Dtr(true));
+        runner.touched = false;
         runner
     }
 
     fn feed(&mut self, input: Input<'_>) {
+        self.touched = true;
         let mut out = Vec::new();
         self.interpreter.step(input, &mut out);
         if let Err(problem) = self.interpreter.check_invariants() {
@@ -177,6 +193,30 @@ impl Runner {
                 }
                 *self = Runner::new(config);
             }
+            "stored" => {
+                if self.touched {
+                    return Err(
+                        "stored must come before anything is given to the modem".to_string()
+                    );
+                }
+                let body = unescape(text.strip_prefix("stored").unwrap_or("").trim_start())?;
+                // What a modem with the same configuration stores after
+                // these commands.
+                let mut line = b"AT".to_vec();
+                line.extend_from_slice(&body);
+                line.extend_from_slice(b"&W\r");
+                let mut scratch = AtInterpreter::new(self.config);
+                let mut out = Vec::new();
+                scratch.step(Input::DteBytes(&line), &mut out);
+                let profile = out
+                    .into_iter()
+                    .find_map(|output| match output {
+                        Output::Action(Action::StoreProfile(profile)) => Some(profile),
+                        _ => None,
+                    })
+                    .ok_or("the commands did not store a profile")?;
+                *self = Runner::with_profile(self.config, Some(profile));
+            }
             "elapsed" => {
                 let ms: u32 = number(words.next().ok_or("elapsed needs milliseconds")?)?;
                 self.feed(Input::Elapsed(ms));
@@ -230,6 +270,36 @@ impl Runner {
                     _ => return Err("hangup needs a cause".to_string()),
                 };
                 self.expect_action(Action::Hangup(cause))
+            }
+            "store" => {
+                let profile = match self.actions.pop_front() {
+                    Some(Action::StoreProfile(profile)) => profile,
+                    Some(action) => {
+                        return Err(format!(
+                            "action was {action:?}, expected a profile to store"
+                        ));
+                    }
+                    None => return Err("no action, expected a profile to store".to_string()),
+                };
+                if self.interpreter.stored_profile() != Some(&profile) {
+                    return Err("the modem does not hold the profile it asked to store".to_string());
+                }
+                for word in words {
+                    let (register, value) =
+                        word.split_once('=').ok_or("store needs register=value")?;
+                    let register: u32 = number(register)?;
+                    let wanted: u8 = number(value)?;
+                    match profile.register(register) {
+                        Some(actual) if actual == wanted => {}
+                        Some(actual) => {
+                            return Err(format!(
+                                "stored S{register} is {actual}, expected {wanted}"
+                            ));
+                        }
+                        None => return Err(format!("there is no S{register}")),
+                    }
+                }
+                Ok(())
             }
             "line" => {
                 let bytes = unescape(text.strip_prefix("line").unwrap_or("").trim_start())?;

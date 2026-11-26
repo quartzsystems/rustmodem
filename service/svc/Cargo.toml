@@ -19,6 +19,7 @@ engine.workspace = true
 msg.workspace = true
 pool.workspace = true
 serial.workspace = true
+toml_edit.workspace = true
 
 [target."cfg(windows)".dependencies]
 windows-service.workspace = true

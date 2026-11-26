@@ -1,0 +1,16 @@
+# A line that has a stored profile starts from it. The stored S0 wins over
+# the configured one; &F goes back to the configured one, and Z to the
+# stored one again.
+@ config auto_answer_rings=3
+@ stored E0S0=1S7=15
+! s 0=1
+! s 7=15
+> AT\r
+< \r\nOK\r\n
+> AT&FS0?\r
+< \r\n003\r\n\r\nOK\r\n
+> ATZ\r
+< ATZ\r\r\nOK\r\n
+! s 0=1
+> AT\r
+< \r\nOK\r\n

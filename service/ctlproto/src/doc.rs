@@ -150,8 +150,9 @@ pub const METHODS: &[MethodDoc] = &[
     },
     MethodDoc {
         name: "lines.reset",
-        summary: "Resets a line: hangs up any call and returns the modem's settings to \
-                  their defaults. The result is the line afterwards.",
+        summary: "Resets a line, as switching its modem off and on would: hangs up any \
+                  call and returns the modem's settings to its stored profile, or to the \
+                  factory defaults if it has none. The result is the line afterwards.",
         params: LINE_ID,
         result: "LineInfo",
         errors: &["RMD1001"],

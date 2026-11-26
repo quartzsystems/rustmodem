@@ -21,6 +21,7 @@ mod profile;
 
 pub use engine::ConnectInfo;
 pub use interp::AtInterpreter;
+pub use profile::Profile;
 
 /// The V.24 circuits a modem drives toward its host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
@@ -95,6 +96,10 @@ pub enum Action {
     Answer,
     /// Go on hook.
     Hangup(HangupCause),
+    /// Keep this as the line's stored profile: the host gave `&W`. The
+    /// interpreter already has it; this is so that it outlasts the
+    /// interpreter.
+    StoreProfile(Profile),
 }
 
 /// What the interpreter did, for a log. Nothing depends on these.
@@ -218,7 +223,8 @@ pub enum UnknownCommand {
 pub struct AtConfig {
     /// What to answer to an unknown command.
     pub unknown_command: UnknownCommand,
-    /// The factory value of S0: rings before auto-answer, 0 for off.
+    /// The factory value of S0: rings before auto-answer, 0 for off. A
+    /// stored profile has its own S0, which wins.
     pub auto_answer_rings: u8,
 }
 

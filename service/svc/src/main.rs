@@ -19,6 +19,7 @@
 mod args;
 mod logger;
 mod ports;
+mod profiles;
 
 #[cfg(windows)]
 #[allow(unsafe_code)]

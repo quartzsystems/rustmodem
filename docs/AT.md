@@ -117,13 +117,13 @@ reports 1.
 | `S<n>?` | Print register `n` as three digits | 5.3.2 |
 | `V0`, `V1` | Numeric, verbose responses. Default `V1` | 6.2.6 |
 | `X0`..`X4` | Result code set. Default `X4` | 6.2.7 |
-| `Z`, `Z0` | Hang up if off hook, return every setting to the stored profile (in phase 0, the factory defaults), `OK`. Ends the line | 6.1.1 |
+| `Z`, `Z0` | Hang up if off hook, return every setting to the stored profile, or to the factory defaults if nothing is stored, `OK`. Ends the line | 6.1.1 |
 | `&C0`, `&C1` | DCD always on; DCD follows the carrier. Default `&C1` | 6.2.8 |
 | `&D0`..`&D3` | What a DTR drop does. See below. Default `&D2` | 6.2.9 |
-| `&F`, `&F0` | Return every setting to the factory defaults. Does not hang up; the rest of the line runs | 6.1.2 |
+| `&F`, `&F0` | Return every setting to the factory defaults. The stored profile is left as it is. Does not hang up; the rest of the line runs | 6.1.2 |
 | `&K0`, `&K3` | Flow control: none, RTS/CTS. Stored, no effect. Default `&K3`. Other values are an error | |
-| `&V` | Print the settings, the registers and the stored extended parameters | |
-| `&W`, `&W0`, `&W1` | Accepted, `OK`. Nothing is stored (`BLOCKED(phase1)`) | |
+| `&V` | Print the settings, the registers and the extended parameters of the active profile, and then of the stored profile if there is one | |
+| `&W`, `&W0`, `&W1` | Store the active profile. There is one stored profile; `&W0` and `&W1` write the same one. See "Stored profiles" | |
 | `+MS` | Modulation selection. Stored, no effect | 6.4.1 |
 | `+ES` | Error control selection. Stored, no effect | 6.5.1 |
 | `+DS` | Data compression. Stored, no effect | 6.6.1 |
@@ -205,11 +205,43 @@ With `ok`, the command is skipped and the line carries on. How much is skipped:
 A register that the interpreter does not have is treated the same way: with
 `ok`, setting it does nothing and reading it prints `000`.
 
+## Stored profiles
+
+A profile is every setting the commands above change (`E`, `Q`, `V`, `X`,
+`L`, `M`, `&C`, `&D`, `&K`, `+MS`, `+ES`, `+DS`) and every S-register.
+Each line has an active profile, which the commands change, and may have a
+stored one.
+
+- `&W` stores the active profile. The rest of the command line runs, and a
+  call in progress is not disturbed. S1 counts the rings of a call in
+  progress and is not a setting: it is stored as 0.
+- `Z` returns to the stored profile. So does a DTR drop with `&D3`, and so
+  does a reset of the line through the control API (`lines.reset`), which
+  stands for switching the modem off and on.
+- `&F` returns to the factory defaults and leaves the stored profile alone.
+  To clear what is stored, give `AT&F&W`.
+- A line starts from its stored profile. With nothing stored it starts from
+  the factory defaults, where S0 is the line's `auto_answer_rings`. A
+  stored profile has its own S0, and that one wins.
+
+The interpreter itself keeps nothing: `&W` hands the profile to the service,
+which keeps the profiles of all lines in `profiles.toml` beside the
+configuration file, one `[line.<id>]` table for each line that has stored
+one. The service reads the file when it starts and writes it whenever a
+line gives `&W` or is removed. If the file cannot be written the host still
+gets `OK`, the profile is in effect until the service stops, and the
+service log has `RMD0025`. A profile in the file with a value that no
+command could have stored is left out with `RMD0026`, and its line starts
+from the factory defaults.
+
+Removing a line from the configuration removes its stored profile. A line
+added later under the same id starts from the factory defaults.
+
 ## Registers
 
 | Register | Default | Meaning |
 |---|---|---|
-| S0 | 0 | Rings before auto-answer; 0 is off. The default comes from the line's `auto_answer_rings` |
+| S0 | 0 | Rings before auto-answer; 0 is off. The factory default comes from the line's `auto_answer_rings`; a stored profile has its own |
 | S1 | 0 | Ring count. Returns to 0 eight seconds after the last ring. A value written to it is not kept |
 | S2 | 43 | Escape character. Above 127 disables the escape |
 | S3 | 13 | Command line terminator. 0 to 127 |

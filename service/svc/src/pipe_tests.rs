@@ -23,7 +23,9 @@ use ctlproto::{
 use ctlsrv::{Hub, Limits, Listener, Server, ServerParts};
 use engine::{NullConfig, NullEngine};
 use msg::Message;
-use pool::{EventSink, Now, NullSwitch, Pool, PoolParts, SerialFactory, command_channel};
+use pool::{
+    EventSink, MemoryProfiles, Now, NullSwitch, Pool, PoolParts, SerialFactory, command_channel,
+};
 use serial::{MemoryHost, SerialBackend, memory_pair};
 
 use crate::pipe::{PipeListener, PipeSecurity};
@@ -95,6 +97,7 @@ impl Fixture {
             serial: Box::new(Factory(Arc::clone(&hosts))),
             engines: Box::new(|_| Box::new(NullEngine::new(NullConfig::default()))),
             sink: Box::new(HubSink(hub.clone())),
+            profiles: Box::new(MemoryProfiles::new()),
             call_log: None,
         });
         pool.apply_config(&config);

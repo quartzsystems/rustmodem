@@ -2,7 +2,9 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! The active profile: the settings and S-registers the commands change.
+//! A profile: the settings and S-registers the commands change. The
+//! interpreter has an active profile, and may have a stored one, which
+//! `&W` writes and `Z` returns to.
 
 /// The S-registers the interpreter has. The index into the table is the
 /// position in this list, not the register number.
@@ -27,9 +29,16 @@ pub(crate) const RANGE_MS: &str = "(V21),(0,1),(0),(0),(0),(0)";
 pub(crate) const RANGE_ES: &str = "(0-4),(0-4),(0-6)";
 pub(crate) const RANGE_DS: &str = "(0-3),(0),(512-2048),(6-250)";
 
+/// The longest value an extended-syntax parameter may be set to.
+const MAX_EXTENDED_VALUE: usize = 64;
+
 /// The settings and registers.
+///
+/// The fields are open so that the service can keep a stored profile in a
+/// file and give it back. A profile that did not come from an interpreter
+/// must pass [`Profile::check`] before one will take it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Profile {
+pub struct Profile {
     /// `E`: echo command characters.
     pub echo: bool,
     /// `Q`: suppress result codes.
@@ -48,9 +57,11 @@ pub(crate) struct Profile {
     pub dtr_action: u8,
     /// `&K`: flow control, 0 or 3. Stored only.
     pub flow: u8,
-    /// `+MS`, `+ES`, `+DS`: stored as given.
+    /// `+MS`: stored as given.
     pub ms: String,
+    /// `+ES`: stored as given.
     pub es: String,
+    /// `+DS`: stored as given.
     pub ds: String,
     registers: [u8; 10],
 }
@@ -92,6 +103,51 @@ impl Profile {
             }
             None => false,
         }
+    }
+
+    /// Every register the profile has: its number and its value.
+    pub fn registers(&self) -> impl Iterator<Item = (u8, u8)> + '_ {
+        REGISTERS.iter().copied().zip(self.registers)
+    }
+
+    /// Whether every value is one the commands could have set. On failure
+    /// the answer names what is wrong, as the commands spell it.
+    pub fn check(&self) -> Result<(), &'static str> {
+        if self.x > 4 {
+            return Err("X");
+        }
+        if self.volume > 3 {
+            return Err("L");
+        }
+        if self.speaker > 3 {
+            return Err("M");
+        }
+        if self.dtr_action > 3 {
+            return Err("&D");
+        }
+        if self.flow != 0 && self.flow != 3 {
+            return Err("&K");
+        }
+        // V.250 clause 6.2.1 to 6.2.3: S3, S4 and S5 are 0 to 127.
+        if self.s3() > 127 {
+            return Err("S3");
+        }
+        if self.s4() > 127 {
+            return Err("S4");
+        }
+        if self.s5() > 127 {
+            return Err("S5");
+        }
+        if !acceptable_parameter(self.ms.as_bytes()) {
+            return Err("+MS");
+        }
+        if !acceptable_parameter(self.es.as_bytes()) {
+            return Err("+ES");
+        }
+        if !acceptable_parameter(self.ds.as_bytes()) {
+            return Err("+DS");
+        }
+        Ok(())
     }
 
     /// S0: rings before auto-answer.
@@ -137,6 +193,15 @@ impl Profile {
     pub fn guard_ms(&self) -> u32 {
         u32::from(self.registers[9]) * 20
     }
+}
+
+/// Whether a `+MS`, `+ES` or `+DS` value is one a command line may set:
+/// letters, digits, commas and full stops, within the length limit.
+pub(crate) fn acceptable_parameter(value: &[u8]) -> bool {
+    value.len() <= MAX_EXTENDED_VALUE
+        && value
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(*b, b',' | b'.'))
 }
 
 fn index(number: u32) -> Option<usize> {

@@ -1,0 +1,23 @@
+# &W in online command mode stores the profile and leaves the call up. Z
+# then hangs up and returns to what was stored.
+> ATE0S7=40\r
+< ATE0S7=40\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+@ elapsed 1000
+> +++
+! line +++
+@ elapsed 1000
+< \r\nOK\r\n
+> ATS0=5&W\r
+! store 0=5 7=40
+< \r\nOK\r\n
+! mode onlinecommand
+> ATS0=0Z\r
+! hangup reset
+< \r\nOK\r\n
+! mode command
+! s 0=5
+! s 7=40

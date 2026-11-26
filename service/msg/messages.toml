@@ -187,6 +187,27 @@ text = "The Ctrl+C handler could not be set: &1"
 cause = "Windows refused the console control handler, so the service could not be stopped cleanly from the keyboard."
 recovery = "Run the service from an ordinary console window."
 
+[RMD0024]
+severity = "warning"
+vars = 2
+text = "Stored profiles file &1 could not be read: &2"
+cause = "The file that keeps what AT&W stored for each line is not valid TOML, or the service is not allowed to read it. Every line starts from its factory settings."
+recovery = "Correct or delete the file. It is written again the next time a host gives AT&W."
+
+[RMD0025]
+severity = "warning"
+vars = 2
+text = "Stored profiles file &1 could not be written: &2"
+cause = "The service is not allowed to write the file, or the disk is full. The profile is in effect until the service stops and is then lost."
+recovery = "Correct the permissions of the file and its directory, then give AT&W again."
+
+[RMD0026]
+severity = "warning"
+vars = 3
+text = "The stored profile of line &1 in &2 is not valid: &3"
+cause = "The profile has a value that no AT command could have stored. The line starts from its factory settings."
+recovery = "Correct or delete the profile in the file, or give AT&W on the line to store it again."
+
 [RMD0999]
 severity = "error"
 vars = 1
@@ -258,7 +279,7 @@ recovery = "No action is needed."
 severity = "info"
 vars = 1
 text = "Line &1 was reset."
-cause = "The line was reset on request. Any call on it was hung up and its modem settings returned to their defaults."
+cause = "The line was reset on request. Any call on it was hung up and its modem settings returned to its stored profile, or to the factory defaults if it has none."
 recovery = "No action is needed."
 
 [RMD1010]
@@ -288,6 +309,13 @@ vars = 1
 text = "A call record could not be written: &1"
 cause = "The service could not append to the call records file. The record is still held in memory."
 recovery = "Check the log directory for free space and correct permissions."
+
+[RMD1014]
+severity = "info"
+vars = 1
+text = "Line &1 stored its profile."
+cause = "The host gave AT&W, and the settings and registers of the line were kept as its stored profile."
+recovery = "No action is needed."
 
 # ---------------------------------------------------------------------------
 # 2000-2999: control API

@@ -43,6 +43,9 @@ enum Phase {
 pub struct AtInterpreter {
     pub(crate) config: AtConfig,
     pub(crate) profile: Profile,
+    /// The stored profile: what `&W` last wrote, or what the interpreter
+    /// was created with.
+    stored: Option<Profile>,
     pub(crate) state: State,
     phase: Phase,
     /// The command line body so far, without the prefix.
@@ -70,13 +73,34 @@ pub struct AtInterpreter {
     signals: ModemSignals,
 }
 
+/// A profile as it is stored: S1 counts the rings of a call in progress,
+/// which is not a setting, so it is stored as zero.
+fn storable(mut profile: Profile) -> Profile {
+    profile.set_s1(0);
+    profile
+}
+
 impl AtInterpreter {
-    /// A new interpreter at its factory settings, on hook, with DTR off
-    /// until an [`Input::Dtr`] says otherwise.
+    /// A new interpreter with no stored profile, at its factory settings,
+    /// on hook, with DTR off until an [`Input::Dtr`] says otherwise.
     pub fn new(config: AtConfig) -> AtInterpreter {
+        AtInterpreter::with_profile(config, None)
+    }
+
+    /// A new interpreter that starts from a stored profile, as a modem
+    /// does when it is switched on. With no stored profile, or with one
+    /// that does not pass [`Profile::check`], it starts from its factory
+    /// settings and has nothing stored.
+    pub fn with_profile(config: AtConfig, stored: Option<Profile>) -> AtInterpreter {
+        let stored = stored
+            .filter(|profile| profile.check().is_ok())
+            .map(storable);
         let mut interpreter = AtInterpreter {
             config,
-            profile: Profile::factory(config.auto_answer_rings),
+            profile: stored
+                .clone()
+                .unwrap_or_else(|| Profile::factory(config.auto_answer_rings)),
+            stored,
             state: State::OnHook,
             phase: Phase::Idle,
             line: Vec::new(),
@@ -134,13 +158,19 @@ impl AtInterpreter {
         self.profile.register(u32::from(number))
     }
 
+    /// The stored profile, if there is one.
+    pub fn stored_profile(&self) -> Option<&Profile> {
+        self.stored.as_ref()
+    }
+
     /// What is known about the current connection.
     pub fn connect_info(&self) -> Option<&ConnectInfo> {
         self.connect.as_ref()
     }
 
     /// Replaces the per-line settings. The unknown-command setting applies
-    /// from the next command; the S0 value applies from the next reset.
+    /// from the next command; the S0 value applies from the next return to
+    /// the factory settings.
     pub fn set_config(&mut self, config: AtConfig) {
         self.config = config;
     }
@@ -176,9 +206,10 @@ impl AtInterpreter {
         true
     }
 
-    /// Resets the line on behalf of the operator: hangs up any call (the
-    /// host is told `NO CARRIER`), drops any partial command line and
-    /// returns every setting to its factory value.
+    /// Resets the line on behalf of the operator, as switching a modem off
+    /// and on would: hangs up any call (the host is told `NO CARRIER`),
+    /// drops any partial command line and returns every setting to the
+    /// stored profile, or to its factory value if nothing is stored.
     pub fn operator_reset(&mut self, out: &mut Vec<Output>) {
         if self.state != State::OnHook {
             out.push(Output::Action(Action::Hangup(HangupCause::Operator)));
@@ -187,7 +218,7 @@ impl AtInterpreter {
         }
         self.drop_command_line();
         self.previous.clear();
-        self.reset_profile();
+        self.restore_profile();
         self.update_signals(out);
     }
 
@@ -448,8 +479,9 @@ impl AtInterpreter {
                     out.push(Output::Action(Action::Hangup(HangupCause::Dtr)));
                     self.go_on_hook();
                 }
+                // &D3 resets as Z does.
                 if self.profile.dtr_action == 3 {
-                    self.reset_profile();
+                    self.restore_profile();
                 }
                 if was_off_hook {
                     self.result(ResultCode::Ok, out);
@@ -559,9 +591,31 @@ impl AtInterpreter {
         self.escape_count = 0;
     }
 
-    pub(crate) fn reset_profile(&mut self) {
+    /// `&F`: every setting returns to its factory value. The stored
+    /// profile is left as it is.
+    pub(crate) fn factory_profile(&mut self) {
         self.profile = Profile::factory(self.config.auto_answer_rings);
         self.ring_idle_ms = 0;
+    }
+
+    /// `Z`: every setting returns to the stored profile, or to its factory
+    /// value if nothing is stored.
+    pub(crate) fn restore_profile(&mut self) {
+        match &self.stored {
+            Some(stored) => {
+                self.profile = stored.clone();
+                self.ring_idle_ms = 0;
+            }
+            None => self.factory_profile(),
+        }
+    }
+
+    /// `&W`: the active profile becomes the stored one, and the line is
+    /// asked to keep it.
+    pub(crate) fn store_profile(&mut self, out: &mut Vec<Output>) {
+        let stored = storable(self.profile.clone());
+        self.stored = Some(stored.clone());
+        out.push(Output::Action(Action::StoreProfile(stored)));
     }
 
     fn drop_command_line(&mut self) {

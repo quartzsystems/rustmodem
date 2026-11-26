@@ -1,0 +1,13 @@
+# &F returns every setting to its factory value and leaves the stored
+# profile alone: Z still returns to what &W stored.
+> ATS0=4S7=30&W\r
+< ATS0=4S7=30&W\r\r\nOK\r\n
+! store 0=4 7=30
+> AT&F\r
+< AT&F\r\r\nOK\r\n
+! s 0=0
+! s 7=50
+> ATZ\r
+< ATZ\r\r\nOK\r\n
+! s 0=4
+! s 7=30
