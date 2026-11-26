@@ -29,9 +29,10 @@ members = [
     "ui/glyph",
     "ui/win32",
     "ui/manager",
-    # Tools: the command-line client and the demo service.
+    # Tools: the command-line client, the demo service and the test peer.
     "tools/ctl",
     "tools/demosvc",
+    "tools/sippeer",
 ]
 # The fuzz targets build with cargo-fuzz on a nightly toolchain and keep
 # their own lockfile.
@@ -55,6 +56,8 @@ windows = "0.62.2"
 windows-service = "0.8.1"
 # The lock-free rings between the pool and the media of a call.
 rtrb = "0.4.1"
+# Random tags, branches, Call-IDs, nonces and SSRCs.
+getrandom = "0.4.3"
 # Digest authentication in voip/sip.
 md-5 = "0.11.0"
 sha2 = "0.11.2"
@@ -65,13 +68,17 @@ png = "0.18.1"
 engine = { path = "modem/engine" }
 at = { path = "dte/at" }
 serial = { path = "dte/serial" }
+sdp = { path = "voip/sdp" }
 rtp = { path = "voip/rtp" }
+sip = { path = "voip/sip" }
 msg = { path = "service/msg" }
 config = { path = "service/config" }
 ctlproto = { path = "service/ctlproto" }
 ctlsrv = { path = "service/ctlsrv" }
 pipe = { path = "service/pipe" }
 pool = { path = "service/pool" }
+media = { path = "service/media" }
+sippeer = { path = "tools/sippeer" }
 model = { path = "ui/model" }
 glyph = { path = "ui/glyph" }
 win32 = { path = "ui/win32" }

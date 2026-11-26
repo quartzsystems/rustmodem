@@ -611,3 +611,123 @@ vars = 1
 text = "&1"
 cause = "The service program ran and ended without an error."
 recovery = "No action is needed."
+
+# ---------------------------------------------------------------------------
+# 5000-5999: telephony
+# ---------------------------------------------------------------------------
+
+[RMD5001]
+severity = "info"
+vars = 1
+text = "SIP is listening on &1."
+cause = "The service opened its SIP port. It takes calls from the trusted peers and from the registrars of its lines."
+recovery = "No action is needed."
+
+[RMD5002]
+severity = "error"
+vars = 2
+text = "SIP could not listen on &1: &2"
+cause = "The address is not one of this computer's, or another program has the port. The service runs without SIP."
+recovery = "Correct sip.listen in the configuration, or stop the other program, and start the service again."
+
+[RMD5003]
+severity = "info"
+vars = 3
+text = "Line &1 is registered to &2 for &3 seconds."
+cause = "The registrar accepted the registration. Calls to the line's extension are sent to this line."
+recovery = "No action is needed."
+
+[RMD5004]
+severity = "warning"
+vars = 2
+text = "Registrar &2 did not answer the registration of line &1."
+cause = "No response came to the REGISTER request. The service tries again after 5, 10, 20 and 40 seconds and then every minute."
+recovery = "Check that the registrar is running and can be reached, and that the server in the line's register settings is right."
+
+[RMD5005]
+severity = "error"
+vars = 2
+text = "Registrar &2 refused the user name or the password of line &1."
+cause = "The registrar asked for credentials and did not accept the ones the line has, or the line has no password."
+recovery = "Correct the user, the password or the authentication user in the line's register settings."
+
+[RMD5006]
+severity = "error"
+vars = 2
+text = "Registrar &2 asked line &1 for authentication that rustmodem does not have."
+cause = "The registrar offered no Digest challenge with MD5 or SHA-256 and qop auth."
+recovery = "Set the registrar to use Digest authentication with MD5 or SHA-256 for this extension."
+
+[RMD5007]
+severity = "warning"
+vars = 3
+text = "Registrar &2 answered the registration of line &1 with &3."
+cause = "The registrar refused the registration. The service tries again after 5, 10, 20 and 40 seconds and then every minute."
+recovery = "Look the status up in the registrar's documentation, and check the extension there and the line's register settings."
+
+[RMD5008]
+severity = "error"
+vars = 2
+text = "The address of &2 could not be found for line &1."
+cause = "The name did not resolve to an IPv4 address. The service tries again every minute."
+recovery = "Correct the server in the line's register settings, or the name in DNS."
+
+[RMD5009]
+severity = "info"
+vars = 2
+text = "Line &1 is no longer registered to &2."
+cause = "The registration was removed: the service is stopping, or the line's register settings were changed or removed."
+recovery = "No action is needed."
+
+[RMD5010]
+severity = "warning"
+vars = 2
+text = "A SIP request from &1 was dropped: the address is not a trusted peer. &2 dropped since the service started."
+cause = "Requests are taken only from the addresses in sip.trusted_peers and, for a registered line, from the line's registrar."
+recovery = "If the address is a gateway or a PBX of yours, add it to sip.trusted_peers. Otherwise no action is needed."
+
+[RMD5011]
+severity = "info"
+vars = 4
+text = "A call from &1 to &2 was turned away with &3 &4."
+cause = "No route or hunt group has the number, every line it could go to is busy or not ready, or the caller offered no G.711 audio."
+recovery = "If the call should have been taken, check the routes, the hunt groups and the state of their lines."
+
+[RMD5012]
+severity = "error"
+vars = 1
+text = "No RTP port in &1 is free."
+cause = "Every even port of media.rtp_ports is in use, by calls or by other programs. The call was turned away."
+recovery = "Widen media.rtp_ports, or stop the program that has its ports."
+
+[RMD5013]
+severity = "warning"
+vars = 1
+text = "The far end did not acknowledge the answer of line &1."
+cause = "No ACK came for the 200 OK in 32 seconds. The call was ended with BYE."
+recovery = "Check that the far end can reach this computer's SIP port, and that sip.address is an address it can route to."
+
+[RMD5014]
+severity = "error"
+vars = 2
+text = "Line &1 could not dial: the address of &2 could not be found."
+cause = "The name of the registrar or of sip.outbound_peer did not resolve to an IPv4 address."
+recovery = "Correct the name in the configuration, or in DNS."
+
+# ---------------------------------------------------------------------------
+# 6000-6999: media
+# ---------------------------------------------------------------------------
+
+[RMD6001]
+severity = "warning"
+vars = 1
+text = "The media of the call on line &1 stopped arriving."
+cause = "Nothing was received from the far end for media.rtp_timeout_s seconds. The call was cleared."
+recovery = "If it happens during calls that should go on, check the network between the far end and this computer."
+
+[RMD6002]
+severity = "error"
+vars = 1
+text = "The media of the call on line &1 could not be started."
+cause = "The call connected and its media could not be carried. The call was ended."
+recovery = "Look at the service log for earlier messages. If there are none, report the problem to Quartz Systems."

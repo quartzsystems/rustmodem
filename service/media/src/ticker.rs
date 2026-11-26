@@ -18,7 +18,7 @@ use engine::ModemEngine;
 use pool::{MediaEvent, MediaPort, MediaShared, MediaStats};
 use rtp::{FRAME, HEADER_LEN, RtpPacket, RtpReceiver, RtpSender, Verdict};
 
-use crate::endpoint::RtpParams;
+use crate::endpoint::{Negotiation, RtpParams};
 
 /// The longest datagram a call's socket reads. An RTP packet of G.711 is
 /// 252 octets at most.
@@ -98,6 +98,8 @@ pub struct Ticker {
     applied: u64,
     remote: SocketAddrV4,
     frames_per_packet: usize,
+    /// The far end has the call on hold.
+    held: bool,
     /// A frame of silence in the call's codec: what stands in for a frame
     /// that was lost, and what is received before anything is.
     fill: [u8; FRAME],
@@ -136,12 +138,18 @@ impl Ticker {
         timestamp: u32,
     ) -> Ticker {
         let applied = params.raw();
-        let (remote, payload_type, frames_per_packet) = RtpParams::unpack(applied);
+        let Negotiation {
+            remote,
+            payload_type,
+            frames: frames_per_packet,
+            held,
+        } = RtpParams::unpack(applied);
         Ticker {
             params,
             applied,
             remote,
             frames_per_packet,
+            held,
             fill: [silence(payload_type); FRAME],
             receiver: RtpReceiver::new(payload_type),
             sender: RtpSender::new(payload_type, ssrc, sequence, timestamp),
@@ -169,16 +177,27 @@ impl Ticker {
     }
 
     /// Takes a renegotiation, if the router has made one.
-    fn apply_params(&mut self) {
+    fn apply_params(&mut self, now_us: u64) {
         let raw = self.params.raw();
         if raw == self.applied {
             return;
         }
         self.applied = raw;
-        let (remote, payload_type, frames_per_packet) = RtpParams::unpack(raw);
-        self.remote = remote;
-        self.frames_per_packet = frames_per_packet;
+        let negotiation = RtpParams::unpack(raw);
+        let payload_type = negotiation.payload_type;
+        self.remote = negotiation.remote;
+        self.frames_per_packet = negotiation.frames;
         self.fill = [silence(payload_type); FRAME];
+        if negotiation.held != self.held {
+            // Going on hold and coming off it both end the stream that
+            // was: the local timer is the clock again until the far end's
+            // packets come, and the wait for them starts afresh.
+            self.held = negotiation.held;
+            self.synced = false;
+            self.receiver.forget_stream();
+            self.next_free_us = now_us + self.frames_per_packet as u64 * FRAME_US;
+            self.heard_us = now_us;
+        }
         self.receiver.set_payload_type(payload_type);
         self.sender.set_payload_type(payload_type);
     }
@@ -199,7 +218,7 @@ impl Ticker {
             return false;
         }
         let now = clock.now_us();
-        self.apply_params();
+        self.apply_params(now);
 
         if let Received::Datagram { len, from } = received {
             if from != self.remote {
@@ -254,7 +273,8 @@ impl Ticker {
         port.feed(engine);
         let mut wake = port.drain(engine);
 
-        if now.saturating_sub(self.heard_us) > self.timeout_us {
+        // A far end that has the call on hold is silent by agreement.
+        if !self.held && now.saturating_sub(self.heard_us) > self.timeout_us {
             self.stalled = true;
             port.report(MediaEvent::Stalled);
             wake = true;
@@ -283,8 +303,9 @@ impl Ticker {
             if let Some((head, _)) = self.packet.split_first_chunk_mut::<HEADER_LEN>() {
                 header.write(head);
             }
-            // A far end on hold has told us to send nowhere.
-            if !self.remote.ip().is_unspecified() {
+            // A far end that has the call on hold is not listening, and
+            // one that gave no address has nowhere to be sent to.
+            if !self.held && !self.remote.ip().is_unspecified() {
                 transport.send(&self.packet[..HEADER_LEN + len], self.remote);
             }
             self.filled = 0;
@@ -318,10 +339,10 @@ impl Ticker {
     pub fn stats(&self) -> MediaStats {
         let received = self.receiver.stats();
         let sent = self.sender.stats();
-        let (_, payload_type, frames_per_packet) = RtpParams::unpack(self.applied);
+        let negotiation = RtpParams::unpack(self.applied);
         MediaStats {
-            payload_type,
-            ptime_ms: (frames_per_packet as u64 * FRAME_US / 1000) as u32,
+            payload_type: negotiation.payload_type,
+            ptime_ms: (negotiation.frames as u64 * FRAME_US / 1000) as u32,
             remote: Some(self.remote),
             rx_packets: received.packets,
             rx_octets: received.octets,

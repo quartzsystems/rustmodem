@@ -35,20 +35,36 @@ pub struct RtpEndpoint {
 
 /// What a call's media thread has to know of the negotiation, in one
 /// atomic word so that the router can change it under a running call: the
-/// far end's address and port, the payload type and the frames in a packet.
+/// far end's address and port, the payload type, the frames in a packet,
+/// and whether the far end has the call on hold.
 #[derive(Debug)]
 pub struct RtpParams(AtomicU64);
 
+/// The negotiation, read from the word of an [`RtpParams`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Negotiation {
+    /// Where the far end receives.
+    pub remote: SocketAddrV4,
+    pub payload_type: u8,
+    /// The frames of [`FRAME`] octets in a packet: one to three.
+    pub frames: usize,
+    /// The far end is not sending and is not to be sent to. The call's
+    /// engine is ticked from the local timer meanwhile, on silence.
+    pub held: bool,
+}
+
 impl RtpParams {
-    /// `ptime_ms` is 10, 20 or 30.
+    /// `ptime_ms` is 10, 20 or 30. The call is not on hold.
     pub fn new(remote: SocketAddrV4, payload_type: u8, ptime_ms: u32) -> RtpParams {
-        RtpParams(AtomicU64::new(pack(remote, payload_type, ptime_ms)))
+        RtpParams(AtomicU64::new(pack(remote, payload_type, ptime_ms, false)))
     }
 
-    /// Changes all three at once.
-    pub fn set(&self, remote: SocketAddrV4, payload_type: u8, ptime_ms: u32) {
-        self.0
-            .store(pack(remote, payload_type, ptime_ms), Ordering::Relaxed);
+    /// Changes all of it at once.
+    pub fn set(&self, remote: SocketAddrV4, payload_type: u8, ptime_ms: u32, held: bool) {
+        self.0.store(
+            pack(remote, payload_type, ptime_ms, held),
+            Ordering::Relaxed,
+        );
     }
 
     /// The word as it is, to see whether it has changed.
@@ -56,26 +72,37 @@ impl RtpParams {
         self.0.load(Ordering::Relaxed)
     }
 
-    /// The far end's address, the payload type and the frames of
-    /// [`FRAME`] octets in a packet, from a word read with
-    /// [`RtpParams::raw`].
-    pub fn unpack(raw: u64) -> (SocketAddrV4, u8, usize) {
-        let remote = SocketAddrV4::new(Ipv4Addr::from((raw >> 32) as u32), (raw >> 16) as u16);
-        (remote, (raw >> 8) as u8, usize::from(raw as u8).clamp(1, 3))
+    /// The negotiation in a word read with [`RtpParams::raw`].
+    pub fn unpack(raw: u64) -> Negotiation {
+        Negotiation {
+            remote: SocketAddrV4::new(Ipv4Addr::from((raw >> 32) as u32), (raw >> 16) as u16),
+            payload_type: (raw >> 8) as u8,
+            frames: usize::from(raw as u8 & 0x7F).clamp(1, 3),
+            held: raw & HELD != 0,
+        }
+    }
+
+    /// The negotiation now.
+    pub fn get(&self) -> Negotiation {
+        RtpParams::unpack(self.raw())
     }
 
     /// The far end's address now.
     pub fn remote(&self) -> SocketAddrV4 {
-        RtpParams::unpack(self.raw()).0
+        self.get().remote
     }
 }
 
-fn pack(remote: SocketAddrV4, payload_type: u8, ptime_ms: u32) -> u64 {
+/// The bit of the word that says the call is on hold.
+const HELD: u64 = 0x80;
+
+fn pack(remote: SocketAddrV4, payload_type: u8, ptime_ms: u32, held: bool) -> u64 {
     // A frame is 10 ms.
     let frames = (ptime_ms / (FRAME as u32 / 8)).clamp(1, 3);
     (u64::from(u32::from(*remote.ip())) << 32)
         | (u64::from(remote.port()) << 16)
         | (u64::from(payload_type) << 8)
+        | if held { HELD } else { 0 }
         | u64::from(frames)
 }
 

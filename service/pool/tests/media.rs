@@ -45,7 +45,7 @@ impl CallRouter for ScriptedRouter {
     fn hangup(&mut self, _now_ms: u64, line: LineId) {
         self.0.lock().unwrap().asked.push(format!("hangup {line}"));
     }
-    fn poll(&mut self, _now_ms: u64) -> Option<RouterEvent> {
+    fn poll(&mut self, _now_ms: u64, _lines: &dyn LineDirectory) -> Option<RouterEvent> {
         self.0.lock().unwrap().say.pop_front()
     }
     fn shutdown(&mut self, _now_ms: u64) {

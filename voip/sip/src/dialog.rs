@@ -59,6 +59,17 @@ impl std::fmt::Display for DialogError {
 
 impl std::error::Error for DialogError {}
 
+/// The Call-ID and the CSeq number of an INVITE. An INVITE of ours has no
+/// Via until it is sent, so no more than these two is asked of it.
+fn identity(invite: &Request) -> Result<(String, u32), DialogError> {
+    let call_id = invite
+        .headers
+        .call_id()
+        .ok_or(DialogError::Header("Call-ID"))?;
+    let cseq = invite.headers.cseq().ok_or(DialogError::Header("CSeq"))?;
+    Ok((call_id.to_owned(), cseq.sequence))
+}
+
 fn target(headers: &Headers) -> Result<SipUri, DialogError> {
     headers
         .contact()
@@ -71,9 +82,7 @@ impl Dialog {
     /// The dialog of the caller, from its INVITE and the 2xx (section
     /// 12.1.2).
     pub fn uac(invite: &Request, response: &Response) -> Result<Dialog, DialogError> {
-        let sent = invite
-            .essentials()
-            .map_err(|_| DialogError::Header("CSeq"))?;
+        let (call_id, sequence) = identity(invite)?;
         let from = response.headers.from().ok_or(DialogError::Header("From"))?;
         let to = response.headers.to().ok_or(DialogError::Header("To"))?;
         // The route set is the Record-Route of the response, reversed.
@@ -83,12 +92,12 @@ impl Dialog {
             .ok_or(DialogError::Header("Record-Route"))?;
         route_set.reverse();
         Ok(Dialog {
-            call_id: sent.call_id,
+            call_id,
             local_tag: from.tag().unwrap_or_default().to_owned(),
             remote_tag: to.tag().unwrap_or_default().to_owned(),
             local: response.headers.get("From").unwrap_or_default().to_owned(),
             remote: response.headers.get("To").unwrap_or_default().to_owned(),
-            local_sequence: sent.cseq.sequence,
+            local_sequence: sequence,
             remote_sequence: None,
             remote_target: target(&response.headers)?,
             route_set,
@@ -98,22 +107,21 @@ impl Dialog {
     /// The dialog of the one called, from the INVITE and the 2xx it
     /// answers with (section 12.1.1). The response has our tag in its To.
     pub fn uas(invite: &Request, response: &Response) -> Result<Dialog, DialogError> {
-        let received = invite
-            .essentials()
-            .map_err(|_| DialogError::Header("CSeq"))?;
+        let (call_id, sequence) = identity(invite)?;
+        let from = invite.headers.from().ok_or(DialogError::Header("From"))?;
         let to = response.headers.to().ok_or(DialogError::Header("To"))?;
         let route_set = invite
             .headers
             .record_routes()
             .ok_or(DialogError::Header("Record-Route"))?;
         Ok(Dialog {
-            call_id: received.call_id,
+            call_id,
             local_tag: to.tag().ok_or(DialogError::Header("To"))?.to_owned(),
-            remote_tag: received.from.tag().unwrap_or_default().to_owned(),
+            remote_tag: from.tag().unwrap_or_default().to_owned(),
             local: response.headers.get("To").unwrap_or_default().to_owned(),
             remote: invite.headers.get("From").unwrap_or_default().to_owned(),
             local_sequence: 0,
-            remote_sequence: Some(received.cseq.sequence),
+            remote_sequence: Some(sequence),
             remote_target: target(&invite.headers)?,
             route_set,
         })

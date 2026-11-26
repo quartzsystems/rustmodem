@@ -251,6 +251,25 @@ fn a_timestamp_gap_with_no_packet_lost_is_filled() {
 }
 
 #[test]
+fn a_stream_that_is_forgotten_starts_again_without_a_resynchronisation() {
+    let mut receiver = after(3);
+    receiver.forget_stream();
+    assert!(!receiver.is_synchronised());
+    // Any packet at all is a first packet now.
+    let other = RtpHeader {
+        ssrc: 0x7777_0000,
+        sequence: 9,
+        timestamp: 4_000_000,
+        ..packet(0)
+    };
+    assert_eq!(receiver.receive(&other, 160, 480), deliver(0, 2));
+    let stats = receiver.stats();
+    assert_eq!((stats.resync, stats.lost, stats.fill_frames), (0, 0, 0));
+    // What was counted before is kept.
+    assert_eq!(stats.packets, 4);
+}
+
+#[test]
 fn another_payload_type_is_ignored() {
     let mut receiver = after(3);
     for payload_type in [8, 13, 101] {

@@ -14,9 +14,19 @@ publish.workspace = true
 [dependencies]
 config.workspace = true
 ctlproto.workspace = true
+getrandom.workspace = true
+media.workspace = true
+msg.workspace = true
+pool.workspace = true
+sdp.workspace = true
+sip.workspace = true
 
 [dev-dependencies]
+engine.workspace = true
 proptest.workspace = true
+rtp.workspace = true
+serial.workspace = true
+sippeer.workspace = true
 
 [lints]
 workspace = true

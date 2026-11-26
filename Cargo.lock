@@ -553,6 +553,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sippeer"
+version = "0.0.2"
+dependencies = [
+ "sdp",
+ "sip",
+]
+
+[[package]]
 name = "svc"
 version = "0.0.2"
 dependencies = [
@@ -598,7 +606,17 @@ version = "0.0.2"
 dependencies = [
  "config",
  "ctlproto",
+ "engine",
+ "getrandom",
+ "media",
+ "msg",
+ "pool",
  "proptest",
+ "rtp",
+ "sdp",
+ "serial",
+ "sip",
+ "sippeer",
 ]
 
 [[package]]

@@ -86,12 +86,25 @@ pub trait CallRouter: Send {
     /// The line went on hook, or can no longer take the call offered to it.
     fn hangup(&mut self, now_ms: u64, line: LineId);
 
-    /// Runs the router's timers and gives the next thing it has to say.
-    fn poll(&mut self, now_ms: u64) -> Option<RouterEvent>;
+    /// Runs the router's timers, takes what has arrived from the network,
+    /// and gives the next thing the router has to say. `lines` is the
+    /// state of the lines now, for a call that has to be routed to one.
+    fn poll(&mut self, now_ms: u64, lines: &dyn LineDirectory) -> Option<RouterEvent>;
+
+    /// The configuration changed. A router that routes by it takes the
+    /// new one; calls in progress are not disturbed.
+    fn configure(&mut self, _now_ms: u64, _config: &config::Config) {}
 
     /// Stops the router: every call is cleared and what it holds on the
     /// network is given up. A router with no network has nothing to do.
+    /// One that has may need [`CallRouter::poll`] for a while longer, until
+    /// it is no longer [`CallRouter::busy`].
     fn shutdown(&mut self, _now_ms: u64) {}
+
+    /// Whether the router still has something in flight on the network.
+    fn busy(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -278,7 +291,7 @@ impl CallRouter for NullSwitch {
         }
     }
 
-    fn poll(&mut self, now_ms: u64) -> Option<RouterEvent> {
+    fn poll(&mut self, now_ms: u64, _lines: &dyn LineDirectory) -> Option<RouterEvent> {
         self.timers(now_ms);
         self.events.pop_front()
     }

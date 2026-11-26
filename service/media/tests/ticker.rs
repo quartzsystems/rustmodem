@@ -395,7 +395,7 @@ fn a_renegotiation_takes_effect_on_the_next_turn() {
     assert_eq!(call.sent()[0].0.payload_type, 0);
 
     // The far end moves, changes codec and asks for 10 ms packets.
-    call.params.set(OTHER, 8, 10);
+    call.params.set(OTHER, 8, 10, false);
     call.datagram(20_000, FAR, &far_packet(1, 0, 2));
     assert!(call.sent().is_empty(), "the old address is a stranger now");
     assert_eq!(call.ticker.stats().stray, 1);
@@ -423,25 +423,52 @@ fn a_renegotiation_takes_effect_on_the_next_turn() {
 }
 
 #[test]
-fn a_far_end_on_hold_is_sent_nothing_and_the_engine_still_ticks() {
-    let hold = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
-    let mut call = Call::new(Echo::default(), 0, 20, 10_000);
+fn a_far_end_that_holds_the_call_is_sent_nothing_and_the_engine_ticks_on() {
+    let mut call = Call::new(Echo::default(), 0, 20, 1000);
     call.datagram(0, FAR, &far_packet(0, 0, 2));
-    call.wire.sent.clear();
-    call.params.set(hold, 0, 20);
-    // Nothing arrives from 0.0.0.0, so nothing more is ticked or sent;
-    // what was in hand goes nowhere.
-    call.idle(20_000);
+    assert_eq!(call.sent().len(), 1);
+
+    // The far end puts the call on hold the old way: its address is
+    // 0.0.0.0.
+    let nowhere = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
+    call.params.set(nowhere, 0, 20, true);
+    call.idle(10_000);
+    // The engine goes on ticking, from the local timer and on silence;
+    // nothing is sent; and the silence of the far end, far longer than the
+    // timeout, is not taken for a call that has gone.
+    for now in (30_000..3_000_000).step_by(20_000) {
+        assert!(!call.idle(now));
+    }
     assert!(call.wire.sent.is_empty());
-    assert_eq!(call.engine.frames, 2);
-    // Off hold again.
-    call.params.set(FAR, 0, 20);
-    call.datagram(40_000, FAR, &far_packet(2, 0, 2));
-    assert_eq!(
-        call.wire.sent.len(),
-        2,
-        "the gap is filled and the packet echoed"
-    );
+    assert_eq!(call.engine.frames, 2 + 2 * 149);
+    assert!(!call.ticker.is_stalled());
+    assert_eq!(call.pool.poll_event(), None);
+
+    // Off hold, the far end starts a new stream. Its first packet is a
+    // first packet: nothing is filled and nothing is counted against it.
+    call.params.set(FAR, 0, 20, false);
+    call.datagram(3_000_500, FAR, &far_packet_at(500, 999_999, 0, &[9; 160]));
+    let sent = call.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].1, vec![9; 160]);
+    let stats = call.ticker.stats();
+    assert_eq!((stats.resync, stats.lost), (0, 0));
+
+    // A far end that holds the call and goes on sending, music perhaps,
+    // is listened to and not sent to.
+    call.params.set(FAR, 0, 20, true);
+    call.datagram(3_020_000, FAR, &far_packet_at(900, 5, 0, &[3; 160]));
+    assert!(call.wire.sent.is_empty());
+    assert_eq!(call.engine.frames, 2 + 2 * 149 + 4);
+    assert_eq!(call.ticker.stats().resync, 0);
+
+    // Off hold with nothing arriving, the call is given up after the
+    // timeout, counted from when the hold ended.
+    call.params.set(FAR, 0, 20, false);
+    assert!(!call.idle(4_000_000));
+    assert!(!call.idle(5_000_000));
+    assert!(call.idle(5_000_001));
+    assert_eq!(call.pool.poll_event(), Some(MediaEvent::Stalled));
 }
 
 #[test]

@@ -22,7 +22,9 @@
 //! end's sample clock is the only clock, so no sample is ever slipped
 //! against it. Before the first packet the loop ticks from a local timer
 //! at the packet time, so that an engine can start (a modem answers by
-//! sending tone); those frames are counted as `free_run`.
+//! sending tone); those frames are counted as `free_run`. The same is done
+//! while the far end has the call on hold: it has stopped its clock by
+//! agreement, the engine goes on ticking on silence, and nothing is sent.
 //!
 //! On the tick path there is no heap allocation, no lock, no logging and
 //! no system call but the socket's receive and send. Everything a call
@@ -38,6 +40,6 @@ mod os;
 mod threaded;
 mod ticker;
 
-pub use endpoint::{RtpEndpoint, RtpParams, RtpPorts};
+pub use endpoint::{Negotiation, RtpEndpoint, RtpParams, RtpPorts};
 pub use threaded::{ThreadedRunner, Waker};
 pub use ticker::{Clock, MAX_DATAGRAM, Received, Ticker, Transport, histogram_bucket};

@@ -215,7 +215,7 @@ impl Pool {
                 progressed = true;
                 self.perform(id, action);
             }
-            while let Some(event) = self.router.poll(self.now.mono_ms) {
+            while let Some(event) = self.router.poll(self.now.mono_ms, &Directory(&self.lines)) {
                 progressed = true;
                 self.route(event);
             }
@@ -399,6 +399,8 @@ impl Pool {
                     // The runner cannot carry this call: it ends as one
                     // that could not be set up.
                     let id = self.lines[index].id();
+                    let source = self.lines[index].source();
+                    self.log_message(&source, &message("RMD6002", &[&id.to_string()]));
                     self.step(index, Input::Event(LineEvent::CarrierLost));
                     self.end_call(index, EndReason::Failed);
                     self.router.hangup(self.now.mono_ms, id);
@@ -477,7 +479,12 @@ impl Pool {
                 MediaEvent::Modem(event) => event,
                 // Nothing comes from the far end any more: to the line
                 // that is the carrier lost.
-                MediaEvent::Stalled => ModemEvent::CarrierLost,
+                MediaEvent::Stalled => {
+                    let id = self.lines[index].id();
+                    let source = self.lines[index].source();
+                    self.log_message(&source, &message("RMD6001", &[&id.to_string()]));
+                    ModemEvent::CarrierLost
+                }
             };
             match event {
                 ModemEvent::Connect(info) => {
@@ -956,6 +963,8 @@ impl Pool {
     /// the pool does not, removes the lines the pool has that it does not,
     /// and changes the ones that differ.
     pub fn apply_config(&mut self, config: &Config) {
+        self.router.configure(self.now.mono_ms, config);
+
         // Remove.
         let mut index = 0;
         while index < self.lines.len() {
@@ -1049,6 +1058,22 @@ impl Pool {
         if let Some(log) = &mut self.call_log {
             let _ = log.flush();
         }
+    }
+
+    /// After [`Pool::shutdown`]: lets the router finish what it has in
+    /// flight on the network, a BYE or the removal of a registration.
+    /// Returns whether it still has something; call again a little later
+    /// if so, for as long as there is time to.
+    pub fn linger(&mut self, now: Now) -> bool {
+        self.now = now;
+        // The lines are down: whatever the router says now is about calls
+        // that are over.
+        while self
+            .router
+            .poll(now.mono_ms, &Directory(&self.lines))
+            .is_some()
+        {}
+        self.router.busy()
     }
 
     /// Carries out a command from another thread.

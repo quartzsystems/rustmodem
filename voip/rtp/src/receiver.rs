@@ -130,6 +130,14 @@ impl RtpReceiver {
         self.sync.is_some()
     }
 
+    /// Forgets the stream: the far end has said, by renegotiating, that
+    /// the next packet starts a new one. That packet is delivered as a
+    /// first packet is, and is not counted as a resynchronisation. The
+    /// statistics are kept.
+    pub fn forget_stream(&mut self) {
+        self.sync = None;
+    }
+
     /// A packet arrived. `payload_len` is the length of its payload and
     /// `arrival` the time it arrived, in samples of a monotonic clock that
     /// may start anywhere and wraps.
