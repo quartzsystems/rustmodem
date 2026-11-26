@@ -49,6 +49,11 @@ impl Stopping {
         *self.0.borrow()
     }
 
+    /// The signal as the control server takes it.
+    pub fn receiver(&self) -> watch::Receiver<bool> {
+        self.0.clone()
+    }
+
     /// Waits until the service is asked to stop. Returns at once if it
     /// already has been, and also when nothing is left that could ask.
     pub async fn wait(&mut self) {

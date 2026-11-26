@@ -24,9 +24,8 @@ use std::time::Duration;
 use ctlproto::{
     ClientFrame, ErrorInfo, Hello, MAX_MESSAGE_BYTES, PROTOCOL, ServerFrame, decode_server, encode,
 };
-use ctlsrv::{Closer, Halves};
 use msg::message;
-use pipe::PipeClient;
+use pipe::{Closer, Halves, PipeClient};
 use win32::UiSender;
 
 /// How long the manager waits before it tries to connect again.

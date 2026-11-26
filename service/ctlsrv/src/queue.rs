@@ -6,11 +6,10 @@
 //! events there.
 
 use std::collections::{BTreeSet, VecDeque};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use ctlproto::{EVENT_NAMES, EVENTS_BY_NAME_ONLY, Event, LogEvent, encode};
-
-use crate::Closer;
+use tokio::sync::{Notify, watch};
 
 /// How many of the last log lines the hub remembers, for `log.tail`.
 pub const LOG_RING: usize = 2000;
@@ -55,19 +54,25 @@ struct State {
 }
 
 /// The messages waiting to be written to one client.
+///
+/// Putting a message on the queue never waits: the pool's task does it.
+/// Only the client's writing task waits here, for a message to write.
 pub(crate) struct ClientQueue {
     state: Mutex<State>,
-    ready: Condvar,
-    closer: Arc<dyn Closer>,
+    /// Wakes the writing task: there is a message, or it is to stop.
+    ready: Notify,
+    /// Says that the connection is gone or going, to the client's two
+    /// tasks wherever they are waiting.
+    shut: watch::Sender<bool>,
     limits: Limits,
 }
 
 impl ClientQueue {
-    pub fn new(closer: Arc<dyn Closer>, limits: Limits) -> ClientQueue {
+    pub fn new(limits: Limits) -> ClientQueue {
         ClientQueue {
             state: Mutex::new(State::default()),
-            ready: Condvar::new(),
-            closer,
+            ready: Notify::new(),
+            shut: watch::Sender::new(false),
             limits,
         }
     }
@@ -109,8 +114,8 @@ impl ClientQueue {
                 state.items.clear();
                 state.logs = 0;
                 drop(state);
-                self.ready.notify_all();
-                self.closer.close();
+                self.ready.notify_one();
+                self.shut.send_replace(true);
                 return;
             }
         } else {
@@ -136,35 +141,48 @@ impl ClientQueue {
 
     /// The next message to write. Waits for one; `None` means the writer
     /// should stop.
-    pub fn pop(&self) -> Option<Arc<str>> {
-        let mut state = self.lock();
+    pub async fn pop(&self) -> Option<Arc<str>> {
         loop {
-            if state.closed {
-                return None;
-            }
-            if let Some(item) = state.items.pop_front() {
-                if item.is_log {
-                    state.logs -= 1;
+            {
+                let mut state = self.lock();
+                if state.closed {
+                    return None;
                 }
-                return Some(item.line);
+                if let Some(item) = state.items.pop_front() {
+                    if item.is_log {
+                        state.logs -= 1;
+                    }
+                    return Some(item.line);
+                }
+                if state.finishing {
+                    return None;
+                }
             }
-            if state.finishing {
-                return None;
-            }
-            state = self.ready.wait(state).unwrap_or_else(|e| e.into_inner());
+            // A notification sent since the look above is kept for this
+            // wait: there is one writer, and `notify_one` keeps a permit.
+            self.ready.notified().await;
         }
     }
 
     /// Lets the writer write what is queued and then stop.
     pub fn finish(&self) {
         self.lock().finishing = true;
-        self.ready.notify_all();
+        self.ready.notify_one();
     }
 
-    /// Stops the writer at once.
+    /// Stops the writer at once, and the reader where it waits.
     pub fn close(&self) {
         self.lock().closed = true;
-        self.ready.notify_all();
+        self.ready.notify_one();
+        self.shut.send_replace(true);
+    }
+
+    /// Waits until the connection is closed from this side: the client
+    /// fell too far behind, or could not be written to.
+    pub async fn closed(&self) {
+        let mut shut = self.shut.subscribe();
+        // The sender is in `self`, so the wait cannot fail.
+        let _ = shut.wait_for(|shut| *shut).await;
     }
 
     pub fn overflowed(&self) -> bool {

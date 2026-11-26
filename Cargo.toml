@@ -90,6 +90,7 @@ pipe = { path = "service/pipe" }
 pool = { path = "service/pool" }
 media = { path = "service/media" }
 sippeer = { path = "tools/sippeer" }
+svc = { path = "service/svc" }
 telephony = { path = "service/telephony" }
 model = { path = "ui/model" }
 glyph = { path = "ui/glyph" }

@@ -18,10 +18,12 @@ msg.workspace = true
 pool.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 engine.workspace = true
 serial.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

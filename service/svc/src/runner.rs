@@ -3,24 +3,29 @@
 // root directory of this project.
 
 //! Starting and stopping what the service runs: the log, the pool on its
-//! one thread, and the control server on the named pipe.
+//! one thread, and on the runtime the control server on the named pipe and
+//! the refresh of the lines' bindings.
 
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::thread::JoinHandle;
+use std::thread::JoinHandle as ThreadHandle;
 use std::time::{Duration, Instant};
 
 use config::{Backend, ConfigFile, LineConfig};
 use ctlproto::{Event as ControlEvent, LogLevel, ServiceMode};
-use ctlsrv::{Hub, Limits, Listener, Server, ServerParts};
+use ctlsrv::{Hub, Limits, PoolRequests, Server, ServerParts};
 use msg::{Message, message};
 use pipe::{Event, MAX_WAIT_HANDLES, PipeListener, PipeSecurity, wait_any};
 use pool::{
-    CallRouter, EventSink, InlineRunner, MediaRunner, Now, NullSwitch, Pool, PoolInbox, PoolParts,
-    SerialFactory, TICK_MS, command_channel,
+    CallRouter, EventSink, InlineRunner, MediaRunner, Now, NullSwitch, Pool, PoolParts,
+    SerialFactory, TICK_MS,
 };
 use serial::{Com0comBackend, SerialBackend};
+use svc::shutdown::{Shutdown, Stopping};
+use tokio::runtime::Handle;
+use tokio::sync::mpsc::error::TryRecvError;
+use tokio::task::JoinHandle as TaskHandle;
 
 use crate::logger::{self, DEFAULT_MAX_BYTES, Logger};
 use crate::ports::SystemPorts;
@@ -94,21 +99,27 @@ impl RunMode {
 /// The service, running.
 pub struct Running {
     mode: RunMode,
+    runtime: Handle,
     stop: Arc<Event>,
-    pool: Option<JoinHandle<()>>,
-    control: Option<JoinHandle<()>>,
-    bindings: Option<JoinHandle<()>>,
+    pool: Option<ThreadHandle<()>>,
+    control: TaskHandle<()>,
+    bindings: TaskHandle<()>,
     logger: Logger,
 }
 
-/// Starts the service. The caller waits for the signal that ends it and
-/// then calls [`Running::stop`].
+/// Starts the service: its tasks on `runtime`, which `shutdown` ends. The
+/// caller waits for that signal and then calls [`Running::stop`].
 ///
 /// A configuration that cannot be used is reported as `RMD` messages to the
 /// log, to the Event Log in service mode, and to the caller, who in console
 /// mode prints them to standard error.
-pub fn start(config_path: Option<PathBuf>, mode: RunMode) -> Result<Running, Vec<Message>> {
-    start_inner(config_path, mode).inspect_err(|problems| {
+pub fn start(
+    config_path: Option<PathBuf>,
+    mode: RunMode,
+    runtime: &Handle,
+    shutdown: &Shutdown,
+) -> Result<Running, Vec<Message>> {
+    start_inner(config_path, mode, runtime, shutdown).inspect_err(|problems| {
         // The log directory comes from the configuration, which may be
         // what is wrong; the default one is the best place left.
         let fallback = Logger::open(
@@ -130,7 +141,12 @@ pub fn start(config_path: Option<PathBuf>, mode: RunMode) -> Result<Running, Vec
     })
 }
 
-fn start_inner(config_path: Option<PathBuf>, mode: RunMode) -> Result<Running, Vec<Message>> {
+fn start_inner(
+    config_path: Option<PathBuf>,
+    mode: RunMode,
+    runtime: &Handle,
+    shutdown: &Shutdown,
+) -> Result<Running, Vec<Message>> {
     let console = mode == RunMode::Console;
     let config_path = config_path.unwrap_or_else(config::default_path);
     let file = ConfigFile::load(&config_path)?;
@@ -171,14 +187,13 @@ fn start_inner(config_path: Option<PathBuf>, mode: RunMode) -> Result<Running, V
         logger.message(SOURCE, problem);
     }
 
-    // What stops the threads of the service: `Running::stop` sets it.
+    // What stops the pool's thread: `Running::stop` sets it.
     let stop = Arc::new(Event::new().map_err(|e| fail(message("RMD0003", &[&e.to_string()])))?);
-    let listener = PipeListener::bind(
-        &config.control.pipe,
-        PipeSecurity::AdministratorsOnly,
-        Arc::clone(&stop),
-    )
-    .map_err(fail)?;
+    let listener = {
+        // The pipe is registered with the runtime's I/O driver.
+        let _on_runtime = runtime.enter();
+        PipeListener::bind(&config.control.pipe, PipeSecurity::AdministratorsOnly).map_err(fail)?
+    };
 
     // What wakes the pool's thread between its ticks: a media thread with
     // something to report, or a SIP message that has arrived.
@@ -233,7 +248,7 @@ fn start_inner(config_path: Option<PathBuf>, mode: RunMode) -> Result<Running, V
     }
     pool.apply_config(&config);
 
-    let (handle, inbox) = command_channel();
+    let (handle, requests) = ctlsrv::pool_link();
     let control_log = logger.clone();
     let server = Server::new(ServerParts {
         pool: handle,
@@ -268,47 +283,29 @@ fn start_inner(config_path: Option<PathBuf>, mode: RunMode) -> Result<Running, V
     });
     let binding_server = server.clone();
 
-    let spawn_failed = |e: std::io::Error| fail(message("RMD0003", &[&e.to_string()]));
     let pool_stop = Arc::clone(&stop);
     let pool_thread = std::thread::Builder::new()
         .name("pool".to_string())
-        .spawn(move || run_pool(pool, inbox, pool_stop, wake))
-        .map_err(spawn_failed)?;
-    let control_stop = Arc::clone(&stop);
-    let accept_log = logger.clone();
-    let control_thread = std::thread::Builder::new()
-        .name("ctl-accept".to_string())
-        .spawn(move || accept_clients(server, listener, control_stop, accept_log))
-        .map_err(|e| {
-            // The pool is already running; stop it before giving up.
-            stop.set();
-            spawn_failed(e)
-        });
-    let control_thread = match control_thread {
-        Ok(thread) => thread,
-        Err(problems) => {
-            let _ = pool_thread.join();
-            return Err(problems);
-        }
-    };
-
-    // The lines' bindings are a nicety: the service runs without the
-    // thread that keeps them.
-    let binding_stop = Arc::clone(&stop);
-    let binding_thread = std::thread::Builder::new()
-        .name("bindings".to_string())
-        .spawn(move || refresh_bindings(binding_server, binding_stop))
-        .ok();
+        .spawn(move || run_pool(pool, requests, pool_stop, wake))
+        .map_err(|e| fail(message("RMD0003", &[&e.to_string()])))?;
+    let control = runtime.spawn(accept_clients(
+        server,
+        listener,
+        shutdown.subscribe(),
+        logger.clone(),
+    ));
+    let bindings = runtime.spawn(refresh_bindings(binding_server, shutdown.subscribe()));
 
     let started = message("RMD0001", &[VERSION]);
     logger.message(SOURCE, &started);
     mode.report(&started);
     Ok(Running {
         mode,
+        runtime: runtime.clone(),
         stop,
         pool: Some(pool_thread),
-        control: Some(control_thread),
-        bindings: binding_thread,
+        control,
+        bindings,
         logger,
     })
 }
@@ -316,18 +313,19 @@ fn start_inner(config_path: Option<PathBuf>, mode: RunMode) -> Result<Running, V
 impl Running {
     /// Stops the service cleanly: every call is hung up, every port is
     /// released, every registration is given up, and the log is flushed.
-    /// The pool does this well inside the service stop timeout.
+    /// The pool does this well inside the service stop timeout. The
+    /// shutdown signal has been sent by now, and the tasks are ending.
+    /// This waits, so it is not called on one of the runtime's threads.
     pub fn stop(mut self) {
         self.stop.set();
         if let Some(thread) = self.pool.take() {
             let _ = thread.join();
         }
-        if let Some(thread) = self.control.take() {
-            let _ = thread.join();
-        }
-        if let Some(thread) = self.bindings.take() {
-            let _ = thread.join();
-        }
+        let (control, bindings) = (self.control, self.bindings);
+        self.runtime.block_on(async {
+            let _ = control.await;
+            let _ = bindings.await;
+        });
         let stopped = message("RMD0002", &[]);
         self.logger.message(SOURCE, &stopped);
         self.logger.flush();
@@ -337,14 +335,21 @@ impl Running {
 
 /// The pool's thread: one turn of the loop at least every tick, and sooner
 /// when a serial port has something or `wake` is set.
-fn run_pool(mut pool: Pool, inbox: PoolInbox, stop: Arc<Event>, wake: Arc<Event>) {
+fn run_pool(mut pool: Pool, mut requests: PoolRequests, stop: Arc<Event>, wake: Arc<Event>) {
     let started = Instant::now();
     let now = || Now {
         mono_ms: started.elapsed().as_millis() as u64,
         unix_ms: logger::unix_ms(),
     };
     let mut handles = Vec::with_capacity(MAX_WAIT_HANDLES);
-    while !stop.is_set() && inbox.serve(&mut pool) {
+    'turns: while !stop.is_set() {
+        loop {
+            match requests.try_recv() {
+                Ok(request) => request.run(&mut pool),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break 'turns,
+            }
+        }
         pool.service(now());
 
         // Sleep until the next tick, a port's event, or the stop signal.
@@ -373,43 +378,41 @@ fn run_pool(mut pool: Pool, inbox: PoolInbox, stop: Arc<Event>, wake: Arc<Event>
 /// Looks the serial ports up when the service starts and every
 /// [`BINDING_REFRESH`] after, and tells the pool what each is bound to.
 /// The server does the same itself when the configuration is reloaded.
-fn refresh_bindings(server: Server, stop: Arc<Event>) {
+/// The lines' bindings are a nicety: the service runs without them.
+async fn refresh_bindings(server: Server, mut stopping: Stopping) {
+    let mut refresh = tokio::time::interval(BINDING_REFRESH);
     loop {
-        // The only failure is the pool having stopped, which the stop
-        // signal says too.
-        let _ = server.refresh_bindings();
-        if stop.wait(BINDING_REFRESH) {
-            break;
+        tokio::select! {
+            _ = refresh.tick() => {
+                // The only failure is the pool having stopped, which the
+                // stop signal says too.
+                let _ = server.refresh_bindings().await;
+            }
+            () = stopping.wait() => break,
         }
     }
 }
 
-/// The control server's accepting thread: each client is served on a
-/// thread of its own.
-fn accept_clients(server: Server, mut listener: PipeListener, stop: Arc<Event>, logger: Logger) {
+/// The control server's accepting task: each client is served on tasks of
+/// its own.
+async fn accept_clients(
+    server: Server,
+    mut listener: PipeListener,
+    mut stopping: Stopping,
+    logger: Logger,
+) {
     loop {
-        match listener.accept() {
-            Ok(Some(connection)) => {
-                let server = server.clone();
-                let spawned = std::thread::Builder::new()
-                    .name("ctl-client".to_string())
-                    .spawn(move || server.handle(connection));
-                if let Err(error) = spawned {
-                    logger.message(
-                        CONTROL_SOURCE,
-                        &message("RMD2007", &[listener.name(), &error.to_string()]),
-                    );
-                }
-            }
-            Ok(None) => break,
+        match server.serve(&mut listener, stopping.receiver()).await {
+            Ok(()) => break,
             Err(error) => {
                 logger.message(
                     CONTROL_SOURCE,
                     &message("RMD2007", &[listener.name(), &error.to_string()]),
                 );
                 // Do not spin on an error that persists.
-                if stop.wait(Duration::from_secs(1)) {
-                    break;
+                tokio::select! {
+                    () = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    () = stopping.wait() => break,
                 }
             }
         }

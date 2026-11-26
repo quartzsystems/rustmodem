@@ -15,7 +15,6 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use ctlsrv::Halves;
 use windows::Win32::Foundation::{ERROR_PIPE_BUSY, GENERIC_READ, GENERIC_WRITE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_OVERLAPPED, FILE_SHARE_NONE, OPEN_EXISTING,
@@ -23,8 +22,8 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::IO::OVERLAPPED;
 use windows::core::HSTRING;
 
+use crate::blocking::{Half, Halves, Instance};
 use crate::event::Event;
-use crate::listener::{Half, Instance};
 
 /// How long to wait between tries while every instance of the pipe is
 /// taken.
@@ -86,7 +85,6 @@ impl PipeClient {
         // From here the instance closes the handle when it is dropped.
         let instance = Arc::new(Instance {
             handle,
-            server: false,
             closed: AtomicBool::new(false),
         });
         Ok(PipeClient {

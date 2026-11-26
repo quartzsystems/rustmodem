@@ -2,34 +2,38 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! A whole service in one process: a pool on memory ports running on its
-//! own thread, a control server over the in-memory transport, and a client.
+//! A whole service in one process: a pool on memory ports on a task of
+//! its own, a control server over the in-memory transport, and a client.
+//!
+//! Everything runs on the runtime of the test, whose clock is Tokio's: a
+//! test that starts with the clock paused waits for nothing, and the
+//! pool's time moves as fast as the test can use it.
 
 #![allow(dead_code)]
 
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use config::{Config, ConfigFile, LineConfig};
 use ctlproto::{
     Call, ClientFrame, ErrorInfo, Event, Hello, LineInfo, LineRef, LineState, LogLevel, PROTOCOL,
     PortInfo, PortKind, ServerFrame, ServiceMode, decode_server, encode,
 };
-use ctlsrv::memory::{self, MemoryClient, MemoryConnector, PipeReader, PipeWriter};
+use ctlsrv::memory::{self, MemoryClient, MemoryConnector};
 use ctlsrv::{Hub, Limits, Server, ServerParts};
 use engine::{NullConfig, NullEngine};
 use msg::Message;
 use pool::{
     EventSink, InlineRunner, MemoryProfiles, Now, NullSwitch, Pool, PoolParts, SerialFactory,
-    command_channel,
 };
 use serde_json::Value;
 use serial::{MemoryHost, SerialBackend, memory_pair};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHalf, WriteHalf};
+use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 /// The version the test service reports.
 pub const VERSION: &str = "9.9.9-test";
@@ -100,27 +104,26 @@ pub struct Fixture {
     pub live: Arc<AtomicBool>,
     pub directory: PathBuf,
     pub config_path: PathBuf,
-    stop: Arc<AtomicBool>,
-    pool_thread: Option<JoinHandle<()>>,
+    pool_task: JoinHandle<()>,
 }
 
 /// Waits until `check` is true, or fails the test.
-pub fn eventually(what: &str, mut check: impl FnMut() -> bool) {
+pub async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
     let deadline = Instant::now() + PATIENCE;
     while !check() {
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(2));
+        tokio::time::sleep(Duration::from_millis(2)).await;
     }
 }
 
 impl Fixture {
     /// A service with lines 1 to `lines` on ports `P1` to `P<lines>`, every
     /// port opened by its host, so that every line is idle.
-    pub fn new(lines: u16) -> Fixture {
-        Fixture::with_limits(lines, Limits::default())
+    pub async fn new(lines: u16) -> Fixture {
+        Fixture::with_limits(lines, Limits::default()).await
     }
 
-    pub fn with_limits(lines: u16, limits: Limits) -> Fixture {
+    pub async fn with_limits(lines: u16, limits: Limits) -> Fixture {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let directory = std::env::temp_dir().join(format!(
             "rustmodem-ctlsrv-{}-{}",
@@ -152,10 +155,8 @@ impl Fixture {
         });
         pool.apply_config(&config);
 
-        let (handle, inbox) = command_channel();
-        let stop = Arc::new(AtomicBool::new(false));
-        let stopping = Arc::clone(&stop);
-        let pool_thread = std::thread::spawn(move || {
+        let (handle, mut requests) = ctlsrv::pool_link();
+        let pool_task = tokio::spawn(async move {
             let started = Instant::now();
             let now = || {
                 let mono_ms = started.elapsed().as_millis() as u64;
@@ -164,9 +165,15 @@ impl Fixture {
                     unix_ms: 1_800_000_000_000 + mono_ms,
                 }
             };
-            while !stopping.load(Ordering::Relaxed) && inbox.serve(&mut pool) {
+            loop {
+                tokio::select! {
+                    request = requests.recv() => match request {
+                        Some(request) => request.run(&mut pool),
+                        None => break,
+                    },
+                    () = tokio::time::sleep(Duration::from_millis(1)) => {}
+                }
                 pool.service(now());
-                std::thread::sleep(Duration::from_millis(1));
             }
             pool.shutdown(now());
         });
@@ -192,9 +199,9 @@ impl Fixture {
             capture_dir: None,
         });
 
-        let (listener, connector) = memory::listener();
+        let (mut listener, connector) = memory::listener();
         let serving = server.clone();
-        std::thread::spawn(move || serving.serve(Box::new(listener)));
+        tokio::spawn(async move { serving.serve(&mut listener, ctlsrv::never_stops()).await });
 
         let fixture = Fixture {
             server,
@@ -205,35 +212,45 @@ impl Fixture {
             live,
             directory,
             config_path,
-            stop,
-            pool_thread: Some(pool_thread),
+            pool_task,
         };
         for id in 1..=lines {
-            fixture.host(&format!("P{id}")).open();
+            fixture.host(&format!("P{id}")).await.open();
         }
         if lines > 0 {
-            let mut client = fixture.connect();
-            eventually("every line to be idle", || {
-                client.lines().iter().all(|l| l.state == LineState::Idle)
-            });
+            let mut client = fixture.connect().await;
+            let deadline = Instant::now() + PATIENCE;
+            while !client
+                .lines()
+                .await
+                .iter()
+                .all(|l| l.state == LineState::Idle)
+            {
+                assert!(
+                    Instant::now() < deadline,
+                    "timed out waiting for every line to be idle"
+                );
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
         }
         fixture
     }
 
     /// The host end of a port, once the pool has opened it.
-    pub fn host(&self, port: &str) -> MemoryHost {
+    pub async fn host(&self, port: &str) -> MemoryHost {
         let mut found = None;
         eventually(&format!("port {port} to be opened"), || {
             found = self.hosts.lock().unwrap().get(port).cloned();
             found.is_some()
-        });
+        })
+        .await;
         found.unwrap()
     }
 
     /// A client that has said hello.
-    pub fn connect(&self) -> TestClient {
+    pub async fn connect(&self) -> TestClient {
         let mut client = TestClient::new(self.connector.connect().unwrap());
-        let frame = client.hello(PROTOCOL);
+        let frame = client.hello(PROTOCOL).await;
         assert_eq!(
             frame,
             Some(ServerFrame::Hello {
@@ -266,17 +283,16 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.pool_thread.take() {
-            let _ = thread.join();
-        }
+        // The pool goes with its task: what is asked of it from now on is
+        // refused.
+        self.pool_task.abort();
         let _ = std::fs::remove_dir_all(&self.directory);
     }
 }
 
 pub struct TestClient {
-    pub reader: BufReader<PipeReader>,
-    pub writer: PipeWriter,
+    pub reader: BufReader<ReadHalf<DuplexStream>>,
+    pub writer: WriteHalf<DuplexStream>,
     next_id: u64,
     /// Events that arrived while waiting for an answer.
     pub events: VecDeque<Event>,
@@ -284,8 +300,7 @@ pub struct TestClient {
 
 impl TestClient {
     pub fn new(client: MemoryClient) -> TestClient {
-        let MemoryClient { mut reader, writer } = client;
-        reader.set_timeout(Some(PATIENCE));
+        let MemoryClient { reader, writer } = client;
         TestClient {
             reader: BufReader::new(reader),
             writer,
@@ -294,45 +309,49 @@ impl TestClient {
         }
     }
 
-    pub fn send_line(&mut self, line: &str) {
-        self.writer.write_all(line.as_bytes()).unwrap();
-        self.writer.write_all(b"\n").unwrap();
+    pub async fn send_line(&mut self, line: &str) {
+        self.writer.write_all(line.as_bytes()).await.unwrap();
+        self.writer.write_all(b"\n").await.unwrap();
     }
 
     /// The next frame from the service; `None` when it has closed the
     /// connection.
-    pub fn read_frame(&mut self) -> Option<ServerFrame> {
+    pub async fn read_frame(&mut self) -> Option<ServerFrame> {
         let mut line = String::new();
-        let read = self
-            .reader
-            .read_line(&mut line)
-            .expect("the service to answer in time");
+        // A read that finds nothing gives up, so that a test waiting for
+        // something that never comes fails instead of hanging.
+        let read = tokio::time::timeout(PATIENCE, self.reader.read_line(&mut line))
+            .await
+            .expect("the service to answer in time")
+            .expect("the connection to be readable");
         if read == 0 {
             return None;
         }
         Some(decode_server(line.trim_end()).unwrap_or_else(|m| panic!("{m}: {line}")))
     }
 
-    pub fn hello(&mut self, protocol: u32) -> Option<ServerFrame> {
+    pub async fn hello(&mut self, protocol: u32) -> Option<ServerFrame> {
         self.send_line(&encode(&ClientFrame::Hello {
             hello: Hello {
                 protocol,
                 version: "test-client".to_string(),
             },
-        }));
-        self.read_frame()
+        }))
+        .await;
+        self.read_frame().await
     }
 
     /// Sends a line and returns the next frame that is not an event.
-    pub fn exchange(&mut self, line: &str) -> ServerFrame {
-        self.send_line(line);
-        self.next_reply()
+    pub async fn exchange(&mut self, line: &str) -> ServerFrame {
+        self.send_line(line).await;
+        self.next_reply().await
     }
 
-    pub fn next_reply(&mut self) -> ServerFrame {
+    pub async fn next_reply(&mut self) -> ServerFrame {
         loop {
             match self
                 .read_frame()
+                .await
                 .expect("an answer, not a closed connection")
             {
                 ServerFrame::Event(event) => self.events.push_back(event),
@@ -342,10 +361,12 @@ impl TestClient {
     }
 
     /// Makes a call and returns its result or its error.
-    pub fn call(&mut self, call: Call) -> Result<Value, ErrorInfo> {
+    pub async fn call(&mut self, call: Call) -> Result<Value, ErrorInfo> {
         let id = self.next_id;
         self.next_id += 1;
-        let frame = self.exchange(&encode(&ClientFrame::Request(call.request(id))));
+        let frame = self
+            .exchange(&encode(&ClientFrame::Request(call.request(id))))
+            .await;
         match frame {
             ServerFrame::Result { id: got, result } => {
                 assert_eq!(got, id, "the answer carries the request's id");
@@ -360,18 +381,19 @@ impl TestClient {
     }
 
     /// Makes a call that must succeed and reads its result as `T`.
-    pub fn ok<T: serde::de::DeserializeOwned>(&mut self, call: Call) -> T {
+    pub async fn ok<T: serde::de::DeserializeOwned>(&mut self, call: Call) -> T {
         let method = call.method();
         let result = self
             .call(call)
+            .await
             .unwrap_or_else(|error| panic!("{method} failed: {error}"));
         serde_json::from_value(result).unwrap_or_else(|e| panic!("{method} result: {e}"))
     }
 
     /// Makes a call that must fail and returns the message id.
-    pub fn err(&mut self, call: Call) -> String {
+    pub async fn err(&mut self, call: Call) -> String {
         let method = call.method();
-        match self.call(call) {
+        match self.call(call).await {
             Ok(result) => panic!("{method} should have failed, got {result}"),
             Err(error) => {
                 assert!(!error.text.is_empty() && !error.cause.is_empty());
@@ -381,28 +403,35 @@ impl TestClient {
         }
     }
 
-    pub fn lines(&mut self) -> Vec<LineInfo> {
-        self.ok::<ctlproto::LineList>(Call::LinesList).lines
+    pub async fn lines(&mut self) -> Vec<LineInfo> {
+        self.ok::<ctlproto::LineList>(Call::LinesList).await.lines
     }
 
-    pub fn line(&mut self, id: u16) -> LineInfo {
-        self.ok(Call::LinesGet(LineRef { id }))
+    pub async fn line(&mut self, id: u16) -> LineInfo {
+        self.ok(Call::LinesGet(LineRef { id })).await
     }
 
     /// Waits until a line is in a state.
-    pub fn wait_for_state(&mut self, id: u16, state: LineState) {
-        eventually(&format!("line {id} to be {}", state.as_str()), || {
-            self.line(id).state == state
-        });
+    pub async fn wait_for_state(&mut self, id: u16, state: LineState) {
+        let deadline = Instant::now() + PATIENCE;
+        while self.line(id).await.state != state {
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for line {id} to be {}",
+                state.as_str()
+            );
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
     }
 
     /// The next event, waiting for it if none has arrived.
-    pub fn next_event(&mut self) -> Event {
+    pub async fn next_event(&mut self) -> Event {
         if let Some(event) = self.events.pop_front() {
             return event;
         }
         match self
             .read_frame()
+            .await
             .expect("an event, not a closed connection")
         {
             ServerFrame::Event(event) => event,
@@ -411,10 +440,11 @@ impl TestClient {
     }
 
     /// Reads until `count` events are held, keeping them all.
-    pub fn collect_events(&mut self, count: usize) {
+    pub async fn collect_events(&mut self, count: usize) {
         while self.events.len() < count {
             match self
                 .read_frame()
+                .await
                 .expect("an event, not a closed connection")
             {
                 ServerFrame::Event(event) => self.events.push_back(event),
@@ -425,9 +455,9 @@ impl TestClient {
 
     /// The next event that `wanted` accepts; the ones before it are
     /// discarded.
-    pub fn wait_for_event(&mut self, mut wanted: impl FnMut(&Event) -> bool) -> Event {
+    pub async fn wait_for_event(&mut self, mut wanted: impl FnMut(&Event) -> bool) -> Event {
         loop {
-            let event = self.next_event();
+            let event = self.next_event().await;
             if wanted(&event) {
                 return event;
             }

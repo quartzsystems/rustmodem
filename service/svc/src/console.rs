@@ -45,16 +45,17 @@ pub fn run(config: Option<PathBuf>) -> Result<(), Vec<Message>> {
     let runtime = svc::runtime::build().map_err(|e| vec![message("RMD0003", &[&e.to_string()])])?;
     let (shutdown, mut stopping) = shutdown::channel();
     // This is set once per process; console mode runs once.
-    let _ = STOP.set(shutdown);
+    let _ = STOP.set(shutdown.clone());
     // SAFETY: the handler is a function that lives for the whole program
     // and touches only the two statics above, which are never freed.
     unsafe { SetConsoleCtrlHandler(Some(on_console_control), true) }
         .map_err(|e| vec![message("RMD0023", &[&e.message()])])?;
 
-    let outcome = runner::start(config, RunMode::Console).map(|running| {
-        runtime.block_on(stopping.wait());
-        running.stop();
-    });
+    let outcome =
+        runner::start(config, RunMode::Console, runtime.handle(), &shutdown).map(|running| {
+            runtime.block_on(stopping.wait());
+            running.stop();
+        });
     drop(runtime);
     let (done, changed) = &DONE;
     *done.lock().unwrap_or_else(|e| e.into_inner()) = true;

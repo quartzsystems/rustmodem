@@ -72,7 +72,8 @@ fn serve() -> windows_service::Result<()> {
     // The runtime is built here, on the thread the service control
     // manager started the service on, which then waits on it.
     let runtime = svc::runtime::build().map_err(windows_service::Error::Winapi)?;
-    let (handler_stop, mut stopping) = shutdown::channel();
+    let (shutdown, mut stopping) = shutdown::channel();
+    let handler_stop = shutdown.clone();
     let status = service_control_handler::register(SERVICE_NAME, move |control| match control {
         ServiceControl::Stop | ServiceControl::Shutdown => {
             handler_stop.trigger();
@@ -103,7 +104,7 @@ fn serve() -> windows_service::Result<()> {
 
     report(ServiceState::StartPending, ServiceExitCode::Win32(0))?;
     let config = CONFIG.get().cloned().flatten();
-    match runner::start(config, RunMode::Service) {
+    match runner::start(config, RunMode::Service, runtime.handle(), &shutdown) {
         Ok(running) => {
             report(ServiceState::Running, ServiceExitCode::Win32(0))?;
             runtime.block_on(stopping.wait());

@@ -4,11 +4,11 @@
 
 //! The server: the hello exchange, requests and their answers.
 
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use config::{
     Backend, Config, ConfigFile, ControlConfig, EngineKind, HuntGroup, HuntGroupEdit, LineConfig,
@@ -23,12 +23,38 @@ use ctlproto::{
     SettingsResult, SipSettings, Subscription, decode_client, encode,
 };
 use msg::{Message, Severity, message};
-use pool::PoolHandle;
 use serde::Serialize;
 use serde_json::Value;
+use tokio::io::{
+    AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+};
+use tokio::sync::{Mutex, MutexGuard, watch};
 
+use crate::link::PoolLink;
 use crate::queue::{ClientQueue, Hub, Limits};
 use crate::{Connection, Halves, Listener, PortInventory};
+
+/// Tells the server's tasks that the service is stopping: the value goes
+/// to `true`, once. A sender that goes away without saying so never stops
+/// them.
+pub type Stop = watch::Receiver<bool>;
+
+/// A [`Stop`] that never says to stop, for a server that runs until its
+/// process ends.
+pub fn never_stops() -> Stop {
+    watch::channel(false).1
+}
+
+/// Waits until the service is stopping.
+async fn stopped(stop: &mut Stop) {
+    if stop.wait_for(|stopping| *stopping).await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+
+/// How long a client's writing task is given, when the service stops, to
+/// write what is queued for it.
+const STOP_GRACE: Duration = Duration::from_secs(1);
 
 /// Tells the server the time, in milliseconds since the Unix epoch. The
 /// service gives [`system_clock`]; the demo service, for screenshots, gives
@@ -94,7 +120,7 @@ impl AtStart {
 /// What a server is made from.
 pub struct ServerParts {
     /// The way to the pool.
-    pub pool: PoolHandle,
+    pub pool: PoolLink,
     /// The configuration the service started with.
     pub config: ConfigFile,
     /// Where the configuration is read from and written to.
@@ -127,7 +153,7 @@ pub struct ServerParts {
 }
 
 struct Shared {
-    pool: PoolHandle,
+    pool: PoolLink,
     config: Mutex<ConfigFile>,
     config_path: PathBuf,
     version: String,
@@ -213,74 +239,101 @@ impl Server {
     /// side of each is bound to, so that the lines show it. The service
     /// calls this when it starts and every so often after; the server calls
     /// it itself when the configuration is reloaded.
-    pub fn refresh_bindings(&self) -> Result<(), Message> {
+    pub async fn refresh_bindings(&self) -> Result<(), Message> {
         let bindings = self
-            .shared
-            .ports
-            .ports()
+            .inventory()
+            .await
             .iter()
             .filter_map(|port| Some((port.name.clone(), port.binding()?)))
             .collect();
-        self.shared.pool.set_bindings(bindings)
+        self.shared.pool.set_bindings(bindings).await
     }
 
-    /// Accepts clients until the listener shuts down, serving each on a
-    /// thread of its own.
-    pub fn serve(&self, mut listener: Box<dyn Listener>) -> io::Result<()> {
-        while let Some(connection) = listener.accept()? {
-            let server = self.clone();
-            std::thread::Builder::new()
-                .name("ctl-client".to_string())
-                .spawn(move || server.handle(connection))?;
+    /// The serial ports of the machine. Looking them up may wait on the
+    /// system, so it is done on a thread for blocking work.
+    async fn inventory(&self) -> Vec<PortInfo> {
+        let ports = Arc::clone(&self.shared.ports);
+        match tokio::task::spawn_blocking(move || ports.ports()).await {
+            Ok(ports) => ports,
+            Err(failed) => match failed.try_into_panic() {
+                Ok(panic) => std::panic::resume_unwind(panic),
+                // The runtime is shutting down.
+                Err(_) => Vec::new(),
+            },
         }
-        Ok(())
     }
 
-    /// Serves one client until it goes away.
-    pub fn handle(&self, connection: Box<dyn Connection>) {
+    /// Accepts clients until the listener shuts down or the service
+    /// stops, serving each on tasks of its own. An error is the
+    /// listener's: the clients already connected are served on, and the
+    /// caller may call this again.
+    pub async fn serve<L: Listener>(&self, listener: &mut L, mut stop: Stop) -> io::Result<()> {
+        loop {
+            let accepted = tokio::select! {
+                accepted = listener.accept() => accepted?,
+                () = stopped(&mut stop) => return Ok(()),
+            };
+            let Some(connection) = accepted else {
+                return Ok(());
+            };
+            let server = self.clone();
+            let stop = stop.clone();
+            tokio::spawn(async move { server.handle(connection, stop).await });
+        }
+    }
+
+    /// Serves one client until it goes away or the service stops.
+    pub async fn handle<C: Connection>(&self, connection: C, mut stop: Stop) {
         let number = self.shared.next_client.fetch_add(1, Ordering::Relaxed);
         let client = format!("{number} ({})", connection.peer());
-        let Halves {
-            reader,
-            mut writer,
-            closer,
-        } = connection.split();
-        let queue = Arc::new(ClientQueue::new(Arc::clone(&closer), self.shared.limits));
+        let Halves { reader, mut writer } = connection.split();
+        let queue = Arc::new(ClientQueue::new(self.shared.limits));
 
-        // One thread writes what is queued, so that a client that is slow
+        // One task writes what is queued, so that a client that is slow
         // to read holds up nobody but itself.
         let writing = Arc::clone(&queue);
-        let writer_thread = std::thread::Builder::new()
-            .name("ctl-writer".to_string())
-            .spawn(move || {
-                while let Some(line) = writing.pop() {
-                    let written = writer
-                        .write_all(line.as_bytes())
-                        .and_then(|()| writer.write_all(b"\n"))
-                        .and_then(|()| writer.flush());
-                    if written.is_err() {
-                        writing.close();
-                        break;
-                    }
+        let mut writer_task = tokio::spawn(async move {
+            while let Some(line) = writing.pop().await {
+                let written = tokio::select! {
+                    written = write_line(&mut writer, &line) => written,
+                    // The client fell too far behind while this waited
+                    // for it to read.
+                    () = writing.closed() => break,
+                };
+                if written.is_err() {
+                    writing.close();
+                    break;
                 }
-            });
+            }
+        });
 
         let mut reader = BufReader::new(reader);
-        let greeted = self.greet(&mut reader, &queue);
+        let greeted = tokio::select! {
+            greeted = self.greet(&mut reader, &queue) => greeted,
+            () = queue.closed() => false,
+            () = stopped(&mut stop) => false,
+        };
         if greeted {
             self.log(&message("RMD2011", &[&client]));
             self.shared.hub.add(&queue);
-            self.converse(&mut reader, &queue);
+            self.converse(&mut reader, &queue, &mut stop).await;
             self.shared.hub.remove(&queue);
         }
 
         // Let what is queued go out. The connection closes when its two
-        // halves are dropped, the writer's with its thread and the reader's
+        // halves are dropped, the writer's with its task and the reader's
         // here; it is not closed by force, which on some transports would
-        // discard what the client has not read yet.
+        // discard what the client has not read yet. A service that is
+        // stopping does not wait long for a client that does not read.
         queue.finish();
-        if let Ok(thread) = writer_thread {
-            let _ = thread.join();
+        tokio::select! {
+            _ = &mut writer_task => {}
+            () = stopped(&mut stop) => {
+                if tokio::time::timeout(STOP_GRACE, &mut writer_task).await.is_err() {
+                    writer_task.abort();
+                    let _ = writer_task.await;
+                }
+            }
         }
         drop(reader);
         if queue.overflowed() {
@@ -291,7 +344,11 @@ impl Server {
     }
 
     /// The hello exchange. Returns whether the client may go on.
-    fn greet(&self, reader: &mut impl BufRead, queue: &ClientQueue) -> bool {
+    async fn greet(
+        &self,
+        reader: &mut (impl AsyncBufRead + Unpin + Send),
+        queue: &ClientQueue,
+    ) -> bool {
         let refuse = |problem: Message| {
             queue.push_reply(encode(&ServerFrame::Error {
                 id: None,
@@ -299,7 +356,7 @@ impl Server {
             }));
             false
         };
-        match read_line(reader) {
+        match read_line(reader).await {
             Ok(Some(Line::Text(line))) => match decode_client(&line) {
                 Ok(ClientFrame::Hello { hello }) if hello.protocol == PROTOCOL => {
                     queue.push_reply(encode(&ServerFrame::Hello {
@@ -324,10 +381,22 @@ impl Server {
         }
     }
 
-    /// Requests and their answers, until the client goes away.
-    fn converse(&self, reader: &mut impl BufRead, queue: &Arc<ClientQueue>) {
+    /// Requests and their answers, until the client goes away, is cut
+    /// off, or the service stops. Only the wait for a request is given
+    /// up: a request that has been read is carried out whole.
+    async fn converse(
+        &self,
+        reader: &mut (impl AsyncBufRead + Unpin + Send),
+        queue: &Arc<ClientQueue>,
+        stop: &mut Stop,
+    ) {
         loop {
-            let line = match read_line(reader) {
+            let read = tokio::select! {
+                read = read_line(reader) => read,
+                () = queue.closed() => return,
+                () = stopped(stop) => return,
+            };
+            let line = match read {
                 Ok(Some(Line::Text(line))) => line,
                 Ok(Some(Line::NotText)) => {
                     let problem = message("RMD2004", &["the message is not UTF-8"]);
@@ -347,12 +416,12 @@ impl Server {
                 }
                 Ok(None) | Err(_) => return,
             };
-            queue.push_reply(encode(&self.answer(&line, queue)));
+            queue.push_reply(encode(&self.answer(&line, queue).await));
         }
     }
 
     /// The answer to one line from the client.
-    fn answer(&self, line: &str, queue: &ClientQueue) -> ServerFrame {
+    async fn answer(&self, line: &str, queue: &ClientQueue) -> ServerFrame {
         let frame = match decode_client(line) {
             Ok(ClientFrame::Request(frame)) => frame,
             Ok(ClientFrame::Hello { .. }) => {
@@ -374,8 +443,10 @@ impl Server {
             }
         };
         let id = frame.id;
-        let result = Call::from_parts(&frame.method, frame.params)
-            .and_then(|call| self.dispatch(call, queue));
+        let result = match Call::from_parts(&frame.method, frame.params) {
+            Ok(call) => self.dispatch(call, queue).await,
+            Err(problem) => Err(problem),
+        };
         match result {
             Ok(result) => ServerFrame::Result { id, result },
             Err(problem) => ServerFrame::Error {
@@ -385,11 +456,11 @@ impl Server {
         }
     }
 
-    fn dispatch(&self, call: Call, queue: &ClientQueue) -> Result<Value, Message> {
+    async fn dispatch(&self, call: Call, queue: &ClientQueue) -> Result<Value, Message> {
         let shared = &self.shared;
         match call {
             Call::ServiceInfo => {
-                let lines = shared.pool.lines()?.len() as u32;
+                let lines = shared.pool.lines().await?.len() as u32;
                 value(&ServiceInfo {
                     version: shared.version.clone(),
                     protocol: PROTOCOL,
@@ -407,41 +478,43 @@ impl Server {
                 })
             }
             Call::LinesList => value(&LineList {
-                lines: shared.pool.lines()?,
+                lines: shared.pool.lines().await?,
             }),
-            Call::LinesGet(line) => value(&shared.pool.line(line.id)?),
+            Call::LinesGet(line) => value(&shared.pool.line(line.id).await?),
             Call::LinesAnswer(line) => {
-                shared.pool.answer(line.id)?;
-                value(&shared.pool.line(line.id)?)
+                shared.pool.answer(line.id).await?;
+                value(&shared.pool.line(line.id).await?)
             }
             Call::LinesHangup(line) => {
-                shared.pool.hangup(line.id)?;
-                value(&shared.pool.line(line.id)?)
+                shared.pool.hangup(line.id).await?;
+                value(&shared.pool.line(line.id).await?)
             }
             Call::LinesReset(line) => {
-                shared.pool.reset(line.id)?;
-                value(&shared.pool.line(line.id)?)
+                shared.pool.reset(line.id).await?;
+                value(&shared.pool.line(line.id).await?)
             }
             Call::LinesEnable(line) => {
                 let edit = LineEdit {
                     enabled: Some(true),
                     ..LineEdit::default()
                 };
-                self.change_config(|file| file.edit_line(line.id, &edit))?;
-                value(&shared.pool.line(line.id)?)
+                self.change_config(|file| file.edit_line(line.id, &edit))
+                    .await?;
+                value(&shared.pool.line(line.id).await?)
             }
             Call::LinesDisable(line) => {
                 let edit = LineEdit {
                     enabled: Some(false),
                     ..LineEdit::default()
                 };
-                self.change_config(|file| file.edit_line(line.id, &edit))?;
-                value(&shared.pool.line(line.id)?)
+                self.change_config(|file| file.edit_line(line.id, &edit))
+                    .await?;
+                value(&shared.pool.line(line.id).await?)
             }
             Call::LinesAdd(spec) => {
                 let line = new_line(&spec)?;
-                self.change_config(|file| file.add_line(&line))?;
-                value(&shared.pool.line(spec.id)?)
+                self.change_config(|file| file.add_line(&line)).await?;
+                value(&shared.pool.line(spec.id).await?)
             }
             Call::LinesEdit(change) => {
                 self.change_config(|file| {
@@ -449,18 +522,20 @@ impl Server {
                     let edit = line_edit(&change, file.config().line(change.id))
                         .map_err(|problem| vec![problem])?;
                     file.edit_line(change.id, &edit)
-                })?;
-                value(&shared.pool.line(change.id)?)
+                })
+                .await?;
+                value(&shared.pool.line(change.id).await?)
             }
-            Call::LinesCapture(switch) => value(&shared.pool.capture(switch.id, switch.on)?),
-            Call::SipStatus => value(&shared.pool.sip_status()?),
+            Call::LinesCapture(switch) => value(&shared.pool.capture(switch.id, switch.on).await?),
+            Call::SipStatus => value(&shared.pool.sip_status().await?),
             Call::SipReregister(query) => {
-                shared.pool.reregister(query.id)?;
+                shared.pool.reregister(query.id).await?;
                 value(&Done {})
             }
             Call::HuntGroupsList => value(&HuntGroupList {
                 groups: self
                     .config()
+                    .await
                     .config()
                     .hunt_groups
                     .iter()
@@ -485,7 +560,8 @@ impl Server {
                     pilot: spec.pilot,
                     lines: spec.lines,
                 };
-                self.change_config(|file| file.add_hunt_group(&group))?;
+                self.change_config(|file| file.add_hunt_group(&group))
+                    .await?;
                 value(&hunt_group_info(&group))
             }
             Call::HuntGroupsEdit(change) => {
@@ -495,9 +571,10 @@ impl Server {
                     lines: change.lines,
                     strategy: change.strategy,
                 };
-                self.change_config(|file| file.edit_hunt_group(&change.name, &edit))?;
+                self.change_config(|file| file.edit_hunt_group(&change.name, &edit))
+                    .await?;
                 let name = change.new_name.unwrap_or(change.name);
-                let config = self.config();
+                let config = self.config().await;
                 let group = config
                     .config()
                     .hunt_group(&name)
@@ -505,10 +582,11 @@ impl Server {
                 value(&hunt_group_info(group))
             }
             Call::HuntGroupsRemove(group) => {
-                self.change_config(|file| file.remove_hunt_group(&group.name))?;
+                self.change_config(|file| file.remove_hunt_group(&group.name))
+                    .await?;
                 value(&Done {})
             }
-            Call::RoutesList => value(&self.routes()),
+            Call::RoutesList => value(&self.routes().await),
             Call::RoutesAdd(spec) => {
                 let route = Route {
                     target: Target::parse(&spec.target).ok_or_else(|| {
@@ -520,51 +598,56 @@ impl Server {
                     called: spec.called,
                 };
                 let index = spec.index.map(|index| index as usize);
-                self.change_config(|file| file.add_route(&route, index))?;
-                value(&self.routes())
+                self.change_config(|file| file.add_route(&route, index))
+                    .await?;
+                value(&self.routes().await)
             }
             Call::RoutesEdit(change) => {
                 let edit = RouteEdit {
                     called: change.called,
                     target: change.target,
                 };
-                self.change_config(|file| file.edit_route(change.index as usize, &edit))?;
-                value(&self.routes())
+                self.change_config(|file| file.edit_route(change.index as usize, &edit))
+                    .await?;
+                value(&self.routes().await)
             }
             Call::RoutesRemove(route) => {
-                self.change_config(|file| file.remove_route(route.index as usize))?;
-                value(&self.routes())
+                self.change_config(|file| file.remove_route(route.index as usize))
+                    .await?;
+                value(&self.routes().await)
             }
             Call::RoutesMove(moved) => {
-                self.change_config(|file| {
-                    file.move_route(moved.index as usize, moved.to as usize)
-                })?;
-                value(&self.routes())
+                self.change_config(|file| file.move_route(moved.index as usize, moved.to as usize))
+                    .await?;
+                value(&self.routes().await)
             }
             Call::LinesRemove(line) => {
-                self.change_config(|file| file.remove_line(line.id))?;
+                self.change_config(|file| file.remove_line(line.id)).await?;
                 value(&Done {})
             }
             Call::CallsList(query) => value(&CallList {
-                calls: shared.pool.calls(query.last.map(|last| last as usize))?,
+                calls: shared
+                    .pool
+                    .calls(query.last.map(|last| last as usize))
+                    .await?,
             }),
             Call::ConfigReload => {
-                let mut current = self.config();
+                let mut current = self.config().await;
                 let loaded = ConfigFile::load(&shared.config_path).map_err(first)?;
-                shared.pool.apply_config(loaded.config().clone())?;
+                shared.pool.apply_config(loaded.config().clone()).await?;
                 let lines = loaded.config().lines.len() as u32;
                 *current = loaded;
                 drop(current);
                 shared
                     .config_loaded_ms
                     .store((shared.clock)(), Ordering::Relaxed);
-                self.refresh_bindings()?;
+                self.refresh_bindings().await?;
                 value(&Reloaded { lines })
             }
-            Call::ConfigGet => value(&self.settings(self.config().config())),
-            Call::ConfigSet(change) => value(&self.change_settings(&change)?),
+            Call::ConfigGet => value(&self.settings(self.config().await.config())),
+            Call::ConfigSet(change) => value(&self.change_settings(&change).await?),
             Call::StatsGet => {
-                let mut stats = shared.pool.stats()?;
+                let mut stats = shared.pool.stats().await?;
                 stats.cpu_percent = (shared.cpu)();
                 value(&stats)
             }
@@ -572,7 +655,7 @@ impl Server {
                 lines: shared.hub.log_tail(query.last.map(|last| last as usize)),
             }),
             Call::PortsList => value(&PortList {
-                ports: self.ports()?,
+                ports: self.ports().await?,
             }),
             Call::Subscribe(selection) => {
                 let names = event_names("subscribe", &selection)?;
@@ -589,22 +672,22 @@ impl Server {
         }
     }
 
-    fn config(&self) -> MutexGuard<'_, ConfigFile> {
-        self.shared.config.lock().unwrap_or_else(|e| e.into_inner())
+    async fn config(&self) -> MutexGuard<'_, ConfigFile> {
+        self.shared.config.lock().await
     }
 
     /// Changes the configuration: the change is made to a copy, checked,
     /// written to the file and given to the pool, and only then kept. If
     /// any step fails, nothing has changed.
-    fn change_config(
+    async fn change_config(
         &self,
         change: impl FnOnce(&mut ConfigFile) -> Result<(), Vec<Message>>,
     ) -> Result<(), Message> {
-        let mut current = self.config();
+        let mut current = self.config().await;
         let mut next = current.clone();
         change(&mut next).map_err(first)?;
         next.save(&self.shared.config_path)?;
-        self.shared.pool.apply_config(next.config().clone())?;
+        self.shared.pool.apply_config(next.config().clone()).await?;
         *current = next;
         Ok(())
     }
@@ -655,10 +738,11 @@ impl Server {
     }
 
     /// The routes of the configuration, in the order they are tried.
-    fn routes(&self) -> RouteList {
+    async fn routes(&self) -> RouteList {
         RouteList {
             routes: self
                 .config()
+                .await
                 .config()
                 .routes
                 .iter()
@@ -677,7 +761,7 @@ impl Server {
     /// file, and only then kept. The lines are not touched. What could
     /// not be put into effect waits for the service to start again, and
     /// the result says so.
-    fn change_settings(&self, change: &SettingsChange) -> Result<SettingsResult, Message> {
+    async fn change_settings(&self, change: &SettingsChange) -> Result<SettingsResult, Message> {
         let service = change.service.as_ref();
         let edit = SettingsEdit {
             log_level: service
@@ -717,14 +801,10 @@ impl Server {
                 }),
         };
         let telephony = !edit.sip.is_empty() || !edit.media.is_empty();
-        let mut current = self.config();
+        let mut current = self.config().await;
         let mut next = current.clone();
         next.edit_settings(&edit).map_err(first)?;
-        let mut running = self
-            .shared
-            .running
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut running = self.shared.running.lock().await;
         // The settings of the service itself go into effect now, if this
         // service can do that; the control pipe is made when it starts.
         let wanted = next.config().service.clone();
@@ -746,7 +826,7 @@ impl Server {
             // The router takes what it can take while it runs: the peers,
             // the timeouts, the codecs and the packet time, for the calls
             // that follow.
-            self.shared.pool.apply_config(config.clone())?;
+            self.shared.pool.apply_config(config.clone()).await?;
         }
         Ok(SettingsResult {
             restart_required: config.service != running.0
@@ -758,9 +838,9 @@ impl Server {
 
     /// `ports.list`: the ports of the machine in name order, each with the
     /// line that uses it.
-    fn ports(&self) -> Result<Vec<PortInfo>, Message> {
-        let lines = self.shared.pool.lines()?;
-        let mut ports = self.shared.ports.ports();
+    async fn ports(&self) -> Result<Vec<PortInfo>, Message> {
+        let lines = self.shared.pool.lines().await?;
+        let mut ports = self.inventory().await;
         for port in &mut ports {
             // Windows port names do not distinguish case.
             port.line = lines
@@ -974,16 +1054,23 @@ fn event_names(
         .map(Some)
 }
 
+/// Writes one message and its line feed.
+async fn write_line(writer: &mut (impl AsyncWrite + Unpin), line: &str) -> io::Result<()> {
+    writer.write_all(line.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await
+}
+
 /// Reads one message: the bytes up to a line feed. Blank lines are skipped.
 /// `None` means the client has gone.
-fn read_line(reader: &mut impl BufRead) -> io::Result<Option<Line>> {
+async fn read_line(reader: &mut (impl AsyncBufRead + Unpin + Send)) -> io::Result<Option<Line>> {
     loop {
         let mut bytes = Vec::new();
         // One byte past the limit is enough to know the line is too long.
-        let read = reader
-            .by_ref()
+        let read = (&mut *reader)
             .take(MAX_MESSAGE_BYTES as u64 + 1)
-            .read_until(b'\n', &mut bytes)?;
+            .read_until(b'\n', &mut bytes)
+            .await?;
         if read == 0 {
             return Ok(None);
         }

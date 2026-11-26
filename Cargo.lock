@@ -123,6 +123,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial",
+ "tokio",
 ]
 
 [[package]]
@@ -146,6 +147,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial",
+ "tokio",
 ]
 
 [[package]]
@@ -164,7 +166,9 @@ dependencies = [
  "serde_json",
  "serial",
  "sippeer",
+ "svc",
  "telephony",
+ "tokio",
 ]
 
 [[package]]
@@ -269,7 +273,6 @@ name = "manager"
 version = "0.0.3"
 dependencies = [
  "ctlproto",
- "ctlsrv",
  "glyph",
  "model",
  "msg",
@@ -379,8 +382,10 @@ dependencies = [
  "ctlsrv",
  "engine",
  "msg",
+ "pipe",
  "pool",
  "serial",
+ "tokio",
  "windows",
 ]
 

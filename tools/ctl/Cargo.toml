@@ -27,6 +27,8 @@ ctlsrv.workspace = true
 engine.workspace = true
 pool.workspace = true
 serial.workspace = true
+# The control server the tests run the commands against is on Tokio.
+tokio.workspace = true
 
 [lints]
 workspace = true

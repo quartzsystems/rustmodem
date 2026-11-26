@@ -20,7 +20,6 @@ serde_json.workspace = true
 
 # The window is Windows only, like the wrappers it is built on.
 [target."cfg(windows)".dependencies]
-ctlsrv.workspace = true
 glyph.workspace = true
 pipe.workspace = true
 win32.workspace = true

@@ -25,12 +25,57 @@ use ctlproto::{
 use ctlsrv::{Hub, Limits, Listener, Server, ServerParts};
 use engine::{NullConfig, NullEngine};
 use msg::Message;
-use pipe::{Event, PipeClient as OverlappedClient, PipeListener, PipeSecurity};
+use pipe::{PipeClient as OverlappedClient, PipeConnection, PipeListener, PipeSecurity};
 use pool::{
     EventSink, InlineRunner, MemoryProfiles, Now, NullSwitch, Pool, PoolParts, SerialFactory,
-    command_channel,
 };
 use serial::{MemoryHost, SerialBackend, memory_pair};
+use tokio::sync::watch;
+
+/// What the listeners and the control servers of the tests run on. The
+/// clients block, as the real ones do, on the threads of the tests.
+fn runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap()
+    })
+}
+
+/// The stop signal of a service: what its shutdown channel is to the
+/// control server.
+struct Event(watch::Sender<bool>);
+
+impl Event {
+    fn new() -> std::io::Result<Event> {
+        Ok(Event(watch::Sender::new(false)))
+    }
+
+    fn set(&self) {
+        self.0.send_replace(true);
+    }
+}
+
+/// Makes the pipe, on the runtime of the tests.
+fn bind(name: &str, security: PipeSecurity) -> Result<PipeListener, Message> {
+    let _on_runtime = runtime().enter();
+    PipeListener::bind(name, security)
+}
+
+/// Waits for a client as the control server does: until one connects, or
+/// until the stop signal, which is `None`.
+fn accept(listener: &mut PipeListener, stop: &Event) -> std::io::Result<Option<PipeConnection>> {
+    let mut stop = stop.0.subscribe();
+    runtime().block_on(async {
+        tokio::select! {
+            accepted = listener.accept() => accepted,
+            _ = stop.wait_for(|stopping| *stopping) => Ok(None),
+        }
+    })
+}
 
 type Hosts = Arc<Mutex<BTreeMap<String, MemoryHost>>>;
 
@@ -103,12 +148,15 @@ impl Fixture {
             call_log: None,
         });
         pool.apply_config(&config);
-        let (handle, inbox) = command_channel();
+        let (handle, mut requests) = ctlsrv::pool_link();
         let stop_pool = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop_pool);
         let pool_thread = std::thread::spawn(move || {
             let started = Instant::now();
-            while !stopping.load(Ordering::Relaxed) && inbox.serve(&mut pool) {
+            while !stopping.load(Ordering::Relaxed) {
+                while let Ok(request) = requests.try_recv() {
+                    request.run(&mut pool);
+                }
                 let mono_ms = started.elapsed().as_millis() as u64;
                 pool.service(Now {
                     mono_ms,
@@ -145,14 +193,13 @@ impl Fixture {
         });
 
         let stop = Arc::new(Event::new().unwrap());
-        let mut listener =
-            PipeListener::bind(&pipe, PipeSecurity::Creator, Arc::clone(&stop)).unwrap();
+        let mut listener = bind(&pipe, PipeSecurity::Creator).unwrap();
         assert_eq!(listener.name(), pipe);
+        let stopping = stop.0.subscribe();
         let accept_thread = std::thread::spawn(move || {
-            while let Some(connection) = listener.accept().unwrap() {
-                let server = server.clone();
-                std::thread::spawn(move || server.handle(connection));
-            }
+            runtime()
+                .block_on(server.serve(&mut listener, stopping))
+                .unwrap();
         });
 
         // The hosts open their ports, so the lines are idle.
@@ -524,8 +571,7 @@ fn a_client_that_stops_reading_is_disconnected_and_holds_nobody_up() {
 #[test]
 fn a_pipe_name_already_in_use_is_message_2007() {
     let fixture = Fixture::new(0, Limits::default());
-    let stop = Arc::new(Event::new().unwrap());
-    let Err(problem) = PipeListener::bind(&fixture.pipe, PipeSecurity::Creator, stop) else {
+    let Err(problem) = bind(&fixture.pipe, PipeSecurity::Creator) else {
         panic!("a second listener on the same pipe must be refused");
     };
     assert_eq!(problem.id, "RMD2007");
@@ -535,9 +581,9 @@ fn a_pipe_name_already_in_use_is_message_2007() {
 #[test]
 fn the_stop_signal_ends_a_wait_for_a_client() {
     let stop = Arc::new(Event::new().unwrap());
-    let mut listener =
-        PipeListener::bind(&unique_name(), PipeSecurity::Creator, Arc::clone(&stop)).unwrap();
-    let waiting = std::thread::spawn(move || listener.accept().map(|c| c.is_none()));
+    let mut listener = bind(&unique_name(), PipeSecurity::Creator).unwrap();
+    let stopping = Arc::clone(&stop);
+    let waiting = std::thread::spawn(move || accept(&mut listener, &stopping).map(|c| c.is_none()));
     std::thread::sleep(Duration::from_millis(100));
     assert!(!waiting.is_finished(), "accept waits for a client");
     stop.set();
@@ -551,9 +597,10 @@ fn the_stop_signal_ends_a_wait_for_a_client() {
 fn the_service_pipe_admits_only_system_and_administrators() {
     let name = unique_name();
     let stop = Arc::new(Event::new().unwrap());
-    let mut listener =
-        PipeListener::bind(&name, PipeSecurity::AdministratorsOnly, Arc::clone(&stop)).unwrap();
-    let accepting = std::thread::spawn(move || listener.accept().map(|c| c.is_some()));
+    let mut listener = bind(&name, PipeSecurity::AdministratorsOnly).unwrap();
+    let stopping = Arc::clone(&stop);
+    let accepting =
+        std::thread::spawn(move || accept(&mut listener, &stopping).map(|c| c.is_some()));
 
     // Whether this test may open the pipe depends on whether it runs
     // elevated. Either it is let in, or it is refused for lack of access;
@@ -651,9 +698,10 @@ fn a_client_is_told_why_it_cannot_connect() {
     // and is refused for lack of access when it does not.
     let name = unique_name();
     let stop = Arc::new(Event::new().unwrap());
-    let mut listener =
-        PipeListener::bind(&name, PipeSecurity::AdministratorsOnly, Arc::clone(&stop)).unwrap();
-    let accepting = std::thread::spawn(move || listener.accept().map(|c| c.is_some()));
+    let mut listener = bind(&name, PipeSecurity::AdministratorsOnly).unwrap();
+    let stopping = Arc::clone(&stop);
+    let accepting =
+        std::thread::spawn(move || accept(&mut listener, &stopping).map(|c| c.is_some()));
     match OverlappedClient::connect(&name, Duration::from_secs(1)) {
         Ok(_client) => assert!(accepting.join().unwrap().unwrap()),
         Err(error) => {

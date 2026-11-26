@@ -11,13 +11,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use config::{Config, ConfigFile, ControlConfig, LineConfig};
 use ctlproto::{Event as ControlEvent, LogEvent, LogLevel, ServiceMode};
-use ctlsrv::{Clock, Hub, Limits, Listener, Server, ServerParts};
+use ctlsrv::{Clock, Hub, Limits, PoolLink, PoolRequests, Server, ServerParts};
 use msg::{Message, Severity, message};
-use pipe::{Event, PipeListener, PipeSecurity};
+use pipe::{PipeListener, PipeSecurity};
 use pool::{
     CallRouter, EngineFactory, EventSink, InlineRunner, MediaRunner, MemoryProfiles, Now,
-    NullSwitch, Pool, PoolHandle, PoolInbox, PoolParts, TICK_MS, command_channel,
+    NullSwitch, Pool, PoolParts, TICK_MS,
 };
+use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::args::{Options, Script};
 use crate::busy::{Driver, STEP_MS};
@@ -117,9 +118,13 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
     let file = ConfigFile::from_config(&config)?;
     file.save(&config_path).map_err(one)?;
 
-    let stop = Arc::new(Event::new().map_err(|e| one(message("RMD0003", &[&e.to_string()])))?);
-    let mut listener =
-        PipeListener::bind(&options.pipe, PipeSecurity::Creator, Arc::clone(&stop)).map_err(one)?;
+    // The control server runs on the runtime the service's does.
+    let runtime = svc::runtime::build().map_err(|e| one(message("RMD0003", &[&e.to_string()])))?;
+    let mut listener = {
+        // The pipe is registered with the runtime's I/O driver.
+        let _on_runtime = runtime.enter();
+        PipeListener::bind(&options.pipe, PipeSecurity::Creator).map_err(one)?
+    };
 
     let hub = Hub::new();
     let hosts = Hosts::default();
@@ -204,7 +209,7 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
     pool.apply_config(&config);
 
     let ports = demo_ports(options.lines);
-    let (handle, inbox) = command_channel();
+    let (handle, requests) = ctlsrv::pool_link();
     let control_log = {
         let hub = hub.clone();
         let clock = Arc::clone(&clock);
@@ -254,7 +259,7 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
     let spawn_failed = |e: std::io::Error| one(message("RMD0003", &[&e.to_string()]));
     std::thread::Builder::new()
         .name("pool".to_string())
-        .spawn(move || run_pool(pool, inbox, frozen_at))
+        .spawn(move || run_pool(pool, requests, frozen_at))
         .map_err(spawn_failed)?;
     if !frozen {
         let active = options.script == Script::Busy;
@@ -277,33 +282,26 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
         options.script.as_str(),
         options.pipe
     );
-    loop {
-        match listener.accept() {
-            Ok(Some(connection)) => {
-                let server = server.clone();
-                // A client that cannot be given a thread is turned away by
-                // its connection closing.
-                let _ = std::thread::Builder::new()
-                    .name("ctl-client".to_string())
-                    .spawn(move || server.handle(connection));
-            }
-            Ok(None) => return Ok(()),
-            Err(error) => {
-                return Err(one(message(
-                    "RMD2007",
-                    &[listener.name(), &error.to_string()],
-                )));
-            }
-        }
-    }
+    // Clients are served until the process is ended.
+    runtime
+        .block_on(server.serve(&mut listener, ctlsrv::never_stops()))
+        .map_err(|error| one(message("RMD2007", &[listener.name(), &error.to_string()])))
 }
 
 /// The pool's thread. With `frozen_at` the pool is served at that one
 /// time for ever: what the operator asks for is done, and nothing moves on
 /// by itself.
-fn run_pool(mut pool: Pool, inbox: PoolInbox, frozen_at: Option<Now>) {
+fn run_pool(mut pool: Pool, mut requests: PoolRequests, frozen_at: Option<Now>) {
     let started = Instant::now();
-    while inbox.serve(&mut pool) {
+    loop {
+        loop {
+            match requests.try_recv() {
+                Ok(request) => request.run(&mut pool),
+                Err(TryRecvError::Empty) => break,
+                // Nothing can ask anything of the pool any more.
+                Err(TryRecvError::Disconnected) => return,
+            }
+        }
         let now = frozen_at.unwrap_or_else(|| Now {
             mono_ms: started.elapsed().as_millis() as u64,
             unix_ms: unix_ms(),
@@ -314,10 +312,10 @@ fn run_pool(mut pool: Pool, inbox: PoolInbox, frozen_at: Option<Now>) {
 }
 
 /// The thread that plays the hosts.
-fn run_hosts(mut driver: Driver, pool: PoolHandle) {
+fn run_hosts(mut driver: Driver, pool: PoolLink) {
     let started = Instant::now();
     // The pool going away ends the demo service.
-    while let Ok(lines) = pool.lines() {
+    while let Ok(lines) = pool.blocking_lines() {
         driver.step(started.elapsed().as_millis() as u64, &lines);
         std::thread::sleep(Duration::from_millis(STEP_MS));
     }

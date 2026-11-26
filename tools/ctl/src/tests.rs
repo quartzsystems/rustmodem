@@ -18,13 +18,12 @@ use ctlproto::{
     CallList, Event, LineInfo, LineList, LineState, LogTail, PortInfo, PortKind, PortList,
     ServiceInfo, ServiceMode, Stats,
 };
-use ctlsrv::memory::{self, MemoryConnector, PipeReader, PipeWriter};
+use ctlsrv::memory::{self, BlockingReader, BlockingWriter, MemoryConnector};
 use ctlsrv::{Hub, Limits, Server, ServerParts};
 use engine::{NullConfig, NullEngine};
 use msg::Message;
 use pool::{
     EventSink, InlineRunner, MemoryProfiles, Now, NullSwitch, Pool, PoolParts, SerialFactory,
-    command_channel,
 };
 use serial::{MemoryHost, SerialBackend, memory_pair};
 
@@ -33,7 +32,7 @@ use crate::client::{Client, Failure};
 use crate::{report, run};
 
 type Hosts = Arc<Mutex<BTreeMap<String, MemoryHost>>>;
-type TestClient = Client<BufReader<PipeReader>, PipeWriter>;
+type TestClient = Client<BufReader<BlockingReader>, BlockingWriter>;
 
 struct Factory(Hosts);
 
@@ -75,6 +74,21 @@ struct Service {
     pool_thread: Option<JoinHandle<()>>,
 }
 
+/// What the control servers of the tests run on. The commands themselves
+/// block, as they do in `rustmodemctl`, on the threads of the tests. A
+/// server lives on after its service has gone, for as long as it has a
+/// client, so the runtime is the whole program's.
+fn runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap()
+    })
+}
+
 impl Service {
     fn start() -> Service {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -105,12 +119,15 @@ impl Service {
             call_log: None,
         });
         pool.apply_config(&config);
-        let (handle, inbox) = command_channel();
+        let (handle, mut requests) = ctlsrv::pool_link();
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let pool_thread = std::thread::spawn(move || {
             let started = Instant::now();
-            while !stopping.load(Ordering::Relaxed) && inbox.serve(&mut pool) {
+            while !stopping.load(Ordering::Relaxed) {
+                while let Ok(request) = requests.try_recv() {
+                    request.run(&mut pool);
+                }
                 let mono_ms = started.elapsed().as_millis() as u64;
                 pool.service(Now {
                     mono_ms,
@@ -153,8 +170,8 @@ impl Service {
             capture_dir: None,
         });
         let binding_server = server.clone();
-        let (listener, connector) = memory::listener();
-        std::thread::spawn(move || server.serve(Box::new(listener)));
+        let (mut listener, connector) = memory::listener();
+        runtime().spawn(async move { server.serve(&mut listener, ctlsrv::never_stops()).await });
 
         let service = Service {
             hub,
@@ -168,7 +185,9 @@ impl Service {
         for port in ["P1", "P2"] {
             service.host(port).open();
         }
-        binding_server.refresh_bindings().unwrap();
+        runtime()
+            .block_on(binding_server.refresh_bindings())
+            .unwrap();
         let mut client = service.client();
         eventually("both lines to be idle", || {
             let list: LineList = client.call(&ctlproto::Call::LinesList).unwrap();
@@ -188,7 +207,8 @@ impl Service {
 
     /// A client that has said hello.
     fn client(&self) -> TestClient {
-        let memory::MemoryClient { mut reader, writer } = self.connector.connect().unwrap();
+        let (mut reader, writer) =
+            memory::blocking(self.connector.connect().unwrap(), runtime().handle());
         reader.set_timeout(Some(Duration::from_secs(10)));
         let mut client = Client::new(BufReader::new(reader), writer);
         let hello = client.hello().unwrap();

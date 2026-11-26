@@ -11,9 +11,15 @@ license.workspace = true
 authors.workspace = true
 publish.workspace = true
 
+[features]
+# The service's end of the pipe: the listener, on Tokio. A client leaves
+# it off and depends on neither Tokio nor the control server.
+server = ["dep:ctlsrv", "dep:msg", "dep:tokio"]
+
 [dependencies]
-ctlsrv.workspace = true
-msg.workspace = true
+ctlsrv = { workspace = true, optional = true }
+msg = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 
 [target."cfg(windows)".dependencies]
 windows = { workspace = true, features = [
@@ -29,9 +35,14 @@ windows = { workspace = true, features = [
 [dev-dependencies]
 config.workspace = true
 ctlproto.workspace = true
+ctlsrv.workspace = true
 engine.workspace = true
+msg.workspace = true
+# The tests are of the listener.
+pipe = { path = ".", features = ["server"] }
 pool.workspace = true
 serial.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true
