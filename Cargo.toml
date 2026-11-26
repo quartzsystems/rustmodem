@@ -47,6 +47,8 @@ toml_edit = "0.25.21"
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 windows = "0.62.2"
 windows-service = "0.8.1"
+# For the screenshot tests of the manager, which read their goldens.
+png = "0.18.1"
 
 # The workspace's own crates.
 engine = { path = "modem/engine" }

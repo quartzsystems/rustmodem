@@ -28,9 +28,19 @@ win32.workspace = true
 [build-dependencies]
 glyph.workspace = true
 
+[dev-dependencies]
+png.workspace = true
+
 [lints]
 workspace = true
 
 [[bin]]
 name = "rustmodem-gui"
 path = "src/main.rs"
+
+# The screenshot tests are a program of their own: one window after the
+# other on one thread, with a report at the end.
+[[test]]
+name = "screenshots"
+path = "tests/screenshots.rs"
+harness = false

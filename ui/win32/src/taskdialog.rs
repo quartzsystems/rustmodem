@@ -9,14 +9,15 @@
 //! expands, the system's buttons or command links with a line of text
 //! each. The manager shows every `RMD` message this way.
 
+use windows::Win32::Foundation::{HWND, LPARAM, S_OK, WPARAM};
 use windows::Win32::UI::Controls::{
-    TASKDIALOG_BUTTON, TASKDIALOG_COMMON_BUTTON_FLAGS, TASKDIALOG_FLAGS, TASKDIALOGCONFIG,
-    TD_ERROR_ICON, TD_INFORMATION_ICON, TD_SHIELD_ICON, TD_WARNING_ICON, TDCBF_CANCEL_BUTTON,
-    TDCBF_CLOSE_BUTTON, TDCBF_NO_BUTTON, TDCBF_OK_BUTTON, TDCBF_YES_BUTTON,
-    TDF_ALLOW_DIALOG_CANCELLATION, TDF_POSITION_RELATIVE_TO_WINDOW, TDF_USE_COMMAND_LINKS,
-    TaskDialogIndirect,
+    TASKDIALOG_BUTTON, TASKDIALOG_COMMON_BUTTON_FLAGS, TASKDIALOG_FLAGS, TASKDIALOG_NOTIFICATIONS,
+    TASKDIALOGCONFIG, TD_ERROR_ICON, TD_INFORMATION_ICON, TD_SHIELD_ICON, TD_WARNING_ICON,
+    TDCBF_CANCEL_BUTTON, TDCBF_CLOSE_BUTTON, TDCBF_NO_BUTTON, TDCBF_OK_BUTTON, TDCBF_YES_BUTTON,
+    TDF_ALLOW_DIALOG_CANCELLATION, TDF_CALLBACK_TIMER, TDF_POSITION_RELATIVE_TO_WINDOW,
+    TDF_USE_COMMAND_LINKS, TDM_CLICK_BUTTON, TDN_TIMER, TaskDialogIndirect,
 };
-use windows::core::PCWSTR;
+use windows::core::{HRESULT, PCWSTR};
 
 use crate::util::{instance, pcwstr, wide};
 use crate::window::{Hwnd, id};
@@ -112,10 +113,57 @@ pub struct TaskDialog {
     pub default: Option<u16>,
 }
 
+/// What watches a task dialog while it is up: called a few times a
+/// second with the dialog's window and how long it has been up, in
+/// milliseconds. An answer presses the button with that id.
+pub type TaskWatcher<'a> = &'a mut dyn FnMut(Hwnd, u32) -> Option<u16>;
+
+/// What the dialog's callback is given: the watcher.
+struct Watched<'a, 'b> {
+    watcher: &'a mut TaskWatcher<'b>,
+}
+
+/// The task dialog's callback, for a dialog that is watched.
+unsafe extern "system" fn watch(
+    window: HWND,
+    notification: TASKDIALOG_NOTIFICATIONS,
+    wparam: WPARAM,
+    _lparam: LPARAM,
+    data: isize,
+) -> HRESULT {
+    if notification == TDN_TIMER && data != 0 {
+        // SAFETY: `data` is the address of the `Watched` that
+        // `show` keeps on its stack for as long as the dialog is up, and
+        // the dialog calls back on the thread that showed it, so nothing
+        // else has the watcher.
+        let watched = unsafe { &mut *(data as *mut Watched<'_, '_>) };
+        let dialog = Hwnd(window);
+        if let Some(button) = (watched.watcher)(dialog, wparam.0 as u32) {
+            dialog.send(TDM_CLICK_BUTTON.0 as u32, usize::from(button), 0);
+        }
+    }
+    S_OK
+}
+
 /// Shows a task dialog and returns the id of the button or link that
 /// closed it. Closing the dialog any other way is [`id::CANCEL`], and so
 /// is a dialog that could not be shown.
 pub fn task_dialog(owner: Option<Hwnd>, dialog: &TaskDialog) -> u16 {
+    show(owner, dialog, None)
+}
+
+/// As [`task_dialog`], with something watching the dialog while it is
+/// up. For tests, which take a picture of the dialog and then press one
+/// of its buttons.
+pub fn task_dialog_watched(
+    owner: Option<Hwnd>,
+    dialog: &TaskDialog,
+    mut watcher: TaskWatcher<'_>,
+) -> u16 {
+    show(owner, dialog, Some(&mut watcher))
+}
+
+fn show(owner: Option<Hwnd>, dialog: &TaskDialog, watcher: Option<&mut TaskWatcher<'_>>) -> u16 {
     let title = wide(&dialog.title);
     let instruction = wide(&dialog.instruction);
     let content = wide(&dialog.content);
@@ -156,6 +204,10 @@ pub fn task_dialog(owner: Option<Hwnd>, dialog: &TaskDialog) -> u16 {
     if dialog.buttons.ok && !dialog.buttons.cancel && links.is_empty() {
         flags |= TDF_ALLOW_DIALOG_CANCELLATION.0;
     }
+    let mut watched = watcher.map(|watcher| Watched { watcher });
+    if watched.is_some() {
+        flags |= TDF_CALLBACK_TIMER.0;
+    }
 
     let optional = |text: &Vec<u16>| {
         if text.len() > 1 {
@@ -183,6 +235,10 @@ pub fn task_dialog(owner: Option<Hwnd>, dialog: &TaskDialog) -> u16 {
         pszExpandedInformation: optional(&expanded),
         ..TASKDIALOGCONFIG::default()
     };
+    if let Some(watched) = watched.as_mut() {
+        config.pfCallback = Some(watch);
+        config.lpCallbackData = std::ptr::from_mut(watched) as isize;
+    }
     config.Anonymous1.pszMainIcon = match dialog.icon {
         TaskIcon::None => PCWSTR::null(),
         TaskIcon::Information => TD_INFORMATION_ICON,
@@ -192,8 +248,9 @@ pub fn task_dialog(owner: Option<Hwnd>, dialog: &TaskDialog) -> u16 {
     };
     let mut pressed = 0;
     // SAFETY: `config` is a whole TASKDIALOGCONFIG with its size filled
-    // in; every string and the array of links it points at live until
-    // after the call, which returns when the dialog has closed.
+    // in; every string, the array of links and the watcher it points at
+    // live until after the call, which returns when the dialog has
+    // closed.
     let shown = unsafe { TaskDialogIndirect(&config, Some(&mut pressed), None, None) };
     match shown {
         Ok(()) => u16::try_from(pressed).unwrap_or(id::CANCEL),

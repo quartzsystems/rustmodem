@@ -42,17 +42,17 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_DBLCLKS, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
-    EnumChildWindows, GWLP_USERDATA, GetClassNameW, GetClientRect, GetDlgItem, GetParent,
-    GetWindowLongPtrW, GetWindowPlacement, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-    HICON, HMENU, IDC_ARROW, IMAGE_ICON, IsWindow, IsWindowVisible, KillTimer, LR_DEFAULTSIZE,
-    LR_SHARED, LoadCursorW, LoadImageW, MF_POPUP, MINMAXINFO, PostMessageW, RegisterClassExW,
-    RegisterWindowMessageW, SIZE_MINIMIZED, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER,
-    SendMessageW, SetForegroundWindow, SetMenu, SetTimer, SetWindowLongPtrW, SetWindowPlacement,
-    SetWindowPos, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WINDOW_LONG_PTR_INDEX, WINDOW_STYLE,
-    WINDOWPLACEMENT, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_CREATE, WM_DESTROY, WM_DPICHANGED,
-    WM_GETMINMAXINFO, WM_INITDIALOG, WM_MENUSELECT, WM_NCCREATE, WM_NCDESTROY, WM_NOTIFY,
-    WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCOLORCHANGE, WM_THEMECHANGED, WM_TIMER,
-    WNDCLASSEXW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    EnumChildWindows, GWLP_USERDATA, GetClassNameW, GetClientRect, GetDlgCtrlID, GetDlgItem,
+    GetParent, GetWindowLongPtrW, GetWindowPlacement, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, HICON, HMENU, IDC_ARROW, IMAGE_ICON, IsWindow, IsWindowVisible, KillTimer,
+    LR_DEFAULTSIZE, LR_SHARED, LoadCursorW, LoadImageW, MF_POPUP, MINMAXINFO, PostMessageW,
+    RegisterClassExW, RegisterWindowMessageW, SIZE_MINIMIZED, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
+    SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetMenu, SetTimer, SetWindowLongPtrW,
+    SetWindowPlacement, SetWindowPos, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE,
+    WINDOW_LONG_PTR_INDEX, WINDOW_STYLE, WINDOWPLACEMENT, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU,
+    WM_CREATE, WM_DESTROY, WM_DPICHANGED, WM_GETMINMAXINFO, WM_INITDIALOG, WM_MENUSELECT,
+    WM_NCCREATE, WM_NCDESTROY, WM_NOTIFY, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCOLORCHANGE,
+    WM_THEMECHANGED, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
 use windows::core::{BOOL, PCWSTR, w};
 
@@ -377,6 +377,12 @@ impl Hwnd {
         // parameters must point at depends on the message, and each caller
         // in this crate passes what its message documents.
         unsafe { SendMessageW(self.0, message, Some(WPARAM(wparam)), Some(LPARAM(lparam))) }.0
+    }
+
+    /// The id of a control: the one it was made with.
+    pub(crate) fn control_id(self) -> usize {
+        // SAFETY: the call takes any handle and returns a number.
+        unsafe { GetDlgCtrlID(self.0) }.max(0) as usize
     }
 
     /// The control of a dialog or window with this id. A handle on which

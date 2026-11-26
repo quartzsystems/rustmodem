@@ -78,7 +78,7 @@ mod util;
 mod window;
 
 pub use app::App;
-pub use capture::{Image, capture};
+pub use capture::{Image, capture, gui_handles, move_pointer, pointer};
 pub use dialog::{DialogTemplate, ModelessDialog};
 
 /// The sizes the Windows guidelines give for dialogs, in dialog units.
@@ -98,7 +98,9 @@ pub use serial::{ModemStatus, SerialPort, serial_ports};
 pub use service::{ServiceAction, service_control, service_state};
 pub use sheet::property_sheet;
 pub use statusbar::StatusBar;
-pub use taskdialog::{TaskButtons, TaskDialog, TaskIcon, task_dialog};
+pub use taskdialog::{
+    TaskButtons, TaskDialog, TaskIcon, TaskWatcher, task_dialog, task_dialog_watched,
+};
 pub use toolbar::{ToolButton, Toolbar};
 pub use window::{
     Colour, Event, Handler, Hwnd, MenuHighlight, Rect, Reply, Window, WindowOptions, code, focused,

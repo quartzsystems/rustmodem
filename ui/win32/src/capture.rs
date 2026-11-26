@@ -4,25 +4,42 @@
 
 //! Rendering a window to pixels, for the screenshot tests.
 //!
-//! The window draws itself into a bitmap through `PrintWindow`, with the
-//! flag that makes the desktop compositor give what it shows, so that
-//! what is captured is what a person sees, themed controls included. The
-//! window does not have to be in front, or on screen.
+//! A picture of a window is put together from two sources, because
+//! neither gives all of it:
+//!
+//! - What is inside the frame (the client area, with every control) is
+//!   copied from the window's own surface: what the window has drawn, as
+//!   it stands. This is exact and the same every time, and it does not
+//!   need the window to be in front, since the desktop compositor keeps a
+//!   surface for every window.
+//! - The frame and what is in it (the title bar, the menu bar) is drawn
+//!   by the compositor and by the system, and is not on that surface. For
+//!   it the window is rendered through `PrintWindow` with the flag that
+//!   has the compositor give what it shows. That rendering has the window
+//!   draw all of itself again and does not wait for it to finish, so a
+//!   window with many controls comes out with some of them missing: it is
+//!   used for the frame only.
 //!
 //! A window is larger than it looks: around the frame that is drawn there
 //! is an invisible border for resizing, which comes out black. The
 //! picture is cut down to the frame the compositor draws.
 
-use windows::Win32::Foundation::RECT;
+use windows::Win32::Foundation::{POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS,
-    DeleteDC, DeleteObject, GdiFlush, SelectObject,
+    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, ClientToScreen, CreateCompatibleDC,
+    CreateDIBSection, DCX_CACHE, DCX_WINDOW, DIB_RGB_COLORS, DeleteDC, DeleteObject, GdiFlush,
+    GetDCEx, HDC, ReleaseDC, SRCCOPY, SelectObject,
 };
 use windows::Win32::Storage::Xps::{PRINT_WINDOW_FLAGS, PrintWindow};
-use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, PW_RENDERFULLCONTENT};
+use windows::Win32::System::Threading::{
+    GR_GDIOBJECTS, GR_USEROBJECTS, GetCurrentProcess, GetGuiResources,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetClientRect, GetCursorPos, GetWindowRect, PW_RENDERFULLCONTENT, SetCursorPos,
+};
 
-use crate::window::Hwnd;
+use crate::window::{Hwnd, Rect};
 
 /// A picture: `width * height * 4` bytes of red, green, blue and alpha,
 /// top row first.
@@ -38,6 +55,10 @@ pub struct Image {
 
 /// Renders a window, frame and all, to pixels. `None` if the handle is
 /// not a window, the window has no size, or it could not be drawn.
+///
+/// The client area is what the window has drawn so far: a caller that
+/// wants a window that has just changed lets it handle its messages
+/// first.
 pub fn capture(window: Hwnd) -> Option<Image> {
     let mut rect = RECT::default();
     // SAFETY: `rect` is valid for the call to fill.
@@ -46,6 +67,70 @@ pub fn capture(window: Hwnd) -> Option<Image> {
     if width <= 0 || height <= 0 {
         return None;
     }
+    // The client area, within the window's rectangle.
+    let mut client = RECT::default();
+    let mut origin = POINT::default();
+    // SAFETY: both structures are valid for the calls to fill.
+    unsafe {
+        GetClientRect(window.0, &mut client).ok()?;
+        let _ = ClientToScreen(window.0, &mut origin);
+    }
+    let inside = Rect::new(
+        origin.x - rect.left,
+        origin.y - rect.top,
+        client.right - client.left,
+        client.bottom - client.top,
+    );
+
+    // The surface first: rendering the frame has the window draw again.
+    let surface = draw(width, height, |dc| {
+        // SAFETY: a device context for the whole window, not clipped to
+        // exclude its controls, is taken, copied from and released. `dc`
+        // is the memory device context `draw` made.
+        unsafe {
+            let source = GetDCEx(Some(window.0), None, DCX_WINDOW | DCX_CACHE);
+            if source.is_invalid() {
+                return false;
+            }
+            let copied = BitBlt(dc, 0, 0, width, height, Some(source), 0, 0, SRCCOPY).is_ok();
+            ReleaseDC(Some(window.0), source);
+            copied
+        }
+    })?;
+    let mut whole = draw(width, height, |dc| {
+        // SAFETY: the window draws into the memory device context `draw`
+        // made; a handle that is no longer a window draws nothing.
+        unsafe { PrintWindow(window.0, dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT)).as_bool() }
+    })?;
+    whole.paste(&surface, inside);
+
+    // The frame that is drawn, within the window's rectangle.
+    let mut frame = RECT::default();
+    // SAFETY: `frame` is a RECT, which is what this attribute is, and the
+    // size given is its size.
+    let asked = unsafe {
+        DwmGetWindowAttribute(
+            window.0,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            (&raw mut frame).cast(),
+            size_of::<RECT>() as u32,
+        )
+    };
+    if asked.is_err() {
+        return Some(whole);
+    }
+    Some(whole.cropped(
+        frame.left - rect.left,
+        frame.top - rect.top,
+        frame.right - frame.left,
+        frame.bottom - frame.top,
+    ))
+}
+
+/// Makes a bitmap of a size, has `paint` draw into it, and returns its
+/// pixels as a picture. `None` if the bitmap could not be made or `paint`
+/// says that it drew nothing.
+fn draw(width: i32, height: i32, paint: impl FnOnce(HDC) -> bool) -> Option<Image> {
     let info = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: size_of::<BITMAPINFOHEADER>() as u32,
@@ -61,10 +146,9 @@ pub fn capture(window: Hwnd) -> Option<Image> {
     };
     let count = width as usize * height as usize * 4;
     // SAFETY: a memory device context and a 32-bit bitmap are made,
-    // the window draws into them, and both are released before this
-    // returns. `bits` is the address of the bitmap's `count` bytes, which
-    // are read only while the bitmap exists and after GDI has finished
-    // drawing.
+    // `paint` draws into them, and both are released before this returns.
+    // `bits` is the address of the bitmap's `count` bytes, which are read
+    // only while the bitmap exists and after GDI has finished drawing.
     unsafe {
         let dc = CreateCompatibleDC(None);
         if dc.is_invalid() {
@@ -77,14 +161,14 @@ pub fn capture(window: Hwnd) -> Option<Image> {
             return None;
         };
         let previous = SelectObject(dc, bitmap.into());
-        let drawn = PrintWindow(window.0, dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT)).as_bool();
+        let drawn = paint(dc);
         let _ = GdiFlush();
         let rgba = (drawn && !bits.is_null()).then(|| {
             let pixels = std::slice::from_raw_parts(bits.cast::<u8>(), count);
             let mut rgba = Vec::with_capacity(count);
             for pixel in pixels.as_chunks::<4>().0 {
                 // Blue, green, red in the bitmap. The alpha is whatever
-                // the compositor left; the picture is opaque.
+                // was left there; the picture is opaque.
                 rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
             }
             rgba
@@ -92,33 +176,70 @@ pub fn capture(window: Hwnd) -> Option<Image> {
         SelectObject(dc, previous);
         let _ = DeleteObject(bitmap.into());
         let _ = DeleteDC(dc);
-        let whole = Image {
+        Some(Image {
             width: width as u32,
             height: height as u32,
             rgba: rgba?,
-        };
+        })
+    }
+}
 
-        // The frame that is drawn, within the window's rectangle.
-        let mut frame = RECT::default();
-        let asked = DwmGetWindowAttribute(
-            window.0,
-            DWMWA_EXTENDED_FRAME_BOUNDS,
-            (&raw mut frame).cast(),
-            size_of::<RECT>() as u32,
-        );
-        if asked.is_err() {
-            return Some(whole);
-        }
-        Some(whole.cropped(
-            frame.left - rect.left,
-            frame.top - rect.top,
-            frame.right - frame.left,
-            frame.bottom - frame.top,
-        ))
+/// How many GDI objects and how many USER objects this process holds. A
+/// program that leaks either holds more and more of them.
+pub fn gui_handles() -> (u32, u32) {
+    // SAFETY: the calls take the pseudo-handle of this process, which
+    // needs no closing, and an index, and return a count.
+    unsafe {
+        let process = GetCurrentProcess();
+        (
+            GetGuiResources(process, GR_GDIOBJECTS),
+            GetGuiResources(process, GR_USEROBJECTS),
+        )
+    }
+}
+
+/// Where the pointer is, in screen coordinates.
+pub fn pointer() -> (i32, i32) {
+    let mut point = POINT::default();
+    // SAFETY: `point` is valid for the call to fill.
+    unsafe {
+        let _ = GetCursorPos(&mut point);
+    }
+    (point.x, point.y)
+}
+
+/// Puts the pointer somewhere. A window under the pointer shows it: a
+/// row lights up, a button glows. A test that takes pictures first puts
+/// the pointer where there is no window of its own.
+pub fn move_pointer(x: i32, y: i32) {
+    // SAFETY: the call takes two numbers.
+    unsafe {
+        let _ = SetCursorPos(x, y);
     }
 }
 
 impl Image {
+    /// Copies the part of another picture of the same size that is inside
+    /// a rectangle over the same part of this one. What of the rectangle
+    /// is outside the pictures is left out.
+    fn paste(&mut self, other: &Image, part: Rect) {
+        if (other.width, other.height) != (self.width, self.height) {
+            return;
+        }
+        let left = part.x.clamp(0, self.width as i32) as usize;
+        let right = (part.x + part.width).clamp(0, self.width as i32) as usize;
+        let top = part.y.clamp(0, self.height as i32) as usize;
+        let bottom = (part.y + part.height).clamp(0, self.height as i32) as usize;
+        if left >= right {
+            return;
+        }
+        for row in top..bottom {
+            let from = (row * self.width as usize + left) * 4;
+            let to = (row * self.width as usize + right) * 4;
+            self.rgba[from..to].copy_from_slice(&other.rgba[from..to]);
+        }
+    }
+
     /// The part of the picture inside a rectangle, which is cut to the
     /// picture first. A rectangle with nothing in the picture gives the
     /// whole picture.

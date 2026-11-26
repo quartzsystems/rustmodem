@@ -24,7 +24,8 @@ use windows::Win32::UI::Controls::{
     LVS_EX_FULLROWSELECT, LVS_OWNERDATA, LVS_REPORT, LVS_SHOWSELALWAYS, LVS_SINGLESEL,
     LVSICF_NOINVALIDATEALL, LVSICF_NOSCROLL, LVSIL_SMALL, SetWindowTheme, WC_LISTVIEWW,
 };
-use windows::Win32::UI::WindowsAndMessaging::{WS_BORDER, WS_TABSTOP};
+use windows::Win32::UI::Controls::{LVN_COLUMNCLICK, NMHDR, NMLISTVIEW};
+use windows::Win32::UI::WindowsAndMessaging::{WM_NOTIFY, WS_BORDER, WS_TABSTOP};
 use windows::core::{PWSTR, w};
 
 use crate::imagelist::ImageList;
@@ -264,6 +265,30 @@ impl ListView {
             item.state = selected_and_focused;
             self.0.send(LVM_SETITEMSTATE, row, (&raw mut item) as isize);
         }
+    }
+
+    /// Tells the window the list is in that a column header was clicked,
+    /// as the list does when one is. For tests, which have no pointer.
+    pub fn click_column(self, column: usize) {
+        let Some(parent) = self.0.parent() else {
+            return;
+        };
+        let notification = NMLISTVIEW {
+            hdr: NMHDR {
+                hwndFrom: self.0.0,
+                idFrom: self.0.control_id(),
+                code: LVN_COLUMNCLICK,
+            },
+            iItem: -1,
+            iSubItem: column as i32,
+            ..NMLISTVIEW::default()
+        };
+        // The structure is valid for the length of the call.
+        parent.send(
+            WM_NOTIFY,
+            notification.hdr.idFrom,
+            (&raw const notification) as isize,
+        );
     }
 
     /// Scrolls so that a row is in view.

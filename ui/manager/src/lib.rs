@@ -51,10 +51,13 @@ pub use dialogs::line::ids as line_ids;
 #[cfg(windows)]
 pub use dialogs::sheet::ids as settings_ids;
 #[cfg(windows)]
+pub use message::{denied_dialog, dialog as message_dialog};
+#[cfg(windows)]
 pub use view::ids;
 #[cfg(windows)]
 pub use window::{
-    DialogHook, FileHook, Hooks, Manager, Opened, Options, TaskHook, has_handler, open,
+    DialogHook, FileHook, Hooks, Manager, Opened, Options, PortsHook, TaskHook, TaskWatchHook,
+    has_handler, open,
 };
 
 /// Runs the manager: reads the command line, opens the window, and stays

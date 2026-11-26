@@ -26,7 +26,7 @@ use msg::message;
 use win32::controls::{self, Combo};
 use win32::{
     DialogTemplate, Event, Font, Handler, Hwnd, ModelessDialog, Reply, RichEdit, SerialPort,
-    UiReceiver, UiSender, channel, id, serial_ports,
+    UiReceiver, UiSender, channel, id,
 };
 
 use super::{watch, watched};
@@ -364,7 +364,7 @@ impl Handler for Console {
                 *self.sender.borrow_mut() = Some(sender);
                 *self.receiver.borrow_mut() = Some(receiver);
                 let ports = Combo::of(dialog.item(ID_PORT));
-                for name in serial_ports() {
+                for name in self.manager.serial_ports() {
                     ports.add(&name);
                 }
                 if ports.count() > 0 {

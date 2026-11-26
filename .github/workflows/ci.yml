@@ -33,10 +33,22 @@ jobs:
         run: cargo install cargo-deny --locked
       - name: Deny
         run: cargo deny check
+      # The tests of the manager open its window against the demo service:
+      # the screenshot tests, which compare each view with its golden, the
+      # smoke test and the reconnect test.
       - name: Test
         run: cargo test --workspace
+      # What the screenshot tests saw, and for a view that failed its
+      # golden and where the two differ.
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: target/screenshots/
+          if-no-files-found: warn
       - name: Release build
-        run: cargo build --release -p svc -p ctl
+        run: cargo build --release -p svc -p ctl -p manager
 
   linux:
     name: Linux (pure crates)

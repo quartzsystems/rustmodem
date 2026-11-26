@@ -7,19 +7,25 @@
 
 #![allow(dead_code)]
 
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use ctlproto::{
+    Call, ClientFrame, Hello, LineInfo, LineList, PROTOCOL, ServerFrame, decode_server, encode,
+};
 use manager::{Clock, Hooks, Opened, Options};
-use win32::App;
+use win32::{App, Hwnd, id};
 
 /// The moment the frozen demo service stands still at, in Unix
 /// milliseconds: 24 minutes 57.170 seconds after 2027-01-15 08:00:00 UTC.
 pub const FROZEN_NOW_MS: u64 = 1_800_001_497_170;
 
-/// The size the tests open the window at, at 96 DPI.
-pub const SIZE: (i32, i32) = (1180, 740);
+/// The size the tests open the window at, at 96 DPI. It fits a screen of
+/// 1024 by 768, which is what the CI runner has: a window is not let be
+/// larger than its screen.
+pub const SIZE: (i32, i32) = (1040, 720);
 
 /// A name for a pipe that no other test and no other run uses.
 pub fn pipe_name(test: &str) -> String {
@@ -87,6 +93,68 @@ impl DemoService {
 impl Drop for DemoService {
     fn drop(&mut self) {
         self.kill();
+    }
+}
+
+/// The lines as the service lists them now, asked for over a connection
+/// of the test's own.
+pub fn fresh_lines(pipe: &str) -> Vec<LineInfo> {
+    let client = pipe::PipeClient::connect(pipe, Duration::from_secs(5))
+        .expect("the test can connect to the service");
+    let halves = client.split();
+    let mut reader = BufReader::new(halves.reader);
+    let mut writer = halves.writer;
+    let mut send = |frame: &ClientFrame| {
+        writer
+            .write_all(format!("{}\n", encode(frame)).as_bytes())
+            .and_then(|()| writer.flush())
+            .expect("the test can write to the service");
+    };
+    let mut receive = || {
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .expect("the test can read from the service");
+        decode_server(line.trim_end()).expect("the service sends frames")
+    };
+    send(&ClientFrame::Hello {
+        hello: Hello {
+            protocol: PROTOCOL,
+            version: "test".to_string(),
+        },
+    });
+    assert!(matches!(receive(), ServerFrame::Hello { .. }));
+    send(&ClientFrame::Request(Call::LinesList.request(1)));
+    let lines = match receive() {
+        ServerFrame::Result { id: 1, result } => {
+            serde_json::from_value::<LineList>(result)
+                .expect("the answer is a list of lines")
+                .lines
+        }
+        other => panic!("not the answer to lines.list: {other:?}"),
+    };
+    halves.closer.close();
+    lines
+}
+
+/// The window a dialog of the manager is shown in: itself, or for the
+/// settings, whose window is the first page, the property sheet around
+/// the page.
+pub fn frame(name: &str, window: Hwnd) -> Hwnd {
+    if name == "settings" {
+        window.parent().expect("a page is in its sheet")
+    } else {
+        window
+    }
+}
+
+/// Closes a dialog of the manager the way its Cancel button would.
+pub fn close(name: &str, window: Hwnd) {
+    if name == "settings" {
+        // A property sheet takes the command; it is not ended.
+        frame(name, window).command(id::CANCEL);
+    } else {
+        window.end_dialog(id::CANCEL);
     }
 }
 

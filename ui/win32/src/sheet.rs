@@ -15,7 +15,7 @@ use std::rc::Rc;
 use windows::Win32::Foundation::LPARAM;
 use windows::Win32::UI::Controls::{
     PROPSHEETHEADERW_V2, PROPSHEETPAGEW, PSH_NOCONTEXTHELP, PSH_PROPSHEETPAGE, PSM_CHANGED,
-    PSP_DLGINDIRECT, PSP_USETITLE, PropertySheetW,
+    PSM_SETCURSEL, PSP_DLGINDIRECT, PSP_USETITLE, PropertySheetW,
 };
 use windows::Win32::UI::WindowsAndMessaging::DLGTEMPLATE;
 
@@ -88,5 +88,11 @@ impl Hwnd {
         if let Some(sheet) = self.parent() {
             sheet.send(PSM_CHANGED, self.raw() as usize, 0);
         }
+    }
+
+    /// For a property sheet: shows the page with this index, as a click
+    /// on its tab would.
+    pub fn select_page(self, index: usize) {
+        self.send(PSM_SETCURSEL, index, 0);
     }
 }

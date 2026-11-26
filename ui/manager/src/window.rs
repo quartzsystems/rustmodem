@@ -37,7 +37,7 @@ use win32::metrics::{self, scale};
 use win32::{
     Accelerators, App, Event, FileFilter, Handler, Hwnd, Key, MenuHighlight, ModelessDialog, Reply,
     TaskButtons, TaskDialog, TaskIcon, UiReceiver, UiSender, Window, WindowOptions, channel, id,
-    relaunch_elevated, task_dialog,
+    relaunch_elevated, task_dialog, task_dialog_watched,
 };
 
 use crate::actions;
@@ -81,6 +81,14 @@ pub type TaskHook = Rc<dyn Fn(&TaskDialog) -> u16>;
 /// Answers a file or folder dialog: given its title, the path chosen.
 pub type FileHook = Rc<dyn Fn(&str) -> Option<PathBuf>>;
 
+/// Watches a task dialog that is shown for real: given what it shows, its
+/// window and how long it has been up in milliseconds, answers with the
+/// id of a button to press, or `None` to leave it up.
+pub type TaskWatchHook = Rc<dyn Fn(&TaskDialog, Hwnd, u32) -> Option<u16>>;
+
+/// Lists the serial ports of this computer.
+pub type PortsHook = Rc<dyn Fn() -> Vec<String>>;
+
 /// What a test puts in place of the things that would stop it: the
 /// system's dialogs, which wait for a person.
 #[derive(Clone, Default)]
@@ -96,6 +104,12 @@ pub struct Hooks {
     /// Stands in for the file and folder dialogs: given the title,
     /// answers with the path that was chosen.
     pub file: Option<FileHook>,
+    /// Watches the task dialogs, which are shown: for a test that takes
+    /// pictures of them. `task` goes first if both are there.
+    pub watch_task: Option<TaskWatchHook>,
+    /// Stands in for the serial ports of this computer, which are not
+    /// the same on every computer.
+    pub serial_ports: Option<PortsHook>,
 }
 
 /// How the manager is started.
@@ -686,9 +700,23 @@ impl Manager {
 
     /// Shows a task dialog and returns the id of the button pressed.
     pub(crate) fn task(&self, owner: Option<Hwnd>, dialog: &TaskDialog) -> u16 {
-        match &self.options.hooks.task {
-            Some(hook) => hook(dialog),
-            None => task_dialog(owner, dialog),
+        let hooks = &self.options.hooks;
+        match (&hooks.task, &hooks.watch_task) {
+            (Some(hook), _) => hook(dialog),
+            (None, Some(watch)) => {
+                let mut watcher =
+                    |window: Hwnd, elapsed: u32| -> Option<u16> { watch(dialog, window, elapsed) };
+                task_dialog_watched(owner, dialog, &mut watcher)
+            }
+            (None, None) => task_dialog(owner, dialog),
+        }
+    }
+
+    /// The serial ports of this computer, for the AT console.
+    pub(crate) fn serial_ports(&self) -> Vec<String> {
+        match &self.options.hooks.serial_ports {
+            Some(hook) => hook(),
+            None => win32::serial_ports(),
         }
     }
 

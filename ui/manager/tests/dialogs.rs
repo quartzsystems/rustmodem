@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
-use common::{Bench, DemoService, pipe_name};
+use common::{Bench, DemoService, close, frame, pipe_name};
 use manager::{Hooks, has_handler, ids, line_ids, settings_ids};
 use model::{Command, ConnectionState, MenuEntry};
 use win32::controls::Combo;
@@ -43,26 +43,6 @@ struct Seen {
     current: Cell<Option<Hwnd>>,
     /// The file the file dialogs answer with.
     file: RefCell<Option<PathBuf>>,
-}
-
-/// The window a dialog is shown in: itself, or for the settings, whose
-/// window is the first page, the property sheet around the page.
-fn frame(name: &str, window: Hwnd) -> Hwnd {
-    if name == "settings" {
-        window.parent().expect("a page is in its sheet")
-    } else {
-        window
-    }
-}
-
-/// Closes a dialog the way its Cancel button would.
-fn close(name: &str, window: Hwnd) {
-    if name == "settings" {
-        // A property sheet takes the command; it is not ended.
-        frame(name, window).command(id::CANCEL);
-    } else {
-        window.end_dialog(id::CANCEL);
-    }
 }
 
 fn hooks(seen: &Rc<Seen>) -> Hooks {
@@ -100,6 +80,7 @@ fn hooks(seen: &Rc<Seen>) -> Hooks {
         dialog: Some(Rc::new(dialog)),
         task: Some(Rc::new(task)),
         file: Some(Rc::new(file)),
+        ..Hooks::default()
     }
 }
 
