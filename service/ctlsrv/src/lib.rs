@@ -31,7 +31,10 @@ use std::sync::Arc;
 use ctlproto::PortInfo;
 
 pub use queue::{Hub, LOG_RING, Limits};
-pub use server::{ApplyService, Clock, LogFn, Server, ServerParts, restart_to_apply, system_clock};
+pub use server::{
+    ApplyService, Clock, CpuMeter, LogFn, Server, ServerParts, no_cpu_meter, restart_to_apply,
+    system_clock,
+};
 
 /// Knows the serial ports of the machine. The service looks them up in
 /// Windows; the tests and the demo service give a fixed list.

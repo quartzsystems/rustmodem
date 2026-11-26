@@ -222,6 +222,24 @@ lines = [1]
             captures,
             ..
         } = self;
+        // The record of the call has its RTP as it was at the end, and the
+        // statistics have counted it.
+        let records = pool.calls(None);
+        let media = records
+            .last()
+            .and_then(|record| record.media.clone())
+            .expect("the call that ended had media");
+        assert_eq!(media.codec, "PCMU");
+        assert!(
+            media.rx_packets > 100 && media.tx_packets > 100,
+            "{media:?}"
+        );
+        assert_eq!((media.slips, media.resync), (0, 0), "{media:?}");
+        assert!(media.remote.is_some());
+        let stats = pool.stats();
+        assert_eq!(stats.codec, "PCMU");
+        assert_eq!(stats.sip.listener, ctlproto::ListenerState::Listening);
+        assert_eq!(stats.packet_loss_percent > 0.0, media.lost > 0, "{stats:?}");
         // The writer ends, with everything written, when the runner does.
         drop(pool);
         let captures = captures.lock().unwrap().clone();

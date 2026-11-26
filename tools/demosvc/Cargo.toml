@@ -16,10 +16,13 @@ config.workspace = true
 ctlproto.workspace = true
 ctlsrv.workspace = true
 engine.workspace = true
+media.workspace = true
 msg.workspace = true
 pipe.workspace = true
 pool.workspace = true
 serial.workspace = true
+sippeer.workspace = true
+telephony.workspace = true
 
 [dev-dependencies]
 serde.workspace = true

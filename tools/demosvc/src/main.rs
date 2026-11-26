@@ -27,6 +27,8 @@ mod engine;
 mod frozen;
 #[cfg(windows)]
 mod hosts;
+#[cfg(windows)]
+mod sip;
 
 use std::process::ExitCode;
 

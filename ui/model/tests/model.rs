@@ -545,6 +545,7 @@ fn the_statistics_panels_show_what_the_service_reports() {
         retrains: 0,
         protocols: Vec::new(),
         compressions: Vec::new(),
+        ..Stats::default()
     });
     let view = model.stats_view(START_MS + 1_497_170, &Utc);
     let calls: Vec<(&str, &str)> = view.calls.iter().map(|(l, v)| (*l, v.as_str())).collect();

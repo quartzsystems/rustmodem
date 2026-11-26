@@ -364,6 +364,9 @@ impl World {
             RouterEvent::NoDialtone(line) => format!("no dialtone {line}"),
             RouterEvent::Failed(line) => format!("failed {line}"),
             RouterEvent::Cleared(line) => format!("cleared {line}"),
+            // What the registrations do is seen through the observer; it
+            // is not something said to a line.
+            RouterEvent::Registration(_) => return,
         };
         self.said.push(said);
     }

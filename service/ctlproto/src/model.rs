@@ -8,6 +8,8 @@
 use msg::Message;
 use serde::{Deserialize, Serialize};
 
+use crate::telephony::{LineSip, MediaInfo, SipRegistration, SipSummary, SipTrace};
+
 /// The state of a line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -194,6 +196,9 @@ pub struct CallInfo {
     pub bytes_tx: u64,
     /// Data bytes from the far end to the host so far.
     pub bytes_rx: u64,
+    /// The RTP of the call, once it has media.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<Box<MediaInfo>>,
 }
 
 /// A call that has ended.
@@ -223,6 +228,9 @@ pub struct CallRecord {
     pub bytes_tx: u64,
     /// Data bytes from the far end to the host.
     pub bytes_rx: u64,
+    /// The RTP of the call, if it had media.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<Box<MediaInfo>>,
 }
 
 /// An `RMD` message as the control API carries it.
@@ -293,6 +301,22 @@ pub struct LineInfo {
     /// `Standard 56000 bps Modem on COM4`. Absent when unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding: Option<String>,
+    /// The modem engine of the line: `null` or `echo`.
+    #[serde(default = "default_engine")]
+    pub engine: String,
+    /// The names of the hunt groups the line is in.
+    #[serde(default)]
+    pub hunt_groups: Vec<String>,
+    /// The SIP side of the line.
+    #[serde(default)]
+    pub sip: LineSip,
+    /// Whether the line's calls are captured.
+    #[serde(default)]
+    pub capture: bool,
+}
+
+fn default_engine() -> String {
+    "null".to_string()
 }
 
 /// How serious a log line is.
@@ -456,7 +480,7 @@ pub struct Tally {
 
 /// The statistics of the service since it started. The call counts are of
 /// calls offered to lines.
-#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct Stats {
     /// Calls a line answered.
     pub calls_answered: u64,
@@ -492,6 +516,37 @@ pub struct Stats {
     pub protocols: Vec<Tally>,
     /// The connected calls by data compression, largest count first.
     pub compressions: Vec<Tally>,
+    /// RTP in both directions over the last second or so, headers
+    /// included, in kbit/s.
+    #[serde(default)]
+    pub rtp_kbps: u32,
+    /// The mean interarrival jitter of the calls in progress, in
+    /// milliseconds.
+    #[serde(default)]
+    pub jitter_ms_avg: f64,
+    /// The most the jitter of a call in progress has been, in
+    /// milliseconds.
+    #[serde(default)]
+    pub jitter_ms_max: f64,
+    /// The packets lost, in a hundred expected, over every call since the
+    /// service started.
+    #[serde(default)]
+    pub packet_loss_percent: f64,
+    /// The codec the service prefers: `PCMU` or `PCMA`; empty when SIP is
+    /// off.
+    #[serde(default)]
+    pub codec: String,
+    /// The packet time the service asks for, in milliseconds; 0 when SIP
+    /// is off.
+    #[serde(default)]
+    pub ptime_ms: u32,
+    /// How much of one processor the service process has used over the
+    /// last second or so, in a hundred.
+    #[serde(default)]
+    pub cpu_percent: f64,
+    /// SIP in a line of numbers.
+    #[serde(default)]
+    pub sip: SipSummary,
 }
 
 /// A call starting or connecting on a line.
@@ -523,6 +578,12 @@ pub enum Event {
     /// A line was written to the service log.
     #[serde(rename = "log")]
     Log(LogEvent),
+    /// A line's registration changed state.
+    #[serde(rename = "sip.registration")]
+    SipRegistration(SipRegistration),
+    /// A SIP message was sent or received.
+    #[serde(rename = "sip.trace")]
+    SipTrace(SipTrace),
 }
 
 impl Event {
@@ -534,12 +595,15 @@ impl Event {
             Event::CallConnected(_) => "call.connected",
             Event::CallEnded(_) => "call.ended",
             Event::Log(_) => "log",
+            Event::SipRegistration(_) => "sip.registration",
+            Event::SipTrace(_) => "sip.trace",
         }
     }
 
     /// Whether the event reports state that a client must not miss. Log
-    /// lines are the only events that may be dropped for a slow client.
+    /// lines and traced messages are the events that may be dropped for a
+    /// slow client.
     pub fn is_state(&self) -> bool {
-        !matches!(self, Event::Log(_))
+        !matches!(self, Event::Log(_) | Event::SipTrace(_))
     }
 }

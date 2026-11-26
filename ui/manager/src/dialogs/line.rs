@@ -146,6 +146,10 @@ impl Form {
             enabled: Some(self.enabled),
             auto_answer_rings: Some(self.rings()?),
             unknown_command: Some(self.unknown_command()),
+            // BLOCKED(phase2): the engine and the registration come with
+            // the dialog's SIP group in the next work package.
+            engine: None,
+            register: None,
         })
     }
 
@@ -166,6 +170,8 @@ impl Form {
             enabled: (self.enabled != line.enabled).then_some(self.enabled),
             auto_answer_rings: (rings != line.auto_answer_rings).then_some(rings),
             unknown_command: (unknown_command != line.unknown_command).then_some(unknown_command),
+            engine: None,
+            register: None,
         })
     }
 }
@@ -397,6 +403,10 @@ mod tests {
             call: None,
             error: None,
             binding: None,
+            engine: "null".to_string(),
+            hunt_groups: Vec::new(),
+            sip: ctlproto::LineSip::default(),
+            capture: false,
         }
     }
 

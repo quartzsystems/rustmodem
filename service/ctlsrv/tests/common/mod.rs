@@ -188,6 +188,7 @@ impl Fixture {
             clock: ctlsrv::system_clock(),
             ports: Arc::new(test_ports()),
             apply_service: Arc::new(move |_| Ok(live_settings.load(Ordering::Relaxed))),
+            cpu: ctlsrv::no_cpu_meter(),
         });
 
         let (listener, connector) = memory::listener();

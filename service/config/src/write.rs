@@ -10,8 +10,8 @@ use toml_edit::{
 };
 
 use crate::schema::{
-    Cidr, Config, EngineKind, HuntGroup, LineConfig, LineEdit, MediaConfig, RegisterConfig, Route,
-    SettingsEdit, SipConfig, UnknownCommand,
+    Cidr, Config, EngineKind, HuntGroup, HuntGroupEdit, LineConfig, LineEdit, MediaConfig,
+    RegisterConfig, Route, RouteEdit, SettingsEdit, SipConfig, UnknownCommand,
 };
 
 /// Renders a configuration as a new document with no comments.
@@ -180,6 +180,102 @@ pub(crate) fn edit_line(document: &mut DocumentMut, index: usize, edit: &LineEdi
     if let Some(setting) = edit.unknown_command {
         set(table, "unknown_command", setting.as_str().into());
     }
+    if let Some(engine) = edit.engine {
+        set(table, "engine", engine.as_str().into());
+    }
+    match &edit.register {
+        // The table is written again whole: it is one value, and a key
+        // that went back to its default is left out of it.
+        Some(Some(register)) => {
+            table.remove("register");
+            table["register"] = value(register_table(register));
+        }
+        Some(None) => {
+            table.remove("register");
+        }
+        None => {}
+    }
+}
+
+/// Changes the keys `edit` names in the `index`th `[[hunt_group]]` table,
+/// which is called `name`. When the name changes, the targets of the
+/// routes to the group change with it.
+pub(crate) fn edit_hunt_group(
+    document: &mut DocumentMut,
+    index: usize,
+    name: &str,
+    edit: &HuntGroupEdit,
+) {
+    if let Some(table) = tables_mut(document, "hunt_group").get_mut(index) {
+        if let Some(new) = &edit.name {
+            set(table, "name", new.as_str().into());
+        }
+        if let Some(pilot) = &edit.pilot {
+            set(table, "pilot", pilot.as_str().into());
+        }
+        if let Some(lines) = &edit.lines {
+            let mut array = Array::new();
+            for line in lines {
+                array.push(i64::from(*line));
+            }
+            set(table, "lines", array.into());
+        }
+        if let Some(strategy) = &edit.strategy {
+            set(table, "strategy", strategy.as_str().into());
+        }
+    }
+    if let Some(new) = &edit.name {
+        let old = format!("group:{name}");
+        for route in tables_mut(document, "route").iter_mut() {
+            if route.get("target").and_then(Item::as_str) == Some(old.as_str()) {
+                set(route, "target", format!("group:{new}").into());
+            }
+        }
+    }
+}
+
+/// Changes the keys `edit` names in the `index`th `[[route]]` table.
+pub(crate) fn edit_route(document: &mut DocumentMut, index: usize, edit: &RouteEdit) {
+    let Some(table) = tables_mut(document, "route").get_mut(index) else {
+        return;
+    };
+    if let Some(called) = &edit.called {
+        set(table, "called", called.as_str().into());
+    }
+    if let Some(target) = &edit.target {
+        set(table, "target", target.as_str().into());
+    }
+}
+
+/// Removes the `index`th table of the array of tables called `name`.
+pub(crate) fn remove_table(document: &mut DocumentMut, name: &str, index: usize) {
+    let tables = tables_mut(document, name);
+    if index < tables.len() {
+        tables.remove(index);
+    }
+}
+
+/// Moves the table at `from` in the array of tables called `name` so that
+/// it is at `to`.
+///
+/// Where a table is written in the file goes by its position, not by its
+/// place in the array, so the tables trade positions: the array, in its
+/// new order, takes the places in the file the array had. A table that
+/// was just added has no position yet and is written after the one before
+/// it, which is what the last table of the array wants.
+pub(crate) fn move_table(document: &mut DocumentMut, name: &str, from: usize, to: usize) {
+    let tables = tables_mut(document, name);
+    if from >= tables.len() || to >= tables.len() {
+        return;
+    }
+    let mut positions: Vec<isize> = tables.iter().filter_map(Table::position).collect();
+    positions.sort_unstable();
+    let moved = tables.remove(from);
+    tables.insert(to, moved);
+    let mut positions = positions.into_iter();
+    for table in tables.iter_mut() {
+        table.set_position(positions.next());
+    }
 }
 
 /// Changes the keys `edit` names in `[service]` and `[control]`. A table
@@ -205,6 +301,67 @@ pub(crate) fn edit_settings(document: &mut DocumentMut, edit: &SettingsEdit) {
         set_item(
             control.entry("pipe").or_insert(Item::None),
             pipe.as_str().into(),
+        );
+    }
+    if !edit.sip.is_empty() {
+        let sip = section(document, "sip");
+        let mut put = |key: &str, new: Option<Value>| {
+            if let Some(new) = new {
+                set_item(sip.entry(key).or_insert(Item::None), new);
+            }
+        };
+        put("enabled", edit.sip.enabled.map(Value::from));
+        put("listen", edit.sip.listen.as_deref().map(Value::from));
+        put("address", edit.sip.address.as_deref().map(Value::from));
+        put(
+            "user_agent",
+            edit.sip.user_agent.as_deref().map(Value::from),
+        );
+        put(
+            "trusted_peers",
+            edit.sip
+                .trusted_peers
+                .as_ref()
+                .map(|peers| strings(peers.iter().cloned()).into()),
+        );
+        put(
+            "outbound_peer",
+            edit.sip.outbound_peer.as_deref().map(Value::from),
+        );
+        put(
+            "ring_timeout_s",
+            edit.sip.ring_timeout_s.map(|s| i64::from(s).into()),
+        );
+    }
+    if !edit.media.is_empty() {
+        let media = section(document, "media");
+        let mut put = |key: &str, new: Option<Value>| {
+            if let Some(new) = new {
+                set_item(media.entry(key).or_insert(Item::None), new);
+            }
+        };
+        put(
+            "codecs",
+            edit.media
+                .codecs
+                .as_ref()
+                .map(|codecs| strings(codecs.iter().cloned()).into()),
+        );
+        put(
+            "ptime_ms",
+            edit.media.ptime_ms.map(|ms| i64::from(ms).into()),
+        );
+        put(
+            "rtp_ports",
+            edit.media.rtp_ports.as_deref().map(Value::from),
+        );
+        put(
+            "rtp_timeout_s",
+            edit.media.rtp_timeout_s.map(|s| i64::from(s).into()),
+        );
+        put(
+            "capture_dir",
+            edit.media.capture_dir.as_deref().map(Value::from),
         );
     }
 }

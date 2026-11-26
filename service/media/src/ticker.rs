@@ -121,6 +121,9 @@ pub struct Ticker {
     stalled: bool,
     free_run: u64,
     stray: u64,
+    /// Arrivals for which the frames ticked were not the frames the
+    /// receiver said to deliver.
+    slips: u64,
     overruns: u64,
     tick_max_us: u32,
     histogram: [u32; BUCKETS],
@@ -173,6 +176,7 @@ impl Ticker {
             stalled: false,
             free_run: 0,
             stray: 0,
+            slips: 0,
             overruns: 0,
             tick_max_us: 0,
             histogram: [0; BUCKETS],
@@ -252,19 +256,25 @@ impl Ticker {
                 let arrival = (now / SAMPLE_US) as u32;
                 if let Verdict::Deliver {
                     fill_frames,
-                    frames: _,
+                    frames,
                     resync: _,
                 } = self
                     .receiver
                     .receive(&packet.header, packet.payload.len(), arrival)
                 {
                     self.synced = true;
+                    let before = self.ticks;
                     let fill = self.fill;
                     for _ in 0..fill_frames {
                         self.tick(&fill, engine, transport, clock);
                     }
                     for frame in packet.payload.as_chunks::<FRAME>().0 {
                         self.tick(frame, engine, transport, clock);
+                    }
+                    // The receiver's count and the loop's are made apart:
+                    // a frame for every frame, or it is a slip.
+                    if self.ticks - before != u64::from(fill_frames) + u64::from(frames) {
+                        self.slips += 1;
                     }
                 }
             } else {
@@ -404,6 +414,7 @@ impl Ticker {
             tick_max_us: self.tick_max_us,
             overruns: self.overruns,
             capture_dropped: self.capture.as_ref().map_or(0, CaptureTap::dropped),
+            slips: self.slips,
         }
     }
 

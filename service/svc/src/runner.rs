@@ -17,15 +17,15 @@ use ctlsrv::{Hub, Limits, Listener, Server, ServerParts};
 use msg::{Message, message};
 use pipe::{Event, MAX_WAIT_HANDLES, PipeListener, PipeSecurity, wait_any};
 use pool::{
-    EventSink, InlineRunner, Now, NullSwitch, Pool, PoolInbox, PoolParts, SerialFactory, TICK_MS,
-    command_channel,
+    CallRouter, EventSink, InlineRunner, MediaRunner, Now, NullSwitch, Pool, PoolInbox, PoolParts,
+    SerialFactory, TICK_MS, command_channel,
 };
 use serial::{Com0comBackend, SerialBackend};
 
 use crate::logger::{self, DEFAULT_MAX_BYTES, Logger};
 use crate::ports::SystemPorts;
 use crate::profiles::ProfileFile;
-use crate::{VERSION, eventlog};
+use crate::{VERSION, cpu, eventlog, telephony};
 
 /// The tag of the service itself in log lines.
 const SOURCE: &str = "SVC";
@@ -38,6 +38,11 @@ const BINDING_REFRESH: Duration = Duration::from_secs(30);
 
 /// The name of the call records file in the log directory.
 const CALLS_FILE: &str = "calls.jsonl";
+
+/// How long the pool's thread goes on after the lines are down, for the
+/// calls to be cleared and the registrations given up on the network. It
+/// is well inside the time the service control manager allows a stop.
+const LINGER: Duration = Duration::from_secs(3);
 
 /// Opens the serial ports of the lines.
 struct Ports;
@@ -181,9 +186,29 @@ fn start_inner(
     )
     .map_err(fail)?;
 
+    // What wakes the pool's thread between its ticks: a media thread with
+    // something to report, or a SIP message that has arrived.
+    let wake = Arc::new(Event::auto().map_err(|e| fail(message("RMD0003", &[&e.to_string()])))?);
+    let mut sip_failed = None;
+    let (router, media): (Box<dyn CallRouter>, Box<dyn MediaRunner>) = if config.sip.enabled {
+        match telephony::start(&config, &log_dir, &logger, &hub, &wake) {
+            Ok(parts) => parts,
+            Err(problem) => {
+                // The modems are still of use to whoever dials between
+                // them: the service runs, without SIP, and says so.
+                logger.message(SOURCE, &problem);
+                mode.report(&problem);
+                sip_failed = Some(config.sip.listen.to_string());
+                (Box::new(NullSwitch::new()), Box::new(InlineRunner::new()))
+            }
+        }
+    } else {
+        (Box::new(NullSwitch::new()), Box::new(InlineRunner::new()))
+    };
+
     let mut pool = Pool::new(PoolParts {
-        router: Box::new(NullSwitch::new()),
-        media: Box::new(InlineRunner::new()),
+        router,
+        media,
         serial: Box::new(Ports),
         engines: Box::new(pool::engine_for),
         sink: Box::new(Sink {
@@ -209,6 +234,9 @@ fn start_inner(
         mono_ms: 0,
         unix_ms: logger::unix_ms(),
     });
+    if let Some(listen) = sip_failed {
+        pool.set_sip_failed(listen);
+    }
     pool.apply_config(&config);
 
     let (handle, inbox) = command_channel();
@@ -238,6 +266,7 @@ fn start_inner(
                 logger.reconfigure(&directory, level).map(|()| true)
             })
         },
+        cpu: cpu::meter(),
     });
     let binding_server = server.clone();
 
@@ -245,7 +274,7 @@ fn start_inner(
     let pool_stop = Arc::clone(&stop);
     let pool_thread = std::thread::Builder::new()
         .name("pool".to_string())
-        .spawn(move || run_pool(pool, inbox, pool_stop))
+        .spawn(move || run_pool(pool, inbox, pool_stop, wake))
         .map_err(spawn_failed)?;
     let control_stop = Arc::clone(&stop);
     let accept_log = logger.clone();
@@ -288,8 +317,8 @@ fn start_inner(
 
 impl Running {
     /// Stops the service cleanly: every call is hung up, every port is
-    /// released, and the log is flushed. The pool does this in one pass,
-    /// well inside the service stop timeout.
+    /// released, every registration is given up, and the log is flushed.
+    /// The pool does this well inside the service stop timeout.
     pub fn stop(mut self) {
         self.stop.set();
         if let Some(thread) = self.pool.take() {
@@ -309,8 +338,8 @@ impl Running {
 }
 
 /// The pool's thread: one turn of the loop at least every tick, and sooner
-/// when a serial port has something.
-fn run_pool(mut pool: Pool, inbox: PoolInbox, stop: Arc<Event>) {
+/// when a serial port has something or `wake` is set.
+fn run_pool(mut pool: Pool, inbox: PoolInbox, stop: Arc<Event>, wake: Arc<Event>) {
     let started = Instant::now();
     let now = || Now {
         mono_ms: started.elapsed().as_millis() as u64,
@@ -323,16 +352,24 @@ fn run_pool(mut pool: Pool, inbox: PoolInbox, stop: Arc<Event>) {
         // Sleep until the next tick, a port's event, or the stop signal.
         handles.clear();
         handles.push(stop.raw());
+        handles.push(wake.raw());
         handles.extend(
             pool.wait_handles()
                 .iter()
                 .filter_map(|handle| handle.raw())
-                .take(MAX_WAIT_HANDLES - 1),
+                .take(MAX_WAIT_HANDLES - 2),
         );
         let into_tick = started.elapsed().as_millis() as u64 % TICK_MS;
         wait_any(&handles, Duration::from_millis(TICK_MS - into_tick));
     }
     pool.shutdown(now());
+    // The lines are down. What the router has sent to say so, a BYE for
+    // each call and the end of each registration, is answered by the far
+    // ends in their own time; it is given a little.
+    let until = Instant::now() + LINGER;
+    while pool.linger(now()) && Instant::now() < until {
+        wake.wait(Duration::from_millis(TICK_MS));
+    }
 }
 
 /// Looks the serial ports up when the service starts and every

@@ -9,6 +9,7 @@
 //! use them, so they agree on the wire format by construction.
 //!
 //! - `model` is what the service reports: lines, calls and events.
+//! - `telephony` is what it reports about SIP and media.
 //! - `wire` is the framing: hello, requests, responses, and the methods
 //!   with their parameters and results.
 //! - [`doc`] describes the API for people and renders
@@ -18,6 +19,7 @@
 
 pub mod doc;
 mod model;
+mod telephony;
 mod wire;
 
 pub use model::{
@@ -25,10 +27,17 @@ pub use model::{
     ErrorInfo, Event, LineInfo, LineState, LogEvent, LogLevel, PortInfo, PortKind, ServiceMode,
     Stats, Tally,
 };
+pub use telephony::{
+    HuntGroupInfo, HuntGroupList, LineSip, ListenerState, MediaInfo, Registration,
+    RegistrationState, RouteInfo, RouteList, SipMode, SipRegistration, SipStatus, SipSummary,
+    SipTrace, TraceDirection,
+};
 pub use wire::{
-    Call, CallList, CallsQuery, ClientFrame, ControlChange, ControlSettings, Done, EVENT_NAMES,
-    EventSelection, Hello, LineChange, LineList, LineRef, LineSpec, LogTail, LogTailQuery,
-    MAX_MESSAGE_BYTES, PROTOCOL, PortList, Reloaded, RequestFrame, ServerFrame, ServiceChange,
-    ServiceInfo, ServiceSettings, Settings, SettingsChange, SettingsResult, Subscription,
-    decode_client, decode_server, encode,
+    Call, CallList, CallsQuery, CaptureSwitch, ClientFrame, ControlChange, ControlSettings, Done,
+    EVENT_NAMES, EVENTS_BY_NAME_ONLY, EventSelection, Hello, HuntGroupChange, HuntGroupRef,
+    HuntGroupSpec, LineChange, LineList, LineRef, LineSpec, LogTail, LogTailQuery,
+    MAX_MESSAGE_BYTES, MediaChange, MediaSettings, PROTOCOL, PortList, RegisterChange,
+    RegisterSpec, Reloaded, RequestFrame, ReregisterQuery, RouteChange, RouteMove, RouteRef,
+    RouteSpec, ServerFrame, ServiceChange, ServiceInfo, ServiceSettings, Settings, SettingsChange,
+    SettingsResult, SipChange, SipSettings, Subscription, decode_client, decode_server, encode,
 };

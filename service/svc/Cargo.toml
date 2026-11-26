@@ -16,10 +16,12 @@ config.workspace = true
 ctlproto.workspace = true
 ctlsrv.workspace = true
 engine.workspace = true
+media.workspace = true
 msg.workspace = true
 pipe.workspace = true
 pool.workspace = true
 serial.workspace = true
+telephony.workspace = true
 toml_edit.workspace = true
 
 [build-dependencies]

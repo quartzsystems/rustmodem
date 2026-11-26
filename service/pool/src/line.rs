@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 use at::{AtConfig, AtInterpreter, Mode, ModemSignals, Profile};
 use config::{EngineKind, LineConfig, UnknownCommand};
 use ctlproto::{CallInfo, CallRecord, ConnectInfo, Counters, Direction, EndReason, LineInfo};
-use ctlproto::{ErrorInfo, LineState};
+use ctlproto::{ErrorInfo, LineSip, LineState, MediaInfo, Registration, SipMode};
 use engine::ModemEngine;
 use msg::Message;
 use serial::SerialBackend;
@@ -33,10 +33,14 @@ pub(crate) struct ActiveCall {
     pub bytes_rx: u64,
     /// The line went off hook to answer the call.
     pub answered: bool,
+    /// The RTP of the call as it was when its media stopped.
+    pub media: Option<MediaInfo>,
 }
 
 impl ActiveCall {
-    pub fn info(&self) -> CallInfo {
+    /// The call as the control API shows it. `media` is the RTP of the
+    /// call now, when its media is running.
+    pub fn info(&self, media: Option<MediaInfo>) -> CallInfo {
         CallInfo {
             id: self.id,
             direction: self.direction,
@@ -46,6 +50,7 @@ impl ActiveCall {
             connect: self.connect.clone(),
             bytes_tx: self.bytes_tx,
             bytes_rx: self.bytes_rx,
+            media: media.or_else(|| self.media.clone()).map(Box::new),
         }
     }
 
@@ -62,6 +67,7 @@ impl ActiveCall {
             connect: self.connect,
             bytes_tx: self.bytes_tx,
             bytes_rx: self.bytes_rx,
+            media: self.media.map(Box::new),
         }
     }
 }
@@ -100,6 +106,10 @@ pub(crate) struct Line {
     pub binding: Option<String>,
     /// The packets of the line's calls are to be captured.
     pub capture: bool,
+    /// The names of the hunt groups the line is in.
+    pub hunt_groups: Vec<String>,
+    /// The service speaks SIP, by its configuration.
+    pub sip: bool,
 }
 
 impl Line {
@@ -124,7 +134,15 @@ impl Line {
             call: None,
             binding: None,
             capture: false,
+            hunt_groups: Vec::new(),
+            sip: false,
         }
+    }
+
+    /// The RTP of the line's call now, when its media is running and its
+    /// runner keeps statistics.
+    pub fn media_info(&self) -> Option<MediaInfo> {
+        Some(self.media.as_ref()?.stats()?.info())
     }
 
     pub fn id(&self) -> LineId {
@@ -155,7 +173,25 @@ impl Line {
         }
     }
 
-    pub fn info(&self) -> LineInfo {
+    /// The line as the control API shows it. `registration` is what the
+    /// router says of the line's registration.
+    pub fn info(&self, registration: Option<Registration>) -> LineInfo {
+        let register = self.config.register.as_ref();
+        let sip = LineSip {
+            mode: match register {
+                Some(_) => SipMode::Registered,
+                None if self.sip => SipMode::Trunk,
+                None => SipMode::None,
+            },
+            extension: register.map(|register| register.user.clone()),
+            server: register.map(|register| register.server.clone()),
+            auth_user: register
+                .map(|register| register.auth_user.clone())
+                .filter(|user| !user.is_empty()),
+            expires_s: register.map(|register| register.expires_s),
+            registration,
+            has_password: register.is_some_and(|register| !register.password.is_empty()),
+        };
         LineInfo {
             id: self.config.id,
             name: self.config.name.clone(),
@@ -166,9 +202,13 @@ impl Line {
             auto_answer_rings: self.config.auto_answer_rings,
             unknown_command: self.config.unknown_command.as_str().to_string(),
             counters: self.counters,
-            call: self.call.as_ref().map(ActiveCall::info),
+            call: self.call.as_ref().map(|call| call.info(self.media_info())),
             error: self.error.as_ref().map(ErrorInfo::from),
             binding: self.binding.clone(),
+            engine: self.config.engine.as_str().to_string(),
+            hunt_groups: self.hunt_groups.clone(),
+            sip,
+            capture: self.capture,
         }
     }
 }

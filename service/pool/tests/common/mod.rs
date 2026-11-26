@@ -325,6 +325,12 @@ pub fn summarise(events: &[Event]) -> Vec<String> {
                 record.reason.as_str()
             ),
             Event::Log(log) => format!("log {}", log.text),
+            Event::SipRegistration(e) => format!(
+                "line {} registration {}",
+                e.line,
+                e.registration.state.as_str()
+            ),
+            Event::SipTrace(trace) => format!("trace {}", trace.direction.as_str()),
         })
         .collect()
 }

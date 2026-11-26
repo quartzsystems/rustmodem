@@ -73,6 +73,8 @@ pub enum RouterEvent {
     Failed(LineId),
     /// The far end cleared the line's call.
     Cleared(LineId),
+    /// The line's registration changed state.
+    Registration(LineId),
 }
 
 /// What stands between the lines and the network.
@@ -105,6 +107,20 @@ pub trait CallRouter: Send {
     fn busy(&self) -> bool {
         false
     }
+
+    /// The registration of a line that registers somewhere, as it stands.
+    fn registration(&self, _now_ms: u64, _line: LineId) -> Option<ctlproto::Registration> {
+        None
+    }
+
+    /// The router's SIP side as the control API shows it. `None` from a
+    /// router that does not speak SIP.
+    fn sip_status(&self, _now_ms: u64) -> Option<ctlproto::SipStatus> {
+        None
+    }
+
+    /// Registers a line again now, or every line that registers.
+    fn reregister(&mut self, _now_ms: u64, _line: Option<LineId>) {}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -215,6 +215,11 @@ pub struct LineEdit {
     pub auto_answer_rings: Option<u8>,
     /// A new unknown-command setting.
     pub unknown_command: Option<UnknownCommand>,
+    /// A new modem engine.
+    pub engine: Option<EngineKind>,
+    /// A new registration, whole, or `Some(None)` to remove the
+    /// registration.
+    pub register: Option<Option<RegisterConfig>>,
 }
 
 /// A change to the settings that are not lines: each `Some` replaces that
@@ -227,6 +232,71 @@ pub struct SettingsEdit {
     pub log_dir: Option<String>,
     /// A new `control.pipe`.
     pub pipe: Option<String>,
+    /// Changes to `[sip]`.
+    pub sip: SipEdit,
+    /// Changes to `[media]`.
+    pub media: MediaEdit,
+}
+
+/// A change to `[sip]`: each `Some` replaces that key.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct SipEdit {
+    pub enabled: Option<bool>,
+    /// As `address:port`; checked when the change is made.
+    pub listen: Option<String>,
+    pub address: Option<String>,
+    pub user_agent: Option<String>,
+    /// Addresses or CIDR blocks; checked when the change is made.
+    pub trusted_peers: Option<Vec<String>>,
+    pub outbound_peer: Option<String>,
+    pub ring_timeout_s: Option<u32>,
+}
+
+impl SipEdit {
+    /// Whether the edit changes nothing.
+    pub fn is_empty(&self) -> bool {
+        *self == SipEdit::default()
+    }
+}
+
+/// A change to `[media]`: each `Some` replaces that key.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct MediaEdit {
+    /// The codecs as the configuration spells them; checked when the
+    /// change is made.
+    pub codecs: Option<Vec<String>>,
+    pub ptime_ms: Option<u32>,
+    /// As `first-last`; checked when the change is made.
+    pub rtp_ports: Option<String>,
+    pub rtp_timeout_s: Option<u32>,
+    pub capture_dir: Option<String>,
+}
+
+impl MediaEdit {
+    /// Whether the edit changes nothing.
+    pub fn is_empty(&self) -> bool {
+        *self == MediaEdit::default()
+    }
+}
+
+/// A change to a hunt group: each `Some` replaces that key.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct HuntGroupEdit {
+    /// A new name. The routes to the group follow it.
+    pub name: Option<String>,
+    pub pilot: Option<String>,
+    pub lines: Option<Vec<u16>>,
+    /// The strategy as the configuration spells it; checked when the
+    /// change is made.
+    pub strategy: Option<String>,
+}
+
+/// A change to a route: each `Some` replaces that key.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct RouteEdit {
+    pub called: Option<String>,
+    /// As `line:<id>` or `group:<name>`; checked when the change is made.
+    pub target: Option<String>,
 }
 
 /// A whole, valid configuration.

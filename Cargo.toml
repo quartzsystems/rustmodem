@@ -79,6 +79,7 @@ pipe = { path = "service/pipe" }
 pool = { path = "service/pool" }
 media = { path = "service/media" }
 sippeer = { path = "tools/sippeer" }
+telephony = { path = "service/telephony" }
 model = { path = "ui/model" }
 glyph = { path = "ui/glyph" }
 win32 = { path = "ui/win32" }

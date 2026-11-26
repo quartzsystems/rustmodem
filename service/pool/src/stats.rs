@@ -33,6 +33,25 @@ pub(crate) struct Tallies {
     connects: BTreeMap<(u32, Option<String>), u64>,
     protocols: BTreeMap<String, u64>,
     compressions: BTreeMap<String, u64>,
+    /// RTP packets delivered and lost, and RTP octets both ways, of the
+    /// calls whose media has stopped.
+    rtp_packets: u64,
+    rtp_lost: u64,
+    rtp_octets: u64,
+}
+
+/// The media of the calls in progress, added up for the statistics.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MediaNow {
+    /// Packets delivered and lost in the calls in progress.
+    pub packets: u64,
+    pub lost: u64,
+    /// RTP in both directions, in kbit/s.
+    pub kbps: u32,
+    /// The mean and the greatest jitter of the calls in progress, in
+    /// milliseconds.
+    pub jitter_ms_avg: f64,
+    pub jitter_ms_max: f64,
 }
 
 impl Tallies {
@@ -107,8 +126,30 @@ impl Tallies {
         self.retrains += 1;
     }
 
-    /// The statistics now, with `lines_in_use` lines in a call.
-    pub fn snapshot(&self, lines_in_use: u32) -> Stats {
+    /// The media of a call stopped with these counts.
+    pub fn media_stopped(&mut self, packets: u64, lost: u64, octets: u64) {
+        self.rtp_packets += packets;
+        self.rtp_lost += lost;
+        self.rtp_octets += octets;
+    }
+
+    /// The RTP octets of the calls whose media has stopped.
+    pub fn rtp_octets(&self) -> u64 {
+        self.rtp_octets
+    }
+
+    /// The statistics now, with `lines_in_use` lines in a call and
+    /// `media` the media of the calls in progress.
+    pub fn snapshot(&self, lines_in_use: u32, media: &MediaNow) -> Stats {
+        let packets = self.rtp_packets + media.packets;
+        let lost = self.rtp_lost + media.lost;
+        // Of the packets that were expected, those that came and those
+        // that did not, so many in a hundred did not.
+        let packet_loss_percent = if packets + lost == 0 {
+            0.0
+        } else {
+            lost as f64 * 100.0 / (packets + lost) as f64
+        };
         let mut connects: Vec<ConnectTally> = self
             .connects
             .iter()
@@ -143,6 +184,15 @@ impl Tallies {
             retrains: self.retrains,
             protocols: named(&self.protocols),
             compressions: named(&self.compressions),
+            rtp_kbps: media.kbps,
+            jitter_ms_avg: media.jitter_ms_avg,
+            jitter_ms_max: media.jitter_ms_max,
+            packet_loss_percent,
+            // What only the pool or the service knows is filled in there.
+            codec: String::new(),
+            ptime_ms: 0,
+            cpu_percent: 0.0,
+            sip: ctlproto::SipSummary::default(),
         }
     }
 }
@@ -191,12 +241,16 @@ mod tests {
             connect: None,
             bytes_tx: 0,
             bytes_rx: 0,
+            media: None,
         }
     }
 
     #[test]
     fn nothing_has_happened_at_the_start() {
-        assert_eq!(Tallies::default().snapshot(0), Stats::default());
+        assert_eq!(
+            Tallies::default().snapshot(0, &MediaNow::default()),
+            Stats::default()
+        );
     }
 
     #[test]
@@ -213,7 +267,7 @@ mod tests {
         ] {
             tallies.connected(&connect(rate, carrier));
         }
-        let stats = tallies.snapshot(0);
+        let stats = tallies.snapshot(0, &MediaNow::default());
         assert_eq!(stats.calls_connected, 7);
         let groups: Vec<(u32, Option<&str>, u64)> = stats
             .connects
@@ -243,7 +297,7 @@ mod tests {
         tallies.connected(&info);
         info.protocol = Some("MNP".to_string());
         tallies.connected(&info);
-        let stats = tallies.snapshot(0);
+        let stats = tallies.snapshot(0, &MediaNow::default());
         let names = |tallies: &[Tally]| -> Vec<(String, u64)> {
             tallies.iter().map(|t| (t.name.clone(), t.count)).collect()
         };
@@ -262,7 +316,7 @@ mod tests {
             &record(Direction::Outgoing, Some(1000), 61_000, EndReason::Hangup),
             false,
         );
-        assert_eq!(tallies.snapshot(0), Stats::default());
+        assert_eq!(tallies.snapshot(0, &MediaNow::default()), Stats::default());
 
         tallies.ended(
             &record(Direction::Incoming, Some(1000), 61_000, EndReason::Remote),
@@ -282,7 +336,7 @@ mod tests {
             &record(Direction::Incoming, None, 5000, EndReason::Abandoned),
             false,
         );
-        let stats = tallies.snapshot(0);
+        let stats = tallies.snapshot(0, &MediaNow::default());
         assert_eq!(stats.avg_call_ms, 35_000);
         assert_eq!(stats.longest_call_ms, 60_000);
         assert_eq!(stats.calls_failed, 1);
@@ -294,8 +348,14 @@ mod tests {
         let mut tallies = Tallies::default();
         tallies.in_use(3);
         tallies.in_use(1);
-        assert_eq!(tallies.snapshot(1).peak_lines_in_use, 3);
-        assert_eq!(tallies.snapshot(4).peak_lines_in_use, 4);
-        assert_eq!(tallies.snapshot(4).lines_in_use, 4);
+        assert_eq!(
+            tallies.snapshot(1, &MediaNow::default()).peak_lines_in_use,
+            3
+        );
+        assert_eq!(
+            tallies.snapshot(4, &MediaNow::default()).peak_lines_in_use,
+            4
+        );
+        assert_eq!(tallies.snapshot(4, &MediaNow::default()).lines_in_use, 4);
     }
 }

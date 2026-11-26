@@ -238,6 +238,11 @@ impl Model {
                 log: self.log.push(line),
                 ..Changes::NONE
             },
+            // The line's own event carries its registration.
+            Event::SipRegistration(_) => Changes::NONE,
+            // BLOCKED(phase2): the SIP trace window takes these; it comes
+            // with the manager's SIP menu in the next work package.
+            Event::SipTrace(_) => Changes::NONE,
         }
     }
 

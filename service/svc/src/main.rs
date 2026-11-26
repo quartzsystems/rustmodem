@@ -27,6 +27,9 @@ mod profiles;
 mod console;
 #[cfg(windows)]
 #[allow(unsafe_code)]
+mod cpu;
+#[cfg(windows)]
+#[allow(unsafe_code)]
 mod eventlog;
 #[cfg(windows)]
 #[allow(unsafe_code)]
@@ -35,6 +38,8 @@ mod registry;
 mod runner;
 #[cfg(windows)]
 mod service;
+#[cfg(windows)]
+mod telephony;
 
 use std::process::ExitCode;
 

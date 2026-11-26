@@ -1509,6 +1509,35 @@ impl SipRouter {
             self.observer.log(Some(status.line), &said);
         }
         self.observer.registration(&status);
+        self.events
+            .push_back(RouterEvent::Registration(status.line));
+    }
+
+    /// A registration as the control API reports it.
+    fn registration_info(status: &RegistrationStatus) -> ctlproto::Registration {
+        ctlproto::Registration {
+            state: match status.state {
+                RegistrationState::Unregistered => ctlproto::RegistrationState::Unregistered,
+                RegistrationState::Registering => ctlproto::RegistrationState::Registering,
+                RegistrationState::Registered => ctlproto::RegistrationState::Registered,
+                RegistrationState::Failed => ctlproto::RegistrationState::Failed,
+            },
+            expires_in_s: status.expires_in_s,
+            error: status.error.as_ref().map(ctlproto::ErrorInfo::from),
+        }
+    }
+
+    /// Asks the registration of `line`, or of every line, to be made
+    /// again now.
+    fn register_again(&mut self, now: u64, line: Option<LineId>) {
+        for reg in &mut self.registrations {
+            if line.is_none_or(|line| line == reg.line) {
+                reg.resolve_at_ms = now;
+                if let Some(registration) = &mut reg.registration {
+                    registration.reregister(now);
+                }
+            }
+        }
     }
 
     fn publish_status(&mut self, now: u64) {
@@ -1535,16 +1564,7 @@ impl SipRouter {
     fn work(&mut self, now: u64, lines: &dyn LineDirectory) {
         while let Some(command) = self.handle.take_command() {
             match command {
-                Command::Reregister(line) => {
-                    for reg in &mut self.registrations {
-                        if line.is_none_or(|line| line == reg.line) {
-                            reg.resolve_at_ms = now;
-                            if let Some(registration) = &mut reg.registration {
-                                registration.reregister(now);
-                            }
-                        }
-                    }
-                }
+                Command::Reregister(line) => self.register_again(now, line),
             }
         }
         while let Some((from, datagram)) = self.transport.receive() {
@@ -1619,6 +1639,47 @@ impl CallRouter for SipRouter {
     fn busy(&self) -> bool {
         self.calls.iter().any(|call| call.client_tx.is_some())
             || self.registrations.iter().any(|reg| reg.tx.is_some())
+    }
+
+    fn registration(&self, now_ms: u64, line: LineId) -> Option<ctlproto::Registration> {
+        let index = self.registrations.iter().position(|reg| reg.line == line)?;
+        Some(Self::registration_info(
+            &self.registration_status(now_ms, index),
+        ))
+    }
+
+    fn sip_status(&self, now_ms: u64) -> Option<ctlproto::SipStatus> {
+        let mut registrations: Vec<ctlproto::SipRegistration> = (0..self.registrations.len())
+            .map(|index| {
+                let status = self.registration_status(now_ms, index);
+                ctlproto::SipRegistration {
+                    line: status.line,
+                    registration: Self::registration_info(&status),
+                    server: status.server,
+                    user: status.user,
+                }
+            })
+            .collect();
+        registrations.sort_by_key(|registration| registration.line);
+        Some(ctlproto::SipStatus {
+            listener: ctlproto::ListenerState::Listening,
+            listen: SocketAddrV4::new(*self.settings.listen.ip(), self.transport.local_port())
+                .to_string(),
+            trusted_peers: self
+                .settings
+                .trusted_peers
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            outbound_peer: self.settings.outbound_peer.clone(),
+            registrations,
+            dropped_untrusted: self.dropped_untrusted,
+            calls: self.calls.len() as u32,
+        })
+    }
+
+    fn reregister(&mut self, now_ms: u64, line: Option<LineId>) {
+        self.register_again(now_ms, line);
     }
 }
 

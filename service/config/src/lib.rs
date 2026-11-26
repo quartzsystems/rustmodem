@@ -28,10 +28,10 @@ use msg::{Message, message};
 use toml_edit::DocumentMut;
 
 pub use schema::{
-    Backend, Cidr, CodecName, Config, ControlConfig, EngineKind, HuntGroup, LineConfig, LineEdit,
-    LogLevel, MAX_LINE_ID, MediaConfig, PortRange, RegisterConfig, Route, SerialConfig,
-    ServiceConfig, SettingsEdit, SipConfig, Strategy, Target, UnknownCommand, pattern_covers,
-    pattern_matches,
+    Backend, Cidr, CodecName, Config, ControlConfig, EngineKind, HuntGroup, HuntGroupEdit,
+    LineConfig, LineEdit, LogLevel, MAX_LINE_ID, MediaConfig, MediaEdit, PortRange, RegisterConfig,
+    Route, RouteEdit, SerialConfig, ServiceConfig, SettingsEdit, SipConfig, SipEdit, Strategy,
+    Target, UnknownCommand, pattern_covers, pattern_matches,
 };
 
 /// The directory under `%ProgramData%` that holds rustmodem's files.
@@ -156,11 +156,115 @@ impl ConfigFile {
         self.commit(document)
     }
 
-    /// Changes the keys of `[service]` and `[control]` that `edit` names.
-    /// Fails, changing nothing, if the result would not be valid.
+    /// Changes the keys of `[service]`, `[control]`, `[sip]` and `[media]`
+    /// that `edit` names. Fails, changing nothing, if the result would not
+    /// be valid.
     pub fn edit_settings(&mut self, edit: &SettingsEdit) -> Result<(), Vec<Message>> {
         let mut document = self.document.clone();
         write::edit_settings(&mut document, edit);
+        self.commit(document)
+    }
+
+    /// Adds a hunt group. Fails, changing nothing, if the name is in use
+    /// or the result would not be valid.
+    pub fn add_hunt_group(&mut self, group: &HuntGroup) -> Result<(), Vec<Message>> {
+        if self.config.hunt_group(&group.name).is_some() {
+            return Err(vec![message("RMD0033", &[&group.name])]);
+        }
+        let mut document = self.document.clone();
+        write::add_hunt_group(&mut document, group);
+        self.commit(document)
+    }
+
+    /// Changes the keys of the hunt group `name` that `edit` names. When
+    /// the group is renamed, the routes to it follow. Fails, changing
+    /// nothing, if there is no such group or the result would not be
+    /// valid.
+    pub fn edit_hunt_group(
+        &mut self,
+        name: &str,
+        edit: &HuntGroupEdit,
+    ) -> Result<(), Vec<Message>> {
+        let Some(index) = self.config.hunt_groups.iter().position(|g| g.name == name) else {
+            return Err(vec![message("RMD0032", &[name])]);
+        };
+        if let Some(new) = &edit.name
+            && new != name
+            && self.config.hunt_group(new).is_some()
+        {
+            return Err(vec![message("RMD0033", &[new])]);
+        }
+        let mut document = self.document.clone();
+        write::edit_hunt_group(&mut document, index, name, edit);
+        self.commit(document)
+    }
+
+    /// Removes the hunt group `name`. Fails, changing nothing, if there is
+    /// no such group or a route sends calls to it.
+    pub fn remove_hunt_group(&mut self, name: &str) -> Result<(), Vec<Message>> {
+        let Some(index) = self.config.hunt_groups.iter().position(|g| g.name == name) else {
+            return Err(vec![message("RMD0032", &[name])]);
+        };
+        let mut document = self.document.clone();
+        write::remove_table(&mut document, "hunt_group", index);
+        self.commit(document)
+    }
+
+    /// The message for a route position that is not in the list.
+    fn no_route(&self, index: usize) -> Vec<Message> {
+        vec![message(
+            "RMD0034",
+            &[&index.to_string(), &self.config.routes.len().to_string()],
+        )]
+    }
+
+    /// Adds a route at `index`, or at the end. Fails, changing nothing, if
+    /// the index is past the end or the result would not be valid.
+    pub fn add_route(&mut self, route: &Route, index: Option<usize>) -> Result<(), Vec<Message>> {
+        let end = self.config.routes.len();
+        let index = index.unwrap_or(end);
+        if index > end {
+            return Err(self.no_route(index));
+        }
+        let mut document = self.document.clone();
+        write::add_route(&mut document, route);
+        write::move_table(&mut document, "route", end, index);
+        self.commit(document)
+    }
+
+    /// Changes the keys of the route at `index` that `edit` names. Fails,
+    /// changing nothing, if there is no such route or the result would not
+    /// be valid.
+    pub fn edit_route(&mut self, index: usize, edit: &RouteEdit) -> Result<(), Vec<Message>> {
+        if index >= self.config.routes.len() {
+            return Err(self.no_route(index));
+        }
+        let mut document = self.document.clone();
+        write::edit_route(&mut document, index, edit);
+        self.commit(document)
+    }
+
+    /// Removes the route at `index`. Fails, changing nothing, if there is
+    /// no such route.
+    pub fn remove_route(&mut self, index: usize) -> Result<(), Vec<Message>> {
+        if index >= self.config.routes.len() {
+            return Err(self.no_route(index));
+        }
+        let mut document = self.document.clone();
+        write::remove_table(&mut document, "route", index);
+        self.commit(document)
+    }
+
+    /// Moves the route at `index` so that it is at `to`. Fails, changing
+    /// nothing, if either is not a place in the list.
+    pub fn move_route(&mut self, index: usize, to: usize) -> Result<(), Vec<Message>> {
+        for place in [index, to] {
+            if place >= self.config.routes.len() {
+                return Err(self.no_route(place));
+            }
+        }
+        let mut document = self.document.clone();
+        write::move_table(&mut document, "route", index, to);
         self.commit(document)
     }
 

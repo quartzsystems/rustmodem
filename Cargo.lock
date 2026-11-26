@@ -150,12 +150,15 @@ dependencies = [
  "ctlproto",
  "ctlsrv",
  "engine",
+ "media",
  "msg",
  "pipe",
  "pool",
  "serde",
  "serde_json",
  "serial",
+ "sippeer",
+ "telephony",
 ]
 
 [[package]]
@@ -573,10 +576,12 @@ dependencies = [
  "ctlsrv",
  "engine",
  "glyph",
+ "media",
  "msg",
  "pipe",
  "pool",
  "serial",
+ "telephony",
  "toml_edit",
  "windows",
  "windows-service",

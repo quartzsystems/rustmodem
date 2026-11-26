@@ -246,6 +246,34 @@ text = "Route &1 at line &2 never gets a call: route &3 at line &4 takes them fi
 cause = "Routes are tried in the order of the file, and an earlier route matches every number this one matches."
 recovery = "Move the more specific route above the other, or remove the route that is not needed."
 
+[RMD0032]
+severity = "error"
+vars = 1
+text = "Hunt group &1 is not in the configuration."
+cause = "A change was asked for to a hunt group that the configuration does not have."
+recovery = "List the hunt groups with: rustmodemctl groups"
+
+[RMD0033]
+severity = "error"
+vars = 1
+text = "Hunt group &1 is already in the configuration."
+cause = "A hunt group was to be added, or renamed, with a name that another hunt group has."
+recovery = "Choose a name that is not in use, or change the group that has it."
+
+[RMD0034]
+severity = "error"
+vars = 2
+text = "There is no route at position &1: the configuration has &2 routes."
+cause = "A route is named by its position in the list, from 0. The routes may have been changed since they were listed."
+recovery = "List the routes again with: rustmodemctl routes"
+
+[RMD0035]
+severity = "error"
+vars = 1
+text = "The registration of line &1 is not complete."
+cause = "A line that registers to a PBX needs the server, the user and the password. One of them was not given and the line has none."
+recovery = "Give the server, the user and the password together."
+
 [RMD0999]
 severity = "error"
 vars = 1
@@ -256,7 +284,6 @@ recovery = "Report the problem to Quartz Systems with the message id."
 # ---------------------------------------------------------------------------
 # 1000-1999: lines and AT
 # ---------------------------------------------------------------------------
-
 [RMD1001]
 severity = "error"
 vars = 1

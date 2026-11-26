@@ -100,9 +100,6 @@ pub const COMMON_ERRORS: &[&str] = &["RMD2002", "RMD2003", "RMD2004", "RMD2010",
 /// The errors of the hello exchange.
 pub const HELLO_ERRORS: &[&str] = &["RMD2001", "RMD2005"];
 
-/// The errors a change to the configuration can get.
-const CONFIG_ERRORS: &[&str] = &["RMD0011", "RMD0014", "RMD0017", "RMD0018", "RMD0019"];
-
 /// Every method.
 pub const METHODS: &[MethodDoc] = &[
     MethodDoc {
@@ -205,10 +202,23 @@ pub const METHODS: &[MethodDoc] = &[
                 "string",
                 "What the line answers to an unknown AT command: `ok` or `error`. Default `ok`.",
             ),
+            optional(
+                "engine",
+                "string",
+                "The modem engine: `null` or `echo`. Default `null`.",
+            ),
+            optional(
+                "register",
+                "RegisterSpec",
+                "The line's registration to a PBX. Default none: the line is reached by \
+                 the trunk.",
+            ),
         ],
         result: "LineInfo",
-        errors: &["RMD0011", "RMD0014", "RMD0017", "RMD0018", "RMD0020"],
-        example: r#"{"id":3,"name":"Line 3","backend":"com0com","port":"CNCB2","enabled":true,"auto_answer_rings":0,"unknown_command":"ok"}"#,
+        errors: &[
+            "RMD0011", "RMD0014", "RMD0017", "RMD0018", "RMD0020", "RMD0035",
+        ],
+        example: r#"{"id":3,"name":"Line 3","backend":"com0com","port":"CNCB2","enabled":true,"auto_answer_rings":0,"unknown_command":"ok","engine":"null","register":{"server":"pbx.example.com","user":"203","password":"secret","auth_user":"line203","expires_s":300}}"#,
     },
     MethodDoc {
         name: "lines.edit",
@@ -232,10 +242,22 @@ pub const METHODS: &[MethodDoc] = &[
                 "A new initial S0, 0 to 255.",
             ),
             optional("unknown_command", "string", "`ok` or `error`."),
+            optional(
+                "engine",
+                "string",
+                "A new modem engine: `null` or `echo`. It is used from the line's next call.",
+            ),
+            optional(
+                "register",
+                "RegisterChange",
+                "Changes to the line's registration to a PBX.",
+            ),
         ],
         result: "LineInfo",
-        errors: CONFIG_ERRORS,
-        example: r#"{"id":3,"name":"Front desk","backend":"com0com","port":"CNCB5","enabled":false,"auto_answer_rings":2,"unknown_command":"error"}"#,
+        errors: &[
+            "RMD0011", "RMD0014", "RMD0017", "RMD0018", "RMD0019", "RMD0035",
+        ],
+        example: r#"{"id":3,"name":"Front desk","backend":"com0com","port":"CNCB5","enabled":false,"auto_answer_rings":2,"unknown_command":"error","engine":"echo","register":{"server":"pbx.example.com:5060","user":"203","password":"secret","auth_user":"","expires_s":600}}"#,
     },
     MethodDoc {
         name: "lines.remove",
@@ -245,6 +267,21 @@ pub const METHODS: &[MethodDoc] = &[
         result: "Done",
         errors: &["RMD0011", "RMD0019"],
         example: r#"{"id":3}"#,
+    },
+    MethodDoc {
+        name: "lines.capture",
+        summary: "Turns the capture of a line's calls on or off. While it is on, every \
+                  RTP packet of each call on the line is written to a file in the capture \
+                  directory; see `docs/CAPTURE.md`. Turning it on during a call captures \
+                  the rest of the call. The setting is not kept in the configuration: it \
+                  is off when the service starts. The result is the line afterwards.",
+        params: &[
+            required("id", "integer", "The line id."),
+            required("on", "boolean", "Whether the line's calls are captured."),
+        ],
+        result: "LineInfo",
+        errors: &["RMD1001"],
+        example: r#"{"id":3,"on":true}"#,
     },
     MethodDoc {
         name: "calls.list",
@@ -287,15 +324,20 @@ pub const METHODS: &[MethodDoc] = &[
         summary: "Changes the settings that are given and leaves the others alone. The \
                   change is checked and written to the configuration file, comments kept. \
                   A change to `[service]` takes effect at once; a change to `[control]` \
-                  takes effect when the service next starts. The result says whether a \
-                  restart is needed.",
+                  takes effect when the service next starts. A change to `[sip]` or \
+                  `[media]` takes effect at once for the calls that follow, except that \
+                  turning SIP on or off, and changing the listener's address, the RTP \
+                  ports or the capture directory, take effect when the service next \
+                  starts. The result says whether a restart is needed.",
         params: &[
             optional("service", "ServiceChange", "Changes to `[service]`."),
             optional("control", "ControlChange", "Changes to `[control]`."),
+            optional("sip", "SipChange", "Changes to `[sip]`."),
+            optional("media", "MediaChange", "Changes to `[media]`."),
         ],
         result: "SettingsResult",
         errors: &["RMD0011", "RMD0014"],
-        example: r#"{"service":{"log_level":"debug","log_dir":""},"control":{"pipe":"rustmodem-control"}}"#,
+        example: r#"{"service":{"log_level":"debug","log_dir":""},"control":{"pipe":"rustmodem-control"},"sip":{"enabled":true,"listen":"0.0.0.0:5060","address":"","user_agent":"","trusted_peers":["10.10.20.0/24"],"outbound_peer":"10.10.20.11","ring_timeout_s":60},"media":{"codecs":["pcmu","pcma"],"ptime_ms":20,"rtp_ports":"20000-20999","rtp_timeout_s":10,"capture_dir":""}}"#,
     },
     MethodDoc {
         name: "stats.get",
@@ -327,6 +369,189 @@ pub const METHODS: &[MethodDoc] = &[
         result: "PortList",
         errors: &[],
         example: "{}",
+    },
+    MethodDoc {
+        name: "sip.status",
+        summary: "Reports the SIP listener, the peers, and the registration of every \
+                  line that registers.",
+        params: &[],
+        result: "SipStatus",
+        errors: &[],
+        example: "{}",
+    },
+    MethodDoc {
+        name: "sip.reregister",
+        summary: "Registers a line again now, or every line that registers. A line \
+                  whose registration had failed does not wait out its back-off. The \
+                  outcome comes as `sip.registration` events.",
+        params: &[optional(
+            "id",
+            "integer",
+            "The line to register again. Default every line that registers.",
+        )],
+        result: "Done",
+        errors: &["RMD1001"],
+        example: r#"{"id":3}"#,
+    },
+    MethodDoc {
+        name: "huntgroups.list",
+        summary: "Lists the hunt groups, in the order of the configuration file.",
+        params: &[],
+        result: "HuntGroupList",
+        errors: &[],
+        example: "{}",
+    },
+    MethodDoc {
+        name: "huntgroups.add",
+        summary: "Adds a hunt group. The change is written to the configuration file \
+                  and takes effect for the calls that follow. The result is the group.",
+        params: &[
+            required("name", "string", "The name, not in use."),
+            required(
+                "pilot",
+                "string",
+                "The number that calls the group, not the pilot of another.",
+            ),
+            required(
+                "lines",
+                "array of integer",
+                "The lines of the group, in hunting order.",
+            ),
+            optional(
+                "strategy",
+                "string",
+                "How the group chooses among its idle lines: `first-idle`, `round-robin` \
+                 or `least-recent`. Default `first-idle`.",
+            ),
+        ],
+        result: "HuntGroupInfo",
+        errors: &[
+            "RMD0011", "RMD0014", "RMD0027", "RMD0028", "RMD0029", "RMD0033",
+        ],
+        example: r#"{"name":"dialup","pilot":"5551000","lines":[1,2,3],"strategy":"round-robin"}"#,
+    },
+    MethodDoc {
+        name: "huntgroups.edit",
+        summary: "Changes the keys of a hunt group that are given and leaves the others \
+                  alone. When the group is renamed, the routes to it follow. The change \
+                  is written to the configuration file. The result is the group \
+                  afterwards.",
+        params: &[
+            required("name", "string", "The group to change."),
+            optional("new_name", "string", "A new name."),
+            optional("pilot", "string", "A new pilot number."),
+            optional(
+                "lines",
+                "array of integer",
+                "The lines of the group, all of them, in hunting order.",
+            ),
+            optional(
+                "strategy",
+                "string",
+                "`first-idle`, `round-robin` or `least-recent`.",
+            ),
+        ],
+        result: "HuntGroupInfo",
+        errors: &[
+            "RMD0011", "RMD0014", "RMD0027", "RMD0028", "RMD0029", "RMD0032",
+        ],
+        example: r#"{"name":"dialup","new_name":"modems","pilot":"5552000","lines":[3,2,1],"strategy":"least-recent"}"#,
+    },
+    MethodDoc {
+        name: "huntgroups.remove",
+        summary: "Removes a hunt group. A group that a route sends calls to cannot be \
+                  removed: change or remove the route first. The change is written to \
+                  the configuration file.",
+        params: &[required("name", "string", "The name of the group.")],
+        result: "Done",
+        errors: &["RMD0011", "RMD0030", "RMD0032"],
+        example: r#"{"name":"dialup"}"#,
+    },
+    MethodDoc {
+        name: "routes.list",
+        summary: "Lists the routes, in the order they are tried. A call to a number \
+                  takes the first route that matches it.",
+        params: &[],
+        result: "RouteList",
+        errors: &[],
+        example: "{}",
+    },
+    MethodDoc {
+        name: "routes.add",
+        summary: "Adds a route. The change is written to the configuration file and \
+                  takes effect for the calls that follow. The result is every route \
+                  afterwards.",
+        params: &[
+            required(
+                "called",
+                "string",
+                "The called number the route is for: exact, or a prefix ending in `*`.",
+            ),
+            required(
+                "target",
+                "string",
+                "Where its calls go: `line:<id>` or `group:<name>`.",
+            ),
+            optional(
+                "index",
+                "integer",
+                "Where in the list the route goes, from 0. Default at the end.",
+            ),
+        ],
+        result: "RouteList",
+        errors: &["RMD0011", "RMD0014", "RMD0030", "RMD0034"],
+        example: r#"{"called":"555*","target":"group:dialup","index":0}"#,
+    },
+    MethodDoc {
+        name: "routes.edit",
+        summary: "Changes the keys of a route that are given and leaves the others \
+                  alone. The change is written to the configuration file. The result is \
+                  every route afterwards.",
+        params: &[
+            required(
+                "index",
+                "integer",
+                "Where the route is in the list, from 0.",
+            ),
+            optional("called", "string", "A new called number."),
+            optional("target", "string", "A new target."),
+        ],
+        result: "RouteList",
+        errors: &["RMD0011", "RMD0014", "RMD0030", "RMD0034"],
+        example: r#"{"index":0,"called":"5551234","target":"line:3"}"#,
+    },
+    MethodDoc {
+        name: "routes.remove",
+        summary: "Removes a route. The change is written to the configuration file. The \
+                  result is every route afterwards.",
+        params: &[required(
+            "index",
+            "integer",
+            "Where the route is in the list, from 0.",
+        )],
+        result: "RouteList",
+        errors: &["RMD0011", "RMD0034"],
+        example: r#"{"index":0}"#,
+    },
+    MethodDoc {
+        name: "routes.move",
+        summary: "Moves a route to another place in the list. The change is written to \
+                  the configuration file. The result is every route afterwards.",
+        params: &[
+            required(
+                "index",
+                "integer",
+                "Where the route is in the list, from 0.",
+            ),
+            required(
+                "to",
+                "integer",
+                "Where it goes: its index once it has been moved.",
+            ),
+        ],
+        result: "RouteList",
+        errors: &["RMD0011", "RMD0034"],
+        example: r#"{"index":2,"to":0}"#,
     },
     MethodDoc {
         name: "subscribe",
@@ -383,6 +608,18 @@ pub const EVENTS: &[EventDoc] = &[
         name: "log",
         data: "LogEvent",
         text: "A line was written to the service log, at the service's log level.",
+    },
+    EventDoc {
+        name: "sip.registration",
+        data: "SipRegistration",
+        text: "A line's registration changed state.",
+    },
+    EventDoc {
+        name: "sip.trace",
+        data: "SipTrace",
+        text: "A SIP message was sent or received. Sent only to a client that names \
+               `sip.trace` in `subscribe`: subscribing to every event leaves it out. Like \
+               `log`, it may be dropped for a client that is slow to read.",
     },
 ];
 
@@ -491,6 +728,164 @@ pub const TYPES: &[TypeDoc] = &[
                 "What the host side of the line's port is bound to, for example \
                  `Standard 56000 bps Modem on COM4`. Absent when unknown.",
             ),
+            required(
+                "engine",
+                "string",
+                "The modem engine of the line: `null` or `echo`.",
+            ),
+            required(
+                "hunt_groups",
+                "array of string",
+                "The names of the hunt groups the line is in.",
+            ),
+            required("sip", "LineSip", "The SIP side of the line."),
+            required(
+                "capture",
+                "boolean",
+                "Whether the line's calls are captured.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "LineSip",
+        text: "The SIP side of a line.",
+        fields: &[
+            required("mode", "SipMode", "How the line is reached."),
+            optional(
+                "extension",
+                "string",
+                "The extension the line registers as.",
+            ),
+            optional(
+                "server",
+                "string",
+                "The registrar, as `host` or `host:port`.",
+            ),
+            optional(
+                "auth_user",
+                "string",
+                "The user name the line authenticates with, when it is not the extension.",
+            ),
+            optional(
+                "expires_s",
+                "integer",
+                "The registration time the line asks for, in seconds.",
+            ),
+            optional(
+                "registration",
+                "Registration",
+                "The registration, for a line that registers and is in service.",
+            ),
+            required(
+                "has_password",
+                "boolean",
+                "Whether a password is configured. The password itself is never reported.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "Registration",
+        text: "A line's registration as it stands.",
+        fields: &[
+            required("state", "RegistrationState", "The state."),
+            optional(
+                "expires_in_s",
+                "integer",
+                "The seconds left of the binding, when registered.",
+            ),
+            optional(
+                "error",
+                "Error",
+                "Why the registration failed, when it has.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "MediaInfo",
+        text: "The RTP of a call: what was agreed and what has happened. The counts of \
+               a call in progress are as of a moment ago.",
+        fields: &[
+            required("codec", "string", "The codec: `PCMU` or `PCMA`."),
+            required("ptime_ms", "integer", "The packet time in milliseconds."),
+            optional(
+                "remote",
+                "string",
+                "Where the far end receives RTP, as `address:port`.",
+            ),
+            required(
+                "rx_packets",
+                "integer",
+                "Packets delivered from the far end.",
+            ),
+            required(
+                "rx_octets",
+                "integer",
+                "Payload octets delivered from the far end.",
+            ),
+            required("tx_packets", "integer", "Packets sent to the far end."),
+            required(
+                "tx_octets",
+                "integer",
+                "Payload octets sent to the far end.",
+            ),
+            required(
+                "lost",
+                "integer",
+                "Packets from the far end that never arrived in time.",
+            ),
+            required(
+                "late",
+                "integer",
+                "Packets that arrived after their place had been filled.",
+            ),
+            required(
+                "duplicate",
+                "integer",
+                "Packets that had been delivered already.",
+            ),
+            required(
+                "resync",
+                "integer",
+                "Times the far end's stream started again.",
+            ),
+            required(
+                "ignored",
+                "integer",
+                "Packets of another payload type, or not of whole frames.",
+            ),
+            required(
+                "free_run",
+                "integer",
+                "Frames sent on the local timer before the far end's first packet.",
+            ),
+            required(
+                "slips",
+                "integer",
+                "Points where the frames sent stopped matching the frames taken. There \
+                 should never be one.",
+            ),
+            required(
+                "jitter_us_avg",
+                "integer",
+                "The interarrival jitter, smoothed as RFC 3550 has it, in microseconds.",
+            ),
+            required(
+                "jitter_us_max",
+                "integer",
+                "The most the jitter has been, in microseconds.",
+            ),
+            required(
+                "tick_p50_us",
+                "integer",
+                "The time a tick takes, in microseconds: the median.",
+            ),
+            required("tick_p99_us", "integer", "The 99th percentile."),
+            required("tick_max_us", "integer", "The longest."),
+            required(
+                "overruns",
+                "integer",
+                "Ticks that took longer than the packet time.",
+            ),
         ],
     },
     TypeDoc {
@@ -557,6 +952,12 @@ pub const TYPES: &[TypeDoc] = &[
                 "integer",
                 "Data bytes from the far end to the host so far.",
             ),
+            optional(
+                "media",
+                "MediaInfo",
+                "The RTP of the call: what was agreed and what has happened. Absent for a \
+                 call with no media.",
+            ),
         ],
     },
     TypeDoc {
@@ -602,6 +1003,12 @@ pub const TYPES: &[TypeDoc] = &[
                 "bytes_rx",
                 "integer",
                 "Data bytes from the far end to the host.",
+            ),
+            optional(
+                "media",
+                "MediaInfo",
+                "The RTP of the call: what was agreed and what has happened. Absent for a \
+                 call with no media.",
             ),
         ],
     },
@@ -670,7 +1077,203 @@ pub const TYPES: &[TypeDoc] = &[
         fields: &[
             required("service", "ServiceSettings", "The `[service]` settings."),
             required("control", "ControlSettings", "The `[control]` settings."),
+            required("sip", "SipSettings", "The `[sip]` settings."),
+            required("media", "MediaSettings", "The `[media]` settings."),
             required("path", "string", "The path of the configuration file."),
+        ],
+    },
+    TypeDoc {
+        name: "SipSettings",
+        text: "The `[sip]` settings.",
+        fields: &[
+            required("enabled", "boolean", "Whether the service speaks SIP."),
+            required(
+                "listen",
+                "string",
+                "The address of the listener, as `address:port`.",
+            ),
+            required(
+                "address",
+                "string",
+                "The address to advertise. Empty means the local address that routes to \
+                 the peer.",
+            ),
+            required(
+                "user_agent",
+                "string",
+                "The User-Agent. Empty means `rustmodem/<version>`.",
+            ),
+            required(
+                "trusted_peers",
+                "array of string",
+                "The addresses, or CIDR blocks, that may send requests to the listener.",
+            ),
+            required(
+                "outbound_peer",
+                "string",
+                "Where lines that are not registered send the calls they dial, as `host` \
+                 or `host:port`. Empty means nowhere.",
+            ),
+            required(
+                "ring_timeout_s",
+                "integer",
+                "How long a line may ring before the caller is turned away, in seconds.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "MediaSettings",
+        text: "The `[media]` settings.",
+        fields: &[
+            required(
+                "codecs",
+                "array of string",
+                "The codecs, most preferred first: `pcmu`, `pcma`.",
+            ),
+            required("ptime_ms", "integer", "The packet time in milliseconds."),
+            required(
+                "rtp_ports",
+                "string",
+                "The ports RTP may use, as `first-last`.",
+            ),
+            required(
+                "rtp_timeout_s",
+                "integer",
+                "How long a call may go without a packet before it is cleared, in seconds.",
+            ),
+            required(
+                "capture_dir",
+                "string",
+                "The capture directory. Empty means `captures` under the log directory.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "SipChange",
+        text: "The `sip` part of `config.set`: the keys of `[sip]` to change.",
+        fields: &[
+            optional("enabled", "boolean", "Whether the service speaks SIP."),
+            optional(
+                "listen",
+                "string",
+                "A new address for the listener, as `address:port`.",
+            ),
+            optional(
+                "address",
+                "string",
+                "A new address to advertise. An empty string means the local address \
+                 that routes to the peer.",
+            ),
+            optional(
+                "user_agent",
+                "string",
+                "A new User-Agent. An empty string means `rustmodem/<version>`.",
+            ),
+            optional(
+                "trusted_peers",
+                "array of string",
+                "The trusted peers, all of them: addresses or CIDR blocks.",
+            ),
+            optional(
+                "outbound_peer",
+                "string",
+                "A new outbound peer, as `host` or `host:port`. An empty string means none.",
+            ),
+            optional(
+                "ring_timeout_s",
+                "integer",
+                "How long a line may ring, in seconds.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "MediaChange",
+        text: "The `media` part of `config.set`: the keys of `[media]` to change.",
+        fields: &[
+            optional(
+                "codecs",
+                "array of string",
+                "The codecs, all of them, most preferred first: `pcmu`, `pcma`.",
+            ),
+            optional(
+                "ptime_ms",
+                "integer",
+                "A new packet time in milliseconds: 10, 20 or 30.",
+            ),
+            optional(
+                "rtp_ports",
+                "string",
+                "The ports RTP may use, as `first-last`.",
+            ),
+            optional(
+                "rtp_timeout_s",
+                "integer",
+                "How long a call may go without a packet, in seconds.",
+            ),
+            optional(
+                "capture_dir",
+                "string",
+                "A new capture directory. An empty string means the default one.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "RegisterSpec",
+        text: "The `register` part of `lines.add`: the line is an extension of a PBX.",
+        fields: &[
+            required(
+                "server",
+                "string",
+                "The registrar, as `host` or `host:port`.",
+            ),
+            required("user", "string", "The extension."),
+            required(
+                "password",
+                "string",
+                "The password. It is written to the configuration file and never \
+                 reported.",
+            ),
+            optional(
+                "auth_user",
+                "string",
+                "The user name to authenticate with. Default the extension.",
+            ),
+            optional(
+                "expires_s",
+                "integer",
+                "The registration time to ask for, in seconds. Default 300.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "RegisterChange",
+        text: "The `register` part of `lines.edit`: the keys of the line's registration \
+               to change. For a line that has no registration, `server`, `user` and \
+               `password` must all be given.",
+        fields: &[
+            optional(
+                "server",
+                "string",
+                "A new registrar. An empty string removes the registration: the line is \
+                 reached by the trunk.",
+            ),
+            optional("user", "string", "A new extension."),
+            optional(
+                "password",
+                "string",
+                "A new password. Left out, the password stays as it is.",
+            ),
+            optional(
+                "auth_user",
+                "string",
+                "A new user name to authenticate with. An empty string means the \
+                 extension.",
+            ),
+            optional(
+                "expires_s",
+                "integer",
+                "A new registration time to ask for, in seconds.",
+            ),
         ],
     },
     TypeDoc {
@@ -797,6 +1400,197 @@ pub const TYPES: &[TypeDoc] = &[
                 "array of Tally",
                 "The connected calls by data compression, largest count first. Empty until \
                  an engine reports one.",
+            ),
+            required(
+                "rtp_kbps",
+                "integer",
+                "RTP in both directions over the last second or so, headers included, in \
+                 kbit/s.",
+            ),
+            required(
+                "jitter_ms_avg",
+                "number",
+                "The mean interarrival jitter of the calls in progress, in milliseconds.",
+            ),
+            required(
+                "jitter_ms_max",
+                "number",
+                "The most the jitter of a call in progress has been, in milliseconds.",
+            ),
+            required(
+                "packet_loss_percent",
+                "number",
+                "The packets lost, in a hundred expected, over every call since the \
+                 service started.",
+            ),
+            required(
+                "codec",
+                "string",
+                "The codec the service prefers: `PCMU` or `PCMA`. Empty when SIP is off.",
+            ),
+            required(
+                "ptime_ms",
+                "integer",
+                "The packet time the service asks for, in milliseconds. 0 when SIP is off.",
+            ),
+            required(
+                "cpu_percent",
+                "number",
+                "How much of one processor the service process has used over the last \
+                 second or so, in a hundred.",
+            ),
+            required("sip", "SipSummary", "SIP in a line of numbers."),
+        ],
+    },
+    TypeDoc {
+        name: "SipSummary",
+        text: "SIP in a line of numbers.",
+        fields: &[
+            required("listener", "ListenerState", "The state of the listener."),
+            required("registered", "integer", "How many lines are registered."),
+            required(
+                "registering",
+                "integer",
+                "How many lines in service have a registration configured.",
+            ),
+            required(
+                "dropped_untrusted",
+                "integer",
+                "Requests dropped because they came from an address that is not trusted.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "SipStatus",
+        text: "The result of `sip.status`.",
+        fields: &[
+            required("listener", "ListenerState", "The state of the listener."),
+            required(
+                "listen",
+                "string",
+                "The address the listener is bound to, as `address:port`. Empty when SIP \
+                 is off.",
+            ),
+            required(
+                "trusted_peers",
+                "array of string",
+                "The addresses that may send requests to the listener.",
+            ),
+            required(
+                "outbound_peer",
+                "string",
+                "Where lines that are not registered send the calls they dial. Empty \
+                 means nowhere.",
+            ),
+            required(
+                "registrations",
+                "array of SipRegistration",
+                "Every line that registers, in id order.",
+            ),
+            required(
+                "dropped_untrusted",
+                "integer",
+                "Requests dropped because they came from an address that is not trusted.",
+            ),
+            required(
+                "calls",
+                "integer",
+                "Calls the router has: ringing, connected or being cleared.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "SipRegistration",
+        text: "One line's registration, with where it registers.",
+        fields: &[
+            required("line", "integer", "The line."),
+            required(
+                "server",
+                "string",
+                "The registrar, as the configuration names it.",
+            ),
+            required("user", "string", "The extension."),
+            required(
+                "registration",
+                "Registration",
+                "The registration as it stands.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "SipTrace",
+        text: "A SIP message that passed.",
+        fields: &[
+            required(
+                "time_ms",
+                "integer",
+                "When, in milliseconds since the Unix epoch.",
+            ),
+            required("direction", "TraceDirection", "Which way it went."),
+            required("peer", "string", "The other end, as `address:port`."),
+            required(
+                "text",
+                "string",
+                "The message as it was on the wire. The response to a digest challenge \
+                 is in it; the password is not.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "HuntGroupList",
+        text: "The result of `huntgroups.list`.",
+        fields: &[required(
+            "groups",
+            "array of HuntGroupInfo",
+            "The hunt groups, in the order of the configuration file.",
+        )],
+    },
+    TypeDoc {
+        name: "HuntGroupInfo",
+        text: "A hunt group: lines that share a number.",
+        fields: &[
+            required("name", "string", "The name, unique."),
+            required("pilot", "string", "The number that calls the group."),
+            required(
+                "lines",
+                "array of integer",
+                "The lines of the group, in hunting order.",
+            ),
+            required(
+                "strategy",
+                "string",
+                "How the group chooses among its idle lines: `first-idle`, `round-robin` \
+                 or `least-recent`.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "RouteList",
+        text: "The result of `routes.list` and of every change to the routes.",
+        fields: &[required(
+            "routes",
+            "array of RouteInfo",
+            "The routes, in the order they are tried.",
+        )],
+    },
+    TypeDoc {
+        name: "RouteInfo",
+        text: "A route: where the calls to a number go.",
+        fields: &[
+            required(
+                "index",
+                "integer",
+                "Where the route is in the list, from 0.",
+            ),
+            required(
+                "called",
+                "string",
+                "The called number the route is for: exact, or a prefix ending in `*`.",
+            ),
+            required(
+                "target",
+                "string",
+                "Where its calls go: `line:<id>` or `group:<name>`.",
             ),
         ],
     },
@@ -975,6 +1769,55 @@ pub const ENUMS: &[EnumDoc] = &[
                 "other",
                 "Anything else the system lists as a serial device.",
             ),
+        ],
+    },
+    EnumDoc {
+        name: "SipMode",
+        text: "How a line is reached over SIP.",
+        values: &[
+            ("none", "Not at all: the service does not speak SIP."),
+            (
+                "trunk",
+                "By the trunk: calls come from the trusted peers and go to the outbound \
+                 peer.",
+            ),
+            (
+                "registered",
+                "As an extension of a PBX the line registers to.",
+            ),
+        ],
+    },
+    EnumDoc {
+        name: "RegistrationState",
+        text: "The state of a line's registration.",
+        values: &[
+            ("unregistered", "Not registered, and not trying."),
+            (
+                "registering",
+                "A REGISTER is out and there is no binding yet.",
+            ),
+            ("registered", "The registrar holds a binding for the line."),
+            ("failed", "The last try failed. Another follows."),
+        ],
+    },
+    EnumDoc {
+        name: "ListenerState",
+        text: "The state of the SIP listener.",
+        values: &[
+            ("off", "SIP is off."),
+            ("listening", "The listener is bound and takes requests."),
+            (
+                "failed",
+                "SIP is on in the configuration and the listener could not be bound.",
+            ),
+        ],
+    },
+    EnumDoc {
+        name: "TraceDirection",
+        text: "Which way a traced SIP message went.",
+        values: &[
+            ("sent", "The service sent it."),
+            ("received", "The service received it."),
         ],
     },
 ];

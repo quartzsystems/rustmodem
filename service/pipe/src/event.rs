@@ -17,8 +17,10 @@ use windows::core::PCWSTR;
 /// The most handles one wait can take (`MAXIMUM_WAIT_OBJECTS`).
 pub const MAX_WAIT_HANDLES: usize = 64;
 
-/// A manual-reset event: once set it stays set. The service uses one as its
-/// stop signal, which every waiting thread can see.
+/// An event. One made with [`Event::new`] is manual-reset: once set it
+/// stays set. The service uses one as its stop signal, which every waiting
+/// thread can see. One made with [`Event::auto`] is reset by the wait it
+/// ends: the service uses one to wake its pool's thread.
 pub struct Event(HANDLE);
 
 // SAFETY: an event handle may be used from any thread at once; the kernel
@@ -34,6 +36,15 @@ impl Event {
         // SAFETY: no security attributes and no name; the arguments are
         // plain values.
         let handle = unsafe { CreateEventW(None, true, false, PCWSTR::null()) }?;
+        Ok(Event(handle))
+    }
+
+    /// A new auto-reset event, not set: setting it ends one wait, and the
+    /// event is not set again after it.
+    pub fn auto() -> io::Result<Event> {
+        // SAFETY: no security attributes and no name; the arguments are
+        // plain values.
+        let handle = unsafe { CreateEventW(None, false, false, PCWSTR::null()) }?;
         Ok(Event(handle))
     }
 

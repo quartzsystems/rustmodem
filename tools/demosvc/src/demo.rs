@@ -15,15 +15,15 @@ use ctlsrv::{Clock, Hub, Limits, Listener, Server, ServerParts};
 use msg::{Message, Severity, message};
 use pipe::{Event, PipeListener, PipeSecurity};
 use pool::{
-    EventSink, InlineRunner, MemoryProfiles, Now, NullSwitch, Pool, PoolHandle, PoolInbox,
-    PoolParts, TICK_MS, command_channel,
+    CallRouter, EngineFactory, EventSink, InlineRunner, MediaRunner, MemoryProfiles, Now,
+    NullSwitch, Pool, PoolHandle, PoolInbox, PoolParts, TICK_MS, command_channel,
 };
 
 use crate::args::{Options, Script};
 use crate::busy::{Driver, STEP_MS};
 use crate::engine::{DemoEngine, Negotiation};
-use crate::frozen;
 use crate::hosts::{Hosts, demo_ports, port_of_line};
+use crate::{frozen, sip};
 
 /// The tag of the service itself in log lines.
 const SOURCE: &str = "SVC";
@@ -99,7 +99,17 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
     };
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).map_err(|e| one(unusable(e)))?;
-    let config = starting_config(options);
+    let mut config = starting_config(options);
+    // The `sip` script binds its sockets first: the configuration says
+    // where they are.
+    let mut far_end = None;
+    if options.script == Script::Sip {
+        let transport = sip::listen().map_err(one)?;
+        let callers = sip::Callers::bind(options.lines)
+            .map_err(|e| one(message("RMD0003", &[&e.to_string()])))?;
+        sip::configure(&mut config, transport.local(), callers.peer());
+        far_end = Some((transport, callers));
+    }
     let file = ConfigFile::from_config(&config)?;
     file.save(&config_path).map_err(one)?;
 
@@ -112,17 +122,6 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
     if frozen {
         hosts.refuse(&port_of_line(frozen::BROKEN_LINE));
     }
-    let negotiation = Arc::new(Mutex::new(Negotiation::default()));
-    let mut pool = Pool::new(PoolParts {
-        router: Box::new(NullSwitch::new()),
-        media: Box::new(InlineRunner::new()),
-        serial: hosts.factory(),
-        engines: Box::new(move |_| Box::new(DemoEngine::new(Arc::clone(&negotiation)))),
-        sink: Box::new(Sink(hub.clone())),
-        profiles: Box::new(MemoryProfiles::new()),
-        call_log: None,
-    });
-
     // The frozen script has a clock of its own, which it moves and then
     // stops; the others read the machine's.
     let frozen_clock = Arc::new(AtomicU64::new(frozen::START_MS));
@@ -133,6 +132,38 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
         ctlsrv::system_clock()
     };
     let started_ms = clock();
+
+    // Over SIP the lines run the engines their configuration names, on
+    // the media threads; otherwise they run the demo engine, which shows
+    // the rates and protocols of later phases, on the pool's clock.
+    let mut callers = None;
+    let (router, media, engines): (Box<dyn CallRouter>, Box<dyn MediaRunner>, EngineFactory) =
+        match far_end {
+            Some((transport, far_end)) => {
+                let service = transport.local();
+                let (router, media) =
+                    sip::start(&config, transport, &directory, &hub, &clock).map_err(one)?;
+                callers = Some((far_end, service));
+                (router, media, Box::new(pool::engine_for))
+            }
+            None => {
+                let negotiation = Arc::new(Mutex::new(Negotiation::default()));
+                (
+                    Box::new(NullSwitch::new()),
+                    Box::new(InlineRunner::new()),
+                    Box::new(move |_| Box::new(DemoEngine::new(Arc::clone(&negotiation)))),
+                )
+            }
+        };
+    let mut pool = Pool::new(PoolParts {
+        router,
+        media,
+        serial: hosts.factory(),
+        engines,
+        sink: Box::new(Sink(hub.clone())),
+        profiles: Box::new(MemoryProfiles::new()),
+        call_log: None,
+    });
 
     let log = {
         let hub = hub.clone();
@@ -200,6 +231,7 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
         // The demo service keeps no log file: a new log level or log
         // directory is in effect as soon as it is set.
         apply_service: Arc::new(|_| Ok(true)),
+        cpu: ctlsrv::no_cpu_meter(),
     });
 
     log(SOURCE, &message("RMD0001", &[crate::VERSION]));
@@ -223,6 +255,12 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
         std::thread::Builder::new()
             .name("hosts".to_string())
             .spawn(move || run_hosts(Driver::new(hosts, active), handle))
+            .map_err(spawn_failed)?;
+    }
+    if let Some((far_end, service)) = callers {
+        std::thread::Builder::new()
+            .name("callers".to_string())
+            .spawn(move || far_end.run(service))
             .map_err(spawn_failed)?;
     }
 

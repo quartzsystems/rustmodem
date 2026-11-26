@@ -14,10 +14,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use ctlproto::{
-    Call, CallList, CallsQuery, ClientFrame, ControlChange, EndReason, ErrorInfo, Hello,
-    LineChange, LineInfo, LineList, LineRef, LineSpec, LineState, LogLevel, LogTail, LogTailQuery,
-    PROTOCOL, PortList, ServerFrame, ServiceInfo, ServiceMode, SettingsChange, SettingsResult,
-    Stats, decode_server, encode,
+    Call, CallList, CallsQuery, CaptureSwitch, ClientFrame, ControlChange, EndReason, ErrorInfo,
+    Event, EventSelection, Hello, HuntGroupList, LineChange, LineInfo, LineList, LineRef, LineSpec,
+    LineState, ListenerState, LogLevel, LogTail, LogTailQuery, PROTOCOL, PortList,
+    RegistrationState, ReregisterQuery, RouteList, ServerFrame, ServiceInfo, ServiceMode, Settings,
+    SettingsChange, SettingsResult, SipMode, SipStatus, Stats, Subscription, TraceDirection,
+    decode_server, encode,
 };
 
 /// How long a test waits for the demo service before it fails.
@@ -163,7 +165,9 @@ fn help_version_and_arguments_that_are_not_understood() {
     let help = run(&["--help"]);
     assert!(help.status.success());
     let usage = text(&help.stdout);
-    for word in ["--lines", "--script", "idle", "busy", "frozen", "--pipe"] {
+    for word in [
+        "--lines", "--script", "idle", "busy", "frozen", "sip", "--pipe",
+    ] {
         assert!(usage.contains(word), "{usage}");
     }
     let version = run(&["--version"]);
@@ -238,6 +242,8 @@ fn the_idle_script_is_a_service_with_every_line_waiting() {
         enabled: None,
         auto_answer_rings: None,
         unknown_command: None,
+        engine: None,
+        register: None,
     }));
     assert_eq!(added.binding.as_deref(), Some("COM14"));
     eventually("the new line to be idle", || {
@@ -254,6 +260,8 @@ fn the_idle_script_is_a_service_with_every_line_waiting() {
         enabled: None,
         auto_answer_rings: None,
         unknown_command: None,
+        engine: None,
+        register: None,
     }));
     assert_eq!(moved.binding.as_deref(), Some("COM16"));
     eventually("every line to be idle again", || {
@@ -264,6 +272,7 @@ fn the_idle_script_is_a_service_with_every_line_waiting() {
         control: Some(ControlChange {
             pipe: Some("another-pipe".to_string()),
         }),
+        ..SettingsChange::default()
     }));
     assert!(set.restart_required);
     assert!(
@@ -433,4 +442,111 @@ fn a_second_copy_on_the_same_pipe_is_refused() {
         "{}",
         text(&second.stderr)
     );
+}
+
+/// The `sip` script is the service with SIP on: calls come over SIP and
+/// RTP from test peers, a line registers, and everything the control API
+/// has for SIP and media says so.
+#[test]
+fn the_sip_script_takes_calls_over_sip_and_shows_them() {
+    let demo = Demo::start("sip", 4);
+    let mut client = demo.connect();
+
+    // The configuration the script made for itself.
+    let settings: Settings = client.ok(Call::ConfigGet);
+    assert!(settings.sip.enabled);
+    assert!(settings.sip.listen.starts_with("127.0.0.1:"));
+    assert_eq!(settings.sip.trusted_peers, ["127.0.0.1"]);
+    let groups: HuntGroupList = client.ok(Call::HuntGroupsList);
+    assert_eq!(groups.groups.len(), 1);
+    assert_eq!(groups.groups[0].lines, [1, 2, 3, 4]);
+    let routes: RouteList = client.ok(Call::RoutesList);
+    assert_eq!(routes.routes[0].target, "group:dialup");
+
+    // The last line registers to the peer; the others are on the trunk.
+    eventually("line 4 to be registered", || {
+        let status: SipStatus = client.ok(Call::SipStatus);
+        status.listener == ListenerState::Listening
+            && status.listen == settings.sip.listen
+            && status.registrations.len() == 1
+            && status.registrations[0].line == 4
+            && status.registrations[0].registration.state == RegistrationState::Registered
+    });
+    let lines = client.lines();
+    assert_eq!(lines[0].sip.mode, SipMode::Trunk);
+    assert_eq!(lines[0].engine, "echo");
+    assert_eq!(lines[1].engine, "null");
+    assert_eq!(lines[0].hunt_groups, ["dialup"]);
+    let registered = &lines[3].sip;
+    assert_eq!(registered.mode, SipMode::Registered);
+    assert_eq!(registered.extension.as_deref(), Some("204"));
+    assert!(registered.has_password);
+    let registration = registered.registration.as_ref().unwrap();
+    assert_eq!(registration.state, RegistrationState::Registered);
+    assert!(registration.expires_in_s.is_some_and(|left| left <= 300));
+
+    // A call comes, is answered by the line itself, and its RTP shows.
+    let captured: LineInfo = client.ok(Call::LinesCapture(CaptureSwitch { id: 1, on: true }));
+    assert!(captured.capture);
+    let mut media = None;
+    eventually("a call with RTP on a line", || {
+        media = client
+            .lines()
+            .into_iter()
+            .filter(|line| line.state == LineState::Online)
+            .filter_map(|line| line.call?.media)
+            .find(|media| media.rx_packets > 100);
+        media.is_some()
+    });
+    let media = media.unwrap();
+    assert_eq!(media.codec, "PCMU");
+    assert_eq!(media.ptime_ms, 20);
+    assert!(media.remote.as_deref().unwrap().starts_with("127.0.0.1:"));
+    assert!(media.tx_packets > 90, "{media:?}");
+    assert_eq!((media.slips, media.resync), (0, 0), "{media:?}");
+
+    eventually("the statistics to show the call", || {
+        let stats: Stats = client.ok(Call::StatsGet);
+        stats.rtp_kbps > 100
+            && stats.codec == "PCMU"
+            && stats.ptime_ms == 20
+            && stats.sip.listener == ListenerState::Listening
+            && (stats.sip.registered, stats.sip.registering) == (1, 1)
+    });
+
+    // The trace has to be asked for by name; a registration made again
+    // is a message each way, and an event when its state changes.
+    let all: Subscription = client.ok(Call::Subscribe(EventSelection { events: None }));
+    assert!(!all.events.iter().any(|name| name == "sip.trace"));
+    client.ok::<Subscription>(Call::Unsubscribe(EventSelection { events: None }));
+    let named: Subscription = client.ok(Call::Subscribe(EventSelection {
+        events: Some(vec!["sip.trace".to_string()]),
+    }));
+    assert_eq!(named.events, ["sip.trace"]);
+    let id = client.next_id;
+    client.next_id += 1;
+    client.send(&encode(&ClientFrame::Request(
+        Call::SipReregister(ReregisterQuery { id: Some(4) }).request(id),
+    )));
+    let (mut answered, mut sent, mut received) = (false, false, false);
+    let deadline = Instant::now() + PATIENCE;
+    while !(answered && sent && received) {
+        assert!(Instant::now() < deadline, "no trace of the registration");
+        match client.read() {
+            ServerFrame::Result { id: answer, .. } if answer == id => answered = true,
+            ServerFrame::Event(Event::SipTrace(trace)) => {
+                assert!(trace.peer.starts_with("127.0.0.1:"));
+                if trace.text.starts_with("REGISTER ") {
+                    assert_eq!(trace.direction, TraceDirection::Sent);
+                    sent = true;
+                }
+                if sent && trace.text.starts_with("SIP/2.0 200") && trace.text.contains("REGISTER")
+                {
+                    assert_eq!(trace.direction, TraceDirection::Received);
+                    received = true;
+                }
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
 }

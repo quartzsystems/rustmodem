@@ -11,14 +11,16 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use config::{
-    Backend, Config, ConfigFile, ControlConfig, LineConfig, LineEdit, ServiceConfig, SettingsEdit,
-    UnknownCommand,
+    Backend, Config, ConfigFile, ControlConfig, EngineKind, HuntGroup, HuntGroupEdit, LineConfig,
+    LineEdit, MediaEdit, RegisterConfig, Route, RouteEdit, ServiceConfig, SettingsEdit, SipEdit,
+    Strategy, Target, UnknownCommand,
 };
 use ctlproto::{
     Call, CallList, ClientFrame, ControlSettings, Done, EVENT_NAMES, EventSelection, Hello,
-    LineChange, LineList, LineSpec, LogLevel, LogTail, MAX_MESSAGE_BYTES, PROTOCOL, PortInfo,
-    PortList, Reloaded, ServerFrame, ServiceInfo, ServiceMode, ServiceSettings, Settings,
-    SettingsChange, SettingsResult, Subscription, decode_client, encode,
+    HuntGroupInfo, HuntGroupList, LineChange, LineList, LineSpec, LogLevel, LogTail,
+    MAX_MESSAGE_BYTES, MediaSettings, PROTOCOL, PortInfo, PortList, Reloaded, RouteInfo, RouteList,
+    ServerFrame, ServiceInfo, ServiceMode, ServiceSettings, Settings, SettingsChange,
+    SettingsResult, SipSettings, Subscription, decode_client, encode,
 };
 use msg::{Message, Severity, message};
 use pool::PoolHandle;
@@ -58,6 +60,37 @@ pub fn restart_to_apply() -> ApplyService {
     Arc::new(|_| Ok(false))
 }
 
+/// Tells how much of one processor the service process has used over the
+/// last second or so, in a hundred, for `stats.get`.
+pub type CpuMeter = Arc<dyn Fn() -> f64 + Send + Sync>;
+
+/// For a service that does not measure its processor time.
+pub fn no_cpu_meter() -> CpuMeter {
+    Arc::new(|| 0.0)
+}
+
+/// The settings of `[sip]` and `[media]` that are taken up only when the
+/// service starts: whether there is SIP at all, where its listener is,
+/// the ports of RTP and where captures go.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AtStart {
+    enabled: bool,
+    listen: std::net::SocketAddrV4,
+    rtp_ports: config::PortRange,
+    capture_dir: String,
+}
+
+impl AtStart {
+    fn of(config: &Config) -> AtStart {
+        AtStart {
+            enabled: config.sip.enabled,
+            listen: config.sip.listen,
+            rtp_ports: config.media.rtp_ports,
+            capture_dir: config.media.capture_dir.clone(),
+        }
+    }
+}
+
 /// What a server is made from.
 pub struct ServerParts {
     /// The way to the pool.
@@ -86,6 +119,8 @@ pub struct ServerParts {
     /// Puts changed `[service]` settings into effect, if the service can
     /// without starting again.
     pub apply_service: ApplyService,
+    /// Measures the processor time of the service, for `stats.get`.
+    pub cpu: CpuMeter,
 }
 
 struct Shared {
@@ -103,7 +138,11 @@ struct Shared {
     /// ones the service started with, and the changes it could apply
     /// since. A change that is in the file and not here needs a restart.
     running: Mutex<(ServiceConfig, ControlConfig)>,
+    /// The `[sip]` and `[media]` settings the service started with that
+    /// it cannot change while it runs.
+    at_start: AtStart,
     apply_service: ApplyService,
+    cpu: CpuMeter,
     clock: Clock,
     started_ms: u64,
     config_loaded_ms: AtomicU64,
@@ -142,7 +181,9 @@ impl Server {
                 mode: parts.mode,
                 ports: parts.ports,
                 running: Mutex::new(running),
+                at_start: AtStart::of(parts.config.config()),
                 apply_service: parts.apply_service,
+                cpu: parts.cpu,
                 config_loaded_ms: AtomicU64::new(started_ms),
                 config: Mutex::new(parts.config),
                 config_path: parts.config_path,
@@ -394,9 +435,102 @@ impl Server {
                 value(&shared.pool.line(spec.id)?)
             }
             Call::LinesEdit(change) => {
-                let edit = line_edit(&change)?;
-                self.change_config(|file| file.edit_line(change.id, &edit))?;
+                self.change_config(|file| {
+                    // The registration is changed from what the line has.
+                    let edit = line_edit(&change, file.config().line(change.id))
+                        .map_err(|problem| vec![problem])?;
+                    file.edit_line(change.id, &edit)
+                })?;
                 value(&shared.pool.line(change.id)?)
+            }
+            Call::LinesCapture(switch) => value(&shared.pool.capture(switch.id, switch.on)?),
+            Call::SipStatus => value(&shared.pool.sip_status()?),
+            Call::SipReregister(query) => {
+                shared.pool.reregister(query.id)?;
+                value(&Done {})
+            }
+            Call::HuntGroupsList => value(&HuntGroupList {
+                groups: self
+                    .config()
+                    .config()
+                    .hunt_groups
+                    .iter()
+                    .map(hunt_group_info)
+                    .collect(),
+            }),
+            Call::HuntGroupsAdd(spec) => {
+                let group = HuntGroup {
+                    strategy: match &spec.strategy {
+                        Some(name) => Strategy::parse(name).ok_or_else(|| {
+                            message(
+                                "RMD2003",
+                                &[
+                                    "huntgroups.add",
+                                    "strategy is not one of: first-idle, round-robin, least-recent",
+                                ],
+                            )
+                        })?,
+                        None => Strategy::default(),
+                    },
+                    name: spec.name,
+                    pilot: spec.pilot,
+                    lines: spec.lines,
+                };
+                self.change_config(|file| file.add_hunt_group(&group))?;
+                value(&hunt_group_info(&group))
+            }
+            Call::HuntGroupsEdit(change) => {
+                let edit = HuntGroupEdit {
+                    name: change.new_name.clone(),
+                    pilot: change.pilot,
+                    lines: change.lines,
+                    strategy: change.strategy,
+                };
+                self.change_config(|file| file.edit_hunt_group(&change.name, &edit))?;
+                let name = change.new_name.unwrap_or(change.name);
+                let config = self.config();
+                let group = config
+                    .config()
+                    .hunt_group(&name)
+                    .ok_or_else(|| message("RMD0032", &[&name]))?;
+                value(&hunt_group_info(group))
+            }
+            Call::HuntGroupsRemove(group) => {
+                self.change_config(|file| file.remove_hunt_group(&group.name))?;
+                value(&Done {})
+            }
+            Call::RoutesList => value(&self.routes()),
+            Call::RoutesAdd(spec) => {
+                let route = Route {
+                    target: Target::parse(&spec.target).ok_or_else(|| {
+                        message(
+                            "RMD2003",
+                            &["routes.add", "target is not line:<id> or group:<name>"],
+                        )
+                    })?,
+                    called: spec.called,
+                };
+                let index = spec.index.map(|index| index as usize);
+                self.change_config(|file| file.add_route(&route, index))?;
+                value(&self.routes())
+            }
+            Call::RoutesEdit(change) => {
+                let edit = RouteEdit {
+                    called: change.called,
+                    target: change.target,
+                };
+                self.change_config(|file| file.edit_route(change.index as usize, &edit))?;
+                value(&self.routes())
+            }
+            Call::RoutesRemove(route) => {
+                self.change_config(|file| file.remove_route(route.index as usize))?;
+                value(&self.routes())
+            }
+            Call::RoutesMove(moved) => {
+                self.change_config(|file| {
+                    file.move_route(moved.index as usize, moved.to as usize)
+                })?;
+                value(&self.routes())
             }
             Call::LinesRemove(line) => {
                 self.change_config(|file| file.remove_line(line.id))?;
@@ -420,7 +554,11 @@ impl Server {
             }
             Call::ConfigGet => value(&self.settings(self.config().config())),
             Call::ConfigSet(change) => value(&self.change_settings(&change)?),
-            Call::StatsGet => value(&shared.pool.stats()?),
+            Call::StatsGet => {
+                let mut stats = shared.pool.stats()?;
+                stats.cpu_percent = (shared.cpu)();
+                value(&stats)
+            }
             Call::LogTail(query) => value(&LogTail {
                 lines: shared.hub.log_tail(query.last.map(|last| last as usize)),
             }),
@@ -477,7 +615,51 @@ impl Server {
             control: ControlSettings {
                 pipe: config.control.pipe.clone(),
             },
+            sip: SipSettings {
+                enabled: config.sip.enabled,
+                listen: config.sip.listen.to_string(),
+                address: config.sip.address.clone(),
+                user_agent: config.sip.user_agent.clone(),
+                trusted_peers: config
+                    .sip
+                    .trusted_peers
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                outbound_peer: config.sip.outbound_peer.clone(),
+                ring_timeout_s: config.sip.ring_timeout_s,
+            },
+            media: MediaSettings {
+                codecs: config
+                    .media
+                    .codecs
+                    .iter()
+                    .map(|codec| codec.as_str().to_string())
+                    .collect(),
+                ptime_ms: config.media.ptime_ms,
+                rtp_ports: config.media.rtp_ports.to_string(),
+                rtp_timeout_s: config.media.rtp_timeout_s,
+                capture_dir: config.media.capture_dir.clone(),
+            },
             path: self.shared.config_path.display().to_string(),
+        }
+    }
+
+    /// The routes of the configuration, in the order they are tried.
+    fn routes(&self) -> RouteList {
+        RouteList {
+            routes: self
+                .config()
+                .config()
+                .routes
+                .iter()
+                .enumerate()
+                .map(|(index, route)| RouteInfo {
+                    index: index as u32,
+                    called: route.called.clone(),
+                    target: route.target.to_string(),
+                })
+                .collect(),
         }
     }
 
@@ -502,7 +684,30 @@ impl Server {
                 .control
                 .as_ref()
                 .and_then(|control| control.pipe.clone()),
+            sip: change
+                .sip
+                .clone()
+                .map_or_else(SipEdit::default, |sip| SipEdit {
+                    enabled: sip.enabled,
+                    listen: sip.listen,
+                    address: sip.address,
+                    user_agent: sip.user_agent,
+                    trusted_peers: sip.trusted_peers,
+                    outbound_peer: sip.outbound_peer,
+                    ring_timeout_s: sip.ring_timeout_s,
+                }),
+            media: change
+                .media
+                .clone()
+                .map_or_else(MediaEdit::default, |media| MediaEdit {
+                    codecs: media.codecs,
+                    ptime_ms: media.ptime_ms,
+                    rtp_ports: media.rtp_ports,
+                    rtp_timeout_s: media.rtp_timeout_s,
+                    capture_dir: media.capture_dir,
+                }),
         };
+        let telephony = !edit.sip.is_empty() || !edit.media.is_empty();
         let mut current = self.config();
         let mut next = current.clone();
         next.edit_settings(&edit).map_err(first)?;
@@ -528,8 +733,16 @@ impl Server {
         }
         *current = next;
         let config = current.config();
+        if telephony {
+            // The router takes what it can take while it runs: the peers,
+            // the timeouts, the codecs and the packet time, for the calls
+            // that follow.
+            self.shared.pool.apply_config(config.clone())?;
+        }
         Ok(SettingsResult {
-            restart_required: config.service != running.0 || config.control != running.1,
+            restart_required: config.service != running.0
+                || config.control != running.1
+                || AtStart::of(config) != self.shared.at_start,
             config: self.settings(config),
         })
     }
@@ -602,6 +815,20 @@ fn unknown_command(method: &str, name: &str) -> Result<UnknownCommand, Message> 
     })
 }
 
+fn engine(method: &str, name: &str) -> Result<EngineKind, Message> {
+    EngineKind::parse(name)
+        .ok_or_else(|| message("RMD2003", &[method, "engine is not one of: null, echo"]))
+}
+
+fn hunt_group_info(group: &HuntGroup) -> HuntGroupInfo {
+    HuntGroupInfo {
+        name: group.name.clone(),
+        pilot: group.pilot.clone(),
+        lines: group.lines.clone(),
+        strategy: group.strategy.as_str().to_string(),
+    }
+}
+
 /// The line `lines.add` describes. Ranges are checked by the configuration
 /// when the line is added.
 fn new_line(spec: &LineSpec) -> Result<LineConfig, Message> {
@@ -619,12 +846,83 @@ fn new_line(spec: &LineSpec) -> Result<LineConfig, Message> {
     if let Some(name) = &spec.unknown_command {
         line.unknown_command = unknown_command("lines.add", name)?;
     }
+    if let Some(name) = &spec.engine {
+        line.engine = engine("lines.add", name)?;
+    }
+    if let Some(register) = &spec.register {
+        line.register = Some(RegisterConfig {
+            server: register.server.clone(),
+            user: register.user.clone(),
+            password: register.password.clone(),
+            auth_user: register.auth_user.clone().unwrap_or_default(),
+            expires_s: register
+                .expires_s
+                .unwrap_or(RegisterConfig::DEFAULT_EXPIRES_S),
+        });
+    }
     Ok(line)
 }
 
-/// The change `lines.edit` describes.
-fn line_edit(change: &LineChange) -> Result<LineEdit, Message> {
+/// The registration `lines.edit` asks for: none, when the server is
+/// given as an empty string, or what the line has with the keys that are
+/// given changed. A line that has none needs the server, the user and the
+/// password together.
+fn register_edit(
+    id: u16,
+    change: &ctlproto::RegisterChange,
+    current: Option<&RegisterConfig>,
+) -> Result<Option<RegisterConfig>, Message> {
+    if change.server.as_deref() == Some("") {
+        return Ok(None);
+    }
+    let incomplete = || message("RMD0035", &[&id.to_string()]);
+    let mut register = match current {
+        Some(current) => current.clone(),
+        None => RegisterConfig {
+            server: change.server.clone().ok_or_else(incomplete)?,
+            user: change.user.clone().ok_or_else(incomplete)?,
+            password: change.password.clone().ok_or_else(incomplete)?,
+            auth_user: String::new(),
+            expires_s: RegisterConfig::DEFAULT_EXPIRES_S,
+        },
+    };
+    if let Some(server) = &change.server {
+        register.server.clone_from(server);
+    }
+    if let Some(user) = &change.user {
+        register.user.clone_from(user);
+    }
+    if let Some(password) = &change.password {
+        register.password.clone_from(password);
+    }
+    if let Some(auth_user) = &change.auth_user {
+        register.auth_user.clone_from(auth_user);
+    }
+    if let Some(expires_s) = change.expires_s {
+        register.expires_s = expires_s;
+    }
+    Ok(Some(register))
+}
+
+/// The change `lines.edit` describes, to the line as it is now.
+fn line_edit(change: &LineChange, current: Option<&LineConfig>) -> Result<LineEdit, Message> {
     Ok(LineEdit {
+        engine: change
+            .engine
+            .as_deref()
+            .map(|name| engine("lines.edit", name))
+            .transpose()?,
+        register: change
+            .register
+            .as_ref()
+            .map(|register| {
+                register_edit(
+                    change.id,
+                    register,
+                    current.and_then(|line| line.register.as_ref()),
+                )
+            })
+            .transpose()?,
         // An empty name removes the name.
         name: change
             .name

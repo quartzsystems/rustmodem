@@ -199,6 +199,7 @@ impl Handler for ServicePage {
                         SettingsChange {
                             service: Some(service),
                             control: None,
+                            ..SettingsChange::default()
                         },
                     ),
                     None => Reply::Default,
@@ -248,6 +249,7 @@ impl Handler for ControlPage {
                         SettingsChange {
                             service: None,
                             control: Some(control),
+                            ..SettingsChange::default()
                         },
                     ),
                     Ok(None) => Reply::Default,
@@ -319,6 +321,8 @@ mod tests {
                 pipe: "rustmodem-control".to_string(),
             },
             path: r"C:\ProgramData\Quartz Systems\rustmodem\rustmodem.toml".to_string(),
+            sip: ctlproto::SipSettings::default(),
+            media: ctlproto::MediaSettings::default(),
         }
     }
 

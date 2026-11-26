@@ -28,8 +28,9 @@ use std::process::ExitCode;
 use args::{Command, Options};
 use client::{Client, Failure};
 use ctlproto::{
-    Call, CallList, CallsQuery, ErrorInfo, EventSelection, LineInfo, LineList, LineRef, LogTail,
-    LogTailQuery, PortList, Reloaded, ServiceInfo, Stats, encode,
+    Call, CallList, CallsQuery, CaptureSwitch, Done, ErrorInfo, EventSelection, HuntGroupList,
+    LineInfo, LineList, LineRef, LogTail, LogTailQuery, PortList, Reloaded, ReregisterQuery,
+    RouteList, ServiceInfo, SipStatus, Stats, encode,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -146,6 +147,34 @@ fn run<R: BufRead, W: Write>(
             answer::<LogTail, _, _>(client, &call, json, out, |tail| output::log(&tail.lines))
         }
         Command::Watch => watch(client, json, out, watch_limit),
+        Command::Sip => answer::<SipStatus, _, _>(client, &Call::SipStatus, json, out, output::sip),
+        Command::Reregister(id) => {
+            let call = Call::SipReregister(ReregisterQuery { id });
+            answer::<Done, _, _>(client, &call, json, out, |_| match id {
+                Some(id) => format!("Line {id} is registering again.\n"),
+                None => "Every line that registers is registering again.\n".to_string(),
+            })
+        }
+        Command::Groups => {
+            answer::<HuntGroupList, _, _>(client, &Call::HuntGroupsList, json, out, |list| {
+                output::groups(&list.groups)
+            })
+        }
+        Command::Routes => {
+            answer::<RouteList, _, _>(client, &Call::RoutesList, json, out, |list| {
+                output::routes(&list.routes)
+            })
+        }
+        Command::Capture(id, on) => {
+            let call = Call::LinesCapture(CaptureSwitch { id, on });
+            answer::<LineInfo, _, _>(client, &call, json, out, |line| {
+                format!(
+                    "Line {}: capture {}\n",
+                    line.id,
+                    if line.capture { "on" } else { "off" }
+                )
+            })
+        }
         // Handled before a connection is made.
         Command::Help | Command::Version | Command::CaptureCheck | Command::CaptureWav => Ok(()),
     }

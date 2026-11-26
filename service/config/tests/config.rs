@@ -346,6 +346,7 @@ fn editing_the_settings_keeps_comments_and_everything_else() {
         log_level: Some(LogLevel::Debug),
         log_dir: Some(r"D:\logs".to_string()),
         pipe: Some("other-pipe".to_string()),
+        ..SettingsEdit::default()
     })
     .unwrap();
     assert_eq!(file.config().service.log_level, LogLevel::Debug);
@@ -366,6 +367,7 @@ fn editing_the_settings_keeps_comments_and_everything_else() {
         log_level: Some(LogLevel::Info),
         log_dir: Some(String::new()),
         pipe: Some("rustmodem-control".to_string()),
+        ..SettingsEdit::default()
     })
     .unwrap();
     assert_eq!(file.to_toml(), EXAMPLE);
@@ -396,6 +398,7 @@ fn editing_the_settings_adds_the_tables_a_file_does_not_have() {
         log_level: Some(LogLevel::Warning),
         log_dir: None,
         pipe: Some("p".to_string()),
+        ..SettingsEdit::default()
     })
     .unwrap();
     let text = file.to_toml();
@@ -415,6 +418,7 @@ fn editing_the_settings_refuses_an_invalid_result_and_changes_nothing() {
             log_level: Some(LogLevel::Debug),
             log_dir: None,
             pipe: Some("not a pipe name".to_string()),
+            ..SettingsEdit::default()
         })
         .unwrap_err();
     assert_eq!(ids(&problems), ["RMD0014"]);

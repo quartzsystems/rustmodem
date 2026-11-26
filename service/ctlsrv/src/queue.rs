@@ -8,7 +8,7 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
-use ctlproto::{EVENT_NAMES, Event, LogEvent, encode};
+use ctlproto::{EVENT_NAMES, EVENTS_BY_NAME_ONLY, Event, LogEvent, encode};
 
 use crate::Closer;
 
@@ -171,13 +171,18 @@ impl ClientQueue {
         self.lock().overflowed
     }
 
-    /// Adds to the client's subscription; `None` means every event.
-    /// Returns what the client is now subscribed to.
+    /// Adds to the client's subscription; `None` means every event but
+    /// those that have to be asked for by name. Returns what the client is
+    /// now subscribed to.
     pub fn subscribe(&self, events: Option<&[&'static str]>) -> Vec<String> {
         let mut state = self.lock();
         match events {
             Some(names) => state.subscribed.extend(names),
-            None => state.subscribed.extend(EVENT_NAMES),
+            None => state.subscribed.extend(
+                EVENT_NAMES
+                    .iter()
+                    .filter(|name| !EVENTS_BY_NAME_ONLY.contains(name)),
+            ),
         }
         subscription(&state)
     }
@@ -232,6 +237,12 @@ impl Hub {
 
     fn clients(&self) -> MutexGuard<'_, Vec<Arc<ClientQueue>>> {
         self.clients.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Whether any client has subscribed to the event of this name: for
+    /// an event that costs something to make.
+    pub fn wants(&self, name: &str) -> bool {
+        self.clients().iter().any(|client| client.wants(name))
     }
 
     /// Sends an event to every client that has subscribed to it. Never

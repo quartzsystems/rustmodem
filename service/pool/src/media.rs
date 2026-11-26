@@ -123,6 +123,49 @@ pub struct MediaStats {
     pub overruns: u64,
     /// Capture records dropped because the writer fell behind.
     pub capture_dropped: u64,
+    /// Arrivals for which the frames ticked were not the frames the
+    /// receiver said to deliver. There should never be one.
+    pub slips: u64,
+}
+
+impl MediaStats {
+    /// RTP octets both ways, the fixed headers with the payloads.
+    pub fn wire_octets(&self) -> u64 {
+        self.rx_octets + self.tx_octets + 12 * (self.rx_packets + self.tx_packets)
+    }
+
+    /// The statistics as the control API reports them.
+    pub fn info(&self) -> ctlproto::MediaInfo {
+        // The jitter is kept in samples of 125 microseconds.
+        let micros = |samples: u32| samples.saturating_mul(125);
+        ctlproto::MediaInfo {
+            codec: if self.payload_type == 8 {
+                "PCMA"
+            } else {
+                "PCMU"
+            }
+            .to_string(),
+            ptime_ms: self.ptime_ms,
+            remote: self.remote.map(|remote| remote.to_string()),
+            rx_packets: self.rx_packets,
+            rx_octets: self.rx_octets,
+            tx_packets: self.tx_packets,
+            tx_octets: self.tx_octets,
+            lost: self.lost,
+            late: self.late,
+            duplicate: self.duplicate,
+            resync: self.resync,
+            ignored: self.ignored,
+            free_run: self.free_run,
+            slips: self.slips,
+            jitter_us_avg: micros(self.jitter),
+            jitter_us_max: micros(self.jitter_max),
+            tick_p50_us: self.tick_p50_us,
+            tick_p99_us: self.tick_p99_us,
+            tick_max_us: self.tick_max_us,
+            overruns: self.overruns,
+        }
+    }
 }
 
 /// What the pool and a runner share about a call, all of it atomic.
@@ -132,7 +175,7 @@ pub struct MediaShared {
     capture: AtomicBool,
     /// The runner publishes statistics.
     has_stats: AtomicBool,
-    stats: [AtomicU64; 20],
+    stats: [AtomicU64; 21],
 }
 
 impl MediaShared {
@@ -169,6 +212,7 @@ impl MediaShared {
             u64::from(stats.tick_max_us),
             stats.overruns,
             stats.capture_dropped,
+            stats.slips,
         ];
         for (slot, value) in self.stats.iter().zip(values) {
             slot.store(value, Ordering::Relaxed);
@@ -206,6 +250,7 @@ impl MediaShared {
             tick_max_us: get(17) as u32,
             overruns: get(18),
             capture_dropped: get(19),
+            slips: get(20),
         })
     }
 }
@@ -291,6 +336,12 @@ impl MediaCall {
     /// The statistics of the call, if its runner keeps any.
     pub fn stats(&self) -> Option<MediaStats> {
         self.shared.stats()
+    }
+
+    /// What the pool and the runner share: it outlives the call, so that
+    /// the last statistics can be read once the runner has stopped.
+    pub fn shared(&self) -> Arc<MediaShared> {
+        Arc::clone(&self.shared)
     }
 }
 

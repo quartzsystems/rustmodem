@@ -86,6 +86,7 @@ finds out at once that the service is older than it is.
 | [`lines.add`](#linesadd) | LineInfo | Adds a line. |
 | [`lines.edit`](#linesedit) | LineInfo | Changes the keys of a line that are given and leaves the others alone. |
 | [`lines.remove`](#linesremove) | Done | Removes a line: any call on it is hung up and its port is released. |
+| [`lines.capture`](#linescapture) | LineInfo | Turns the capture of a line's calls on or off. |
 | [`calls.list`](#callslist) | CallList | Lists the calls that have ended, oldest first. |
 | [`config.reload`](#configreload) | Reloaded | Reads the configuration file again and makes the lines match it. |
 | [`config.get`](#configget) | Settings | Reports the settings that are not lines, as the configuration file has them, and the path of the file. |
@@ -93,6 +94,17 @@ finds out at once that the service is older than it is.
 | [`stats.get`](#statsget) | Stats | Reports the statistics of the service since it started. |
 | [`log.tail`](#logtail) | LogTail | Returns the last lines the service logged, oldest first. |
 | [`ports.list`](#portslist) | PortList | Lists the serial ports of the machine the service runs on, in name order, with the com0com pairs, the modem devices attached to them and the lines that use them. |
+| [`sip.status`](#sipstatus) | SipStatus | Reports the SIP listener, the peers, and the registration of every line that registers. |
+| [`sip.reregister`](#sipreregister) | Done | Registers a line again now, or every line that registers. |
+| [`huntgroups.list`](#huntgroupslist) | HuntGroupList | Lists the hunt groups, in the order of the configuration file. |
+| [`huntgroups.add`](#huntgroupsadd) | HuntGroupInfo | Adds a hunt group. |
+| [`huntgroups.edit`](#huntgroupsedit) | HuntGroupInfo | Changes the keys of a hunt group that are given and leaves the others alone. |
+| [`huntgroups.remove`](#huntgroupsremove) | Done | Removes a hunt group. |
+| [`routes.list`](#routeslist) | RouteList | Lists the routes, in the order they are tried. |
+| [`routes.add`](#routesadd) | RouteList | Adds a route. |
+| [`routes.edit`](#routesedit) | RouteList | Changes the keys of a route that are given and leaves the others alone. |
+| [`routes.remove`](#routesremove) | RouteList | Removes a route. |
+| [`routes.move`](#routesmove) | RouteList | Moves a route to another place in the list. |
 | [`subscribe`](#subscribe) | Subscription | Starts sending the client events. |
 | [`unsubscribe`](#unsubscribe) | Subscription | Stops sending the client events. |
 
@@ -231,13 +243,15 @@ Adds a line. The change is written to the configuration file. The result is the 
 | `enabled` | boolean | no | Whether the line is in service. Default true. |
 | `auto_answer_rings` | integer | no | The initial S0, 0 to 255. Default 0. |
 | `unknown_command` | string | no | What the line answers to an unknown AT command: `ok` or `error`. Default `ok`. |
+| `engine` | string | no | The modem engine: `null` or `echo`. Default `null`. |
+| `register` | RegisterSpec | no | The line's registration to a PBX. Default none: the line is reached by the trunk. |
 
 Result: LineInfo.
 
-Errors: `RMD0011`, `RMD0014`, `RMD0017`, `RMD0018`, `RMD0020`.
+Errors: `RMD0011`, `RMD0014`, `RMD0017`, `RMD0018`, `RMD0020`, `RMD0035`.
 
 ```json
-{"id":1,"method":"lines.add","params":{"id":3,"name":"Line 3","backend":"com0com","port":"CNCB2","enabled":true,"auto_answer_rings":0,"unknown_command":"ok"}}
+{"id":1,"method":"lines.add","params":{"id":3,"name":"Line 3","backend":"com0com","port":"CNCB2","enabled":true,"auto_answer_rings":0,"unknown_command":"ok","engine":"null","register":{"server":"pbx.example.com","user":"203","password":"secret","auth_user":"line203","expires_s":300}}}
 ```
 
 ### `lines.edit`
@@ -253,13 +267,15 @@ Changes the keys of a line that are given and leaves the others alone. Changing 
 | `enabled` | boolean | no | Whether the line is in service. |
 | `auto_answer_rings` | integer | no | A new initial S0, 0 to 255. |
 | `unknown_command` | string | no | `ok` or `error`. |
+| `engine` | string | no | A new modem engine: `null` or `echo`. It is used from the line's next call. |
+| `register` | RegisterChange | no | Changes to the line's registration to a PBX. |
 
 Result: LineInfo.
 
-Errors: `RMD0011`, `RMD0014`, `RMD0017`, `RMD0018`, `RMD0019`.
+Errors: `RMD0011`, `RMD0014`, `RMD0017`, `RMD0018`, `RMD0019`, `RMD0035`.
 
 ```json
-{"id":1,"method":"lines.edit","params":{"id":3,"name":"Front desk","backend":"com0com","port":"CNCB5","enabled":false,"auto_answer_rings":2,"unknown_command":"error"}}
+{"id":1,"method":"lines.edit","params":{"id":3,"name":"Front desk","backend":"com0com","port":"CNCB5","enabled":false,"auto_answer_rings":2,"unknown_command":"error","engine":"echo","register":{"server":"pbx.example.com:5060","user":"203","password":"secret","auth_user":"","expires_s":600}}}
 ```
 
 ### `lines.remove`
@@ -276,6 +292,23 @@ Errors: `RMD0011`, `RMD0019`.
 
 ```json
 {"id":1,"method":"lines.remove","params":{"id":3}}
+```
+
+### `lines.capture`
+
+Turns the capture of a line's calls on or off. While it is on, every RTP packet of each call on the line is written to a file in the capture directory; see `docs/CAPTURE.md`. Turning it on during a call captures the rest of the call. The setting is not kept in the configuration: it is off when the service starts. The result is the line afterwards.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The line id. |
+| `on` | boolean | yes | Whether the line's calls are captured. |
+
+Result: LineInfo.
+
+Errors: `RMD1001`.
+
+```json
+{"id":1,"method":"lines.capture","params":{"id":3,"on":true}}
 ```
 
 ### `calls.list`
@@ -320,19 +353,21 @@ Result: Settings.
 
 ### `config.set`
 
-Changes the settings that are given and leaves the others alone. The change is checked and written to the configuration file, comments kept. A change to `[service]` takes effect at once; a change to `[control]` takes effect when the service next starts. The result says whether a restart is needed.
+Changes the settings that are given and leaves the others alone. The change is checked and written to the configuration file, comments kept. A change to `[service]` takes effect at once; a change to `[control]` takes effect when the service next starts. A change to `[sip]` or `[media]` takes effect at once for the calls that follow, except that turning SIP on or off, and changing the listener's address, the RTP ports or the capture directory, take effect when the service next starts. The result says whether a restart is needed.
 
 | Parameter | Type | Required | Meaning |
 |---|---|---|---|
 | `service` | ServiceChange | no | Changes to `[service]`. |
 | `control` | ControlChange | no | Changes to `[control]`. |
+| `sip` | SipChange | no | Changes to `[sip]`. |
+| `media` | MediaChange | no | Changes to `[media]`. |
 
 Result: SettingsResult.
 
 Errors: `RMD0011`, `RMD0014`.
 
 ```json
-{"id":1,"method":"config.set","params":{"service":{"log_level":"debug","log_dir":""},"control":{"pipe":"rustmodem-control"}}}
+{"id":1,"method":"config.set","params":{"service":{"log_level":"debug","log_dir":""},"control":{"pipe":"rustmodem-control"},"sip":{"enabled":true,"listen":"0.0.0.0:5060","address":"","user_agent":"","trusted_peers":["10.10.20.0/24"],"outbound_peer":"10.10.20.11","ring_timeout_s":60},"media":{"codecs":["pcmu","pcma"],"ptime_ms":20,"rtp_ports":"20000-20999","rtp_timeout_s":10,"capture_dir":""}}}
 ```
 
 ### `stats.get`
@@ -373,6 +408,182 @@ Result: PortList.
 {"id":1,"method":"ports.list"}
 ```
 
+### `sip.status`
+
+Reports the SIP listener, the peers, and the registration of every line that registers.
+
+Parameters: none.
+
+Result: SipStatus.
+
+```json
+{"id":1,"method":"sip.status"}
+```
+
+### `sip.reregister`
+
+Registers a line again now, or every line that registers. A line whose registration had failed does not wait out its back-off. The outcome comes as `sip.registration` events.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | no | The line to register again. Default every line that registers. |
+
+Result: Done.
+
+Errors: `RMD1001`.
+
+```json
+{"id":1,"method":"sip.reregister","params":{"id":3}}
+```
+
+### `huntgroups.list`
+
+Lists the hunt groups, in the order of the configuration file.
+
+Parameters: none.
+
+Result: HuntGroupList.
+
+```json
+{"id":1,"method":"huntgroups.list"}
+```
+
+### `huntgroups.add`
+
+Adds a hunt group. The change is written to the configuration file and takes effect for the calls that follow. The result is the group.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `name` | string | yes | The name, not in use. |
+| `pilot` | string | yes | The number that calls the group, not the pilot of another. |
+| `lines` | array of integer | yes | The lines of the group, in hunting order. |
+| `strategy` | string | no | How the group chooses among its idle lines: `first-idle`, `round-robin` or `least-recent`. Default `first-idle`. |
+
+Result: HuntGroupInfo.
+
+Errors: `RMD0011`, `RMD0014`, `RMD0027`, `RMD0028`, `RMD0029`, `RMD0033`.
+
+```json
+{"id":1,"method":"huntgroups.add","params":{"name":"dialup","pilot":"5551000","lines":[1,2,3],"strategy":"round-robin"}}
+```
+
+### `huntgroups.edit`
+
+Changes the keys of a hunt group that are given and leaves the others alone. When the group is renamed, the routes to it follow. The change is written to the configuration file. The result is the group afterwards.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `name` | string | yes | The group to change. |
+| `new_name` | string | no | A new name. |
+| `pilot` | string | no | A new pilot number. |
+| `lines` | array of integer | no | The lines of the group, all of them, in hunting order. |
+| `strategy` | string | no | `first-idle`, `round-robin` or `least-recent`. |
+
+Result: HuntGroupInfo.
+
+Errors: `RMD0011`, `RMD0014`, `RMD0027`, `RMD0028`, `RMD0029`, `RMD0032`.
+
+```json
+{"id":1,"method":"huntgroups.edit","params":{"name":"dialup","new_name":"modems","pilot":"5552000","lines":[3,2,1],"strategy":"least-recent"}}
+```
+
+### `huntgroups.remove`
+
+Removes a hunt group. A group that a route sends calls to cannot be removed: change or remove the route first. The change is written to the configuration file.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `name` | string | yes | The name of the group. |
+
+Result: Done.
+
+Errors: `RMD0011`, `RMD0030`, `RMD0032`.
+
+```json
+{"id":1,"method":"huntgroups.remove","params":{"name":"dialup"}}
+```
+
+### `routes.list`
+
+Lists the routes, in the order they are tried. A call to a number takes the first route that matches it.
+
+Parameters: none.
+
+Result: RouteList.
+
+```json
+{"id":1,"method":"routes.list"}
+```
+
+### `routes.add`
+
+Adds a route. The change is written to the configuration file and takes effect for the calls that follow. The result is every route afterwards.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `called` | string | yes | The called number the route is for: exact, or a prefix ending in `*`. |
+| `target` | string | yes | Where its calls go: `line:<id>` or `group:<name>`. |
+| `index` | integer | no | Where in the list the route goes, from 0. Default at the end. |
+
+Result: RouteList.
+
+Errors: `RMD0011`, `RMD0014`, `RMD0030`, `RMD0034`.
+
+```json
+{"id":1,"method":"routes.add","params":{"called":"555*","target":"group:dialup","index":0}}
+```
+
+### `routes.edit`
+
+Changes the keys of a route that are given and leaves the others alone. The change is written to the configuration file. The result is every route afterwards.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `index` | integer | yes | Where the route is in the list, from 0. |
+| `called` | string | no | A new called number. |
+| `target` | string | no | A new target. |
+
+Result: RouteList.
+
+Errors: `RMD0011`, `RMD0014`, `RMD0030`, `RMD0034`.
+
+```json
+{"id":1,"method":"routes.edit","params":{"index":0,"called":"5551234","target":"line:3"}}
+```
+
+### `routes.remove`
+
+Removes a route. The change is written to the configuration file. The result is every route afterwards.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `index` | integer | yes | Where the route is in the list, from 0. |
+
+Result: RouteList.
+
+Errors: `RMD0011`, `RMD0034`.
+
+```json
+{"id":1,"method":"routes.remove","params":{"index":0}}
+```
+
+### `routes.move`
+
+Moves a route to another place in the list. The change is written to the configuration file. The result is every route afterwards.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `index` | integer | yes | Where the route is in the list, from 0. |
+| `to` | integer | yes | Where it goes: its index once it has been moved. |
+
+Result: RouteList.
+
+Errors: `RMD0011`, `RMD0034`.
+
+```json
+{"id":1,"method":"routes.move","params":{"index":2,"to":0}}
+```
+
 ### `subscribe`
 
 Starts sending the client events. The result is everything the client is now subscribed to.
@@ -410,6 +621,8 @@ Result: Subscription.
 | `call.connected` | CallEvent | The modems of a call connected. |
 | `call.ended` | CallRecord | A call ended. |
 | `log` | LogEvent | A line was written to the service log, at the service's log level. |
+| `sip.registration` | SipRegistration | A line's registration changed state. |
+| `sip.trace` | SipTrace | A SIP message was sent or received. Sent only to a client that names `sip.trace` in `subscribe`: subscribing to every event leaves it out. Like `log`, it may be dropped for a client that is slow to read. |
 
 Removing a line sends no event of its own. A client that changes the lines
 should list them again afterwards.
@@ -478,6 +691,61 @@ Everything about one line.
 | `call` | CallInfo | no | The call in progress, if there is one. |
 | `error` | Error | no | Why the serial port is not open, if it should be and is not. |
 | `binding` | string | no | What the host side of the line's port is bound to, for example `Standard 56000 bps Modem on COM4`. Absent when unknown. |
+| `engine` | string | yes | The modem engine of the line: `null` or `echo`. |
+| `hunt_groups` | array of string | yes | The names of the hunt groups the line is in. |
+| `sip` | LineSip | yes | The SIP side of the line. |
+| `capture` | boolean | yes | Whether the line's calls are captured. |
+
+### LineSip
+
+The SIP side of a line.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `mode` | SipMode | yes | How the line is reached. |
+| `extension` | string | no | The extension the line registers as. |
+| `server` | string | no | The registrar, as `host` or `host:port`. |
+| `auth_user` | string | no | The user name the line authenticates with, when it is not the extension. |
+| `expires_s` | integer | no | The registration time the line asks for, in seconds. |
+| `registration` | Registration | no | The registration, for a line that registers and is in service. |
+| `has_password` | boolean | yes | Whether a password is configured. The password itself is never reported. |
+
+### Registration
+
+A line's registration as it stands.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `state` | RegistrationState | yes | The state. |
+| `expires_in_s` | integer | no | The seconds left of the binding, when registered. |
+| `error` | Error | no | Why the registration failed, when it has. |
+
+### MediaInfo
+
+The RTP of a call: what was agreed and what has happened. The counts of a call in progress are as of a moment ago.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `codec` | string | yes | The codec: `PCMU` or `PCMA`. |
+| `ptime_ms` | integer | yes | The packet time in milliseconds. |
+| `remote` | string | no | Where the far end receives RTP, as `address:port`. |
+| `rx_packets` | integer | yes | Packets delivered from the far end. |
+| `rx_octets` | integer | yes | Payload octets delivered from the far end. |
+| `tx_packets` | integer | yes | Packets sent to the far end. |
+| `tx_octets` | integer | yes | Payload octets sent to the far end. |
+| `lost` | integer | yes | Packets from the far end that never arrived in time. |
+| `late` | integer | yes | Packets that arrived after their place had been filled. |
+| `duplicate` | integer | yes | Packets that had been delivered already. |
+| `resync` | integer | yes | Times the far end's stream started again. |
+| `ignored` | integer | yes | Packets of another payload type, or not of whole frames. |
+| `free_run` | integer | yes | Frames sent on the local timer before the far end's first packet. |
+| `slips` | integer | yes | Points where the frames sent stopped matching the frames taken. There should never be one. |
+| `jitter_us_avg` | integer | yes | The interarrival jitter, smoothed as RFC 3550 has it, in microseconds. |
+| `jitter_us_max` | integer | yes | The most the jitter has been, in microseconds. |
+| `tick_p50_us` | integer | yes | The time a tick takes, in microseconds: the median. |
+| `tick_p99_us` | integer | yes | The 99th percentile. |
+| `tick_max_us` | integer | yes | The longest. |
+| `overruns` | integer | yes | Ticks that took longer than the packet time. |
 
 ### Counters
 
@@ -506,6 +774,7 @@ A call in progress.
 | `connect` | ConnectInfo | no | What is known about the connection, once connected. |
 | `bytes_tx` | integer | yes | Data bytes from the host to the far end so far. |
 | `bytes_rx` | integer | yes | Data bytes from the far end to the host so far. |
+| `media` | MediaInfo | no | The RTP of the call: what was agreed and what has happened. Absent for a call with no media. |
 
 ### CallRecord
 
@@ -524,6 +793,7 @@ A call that has ended. The same object is written, one a line, to `calls.jsonl` 
 | `connect` | ConnectInfo | no | What is known about the connection, if the call connected. |
 | `bytes_tx` | integer | yes | Data bytes from the host to the far end. |
 | `bytes_rx` | integer | yes | Data bytes from the far end to the host. |
+| `media` | MediaInfo | no | The RTP of the call: what was agreed and what has happened. Absent for a call with no media. |
 
 ### ConnectInfo
 
@@ -580,7 +850,85 @@ The result of `config.get`: the settings that are not lines.
 |---|---|---|---|
 | `service` | ServiceSettings | yes | The `[service]` settings. |
 | `control` | ControlSettings | yes | The `[control]` settings. |
+| `sip` | SipSettings | yes | The `[sip]` settings. |
+| `media` | MediaSettings | yes | The `[media]` settings. |
 | `path` | string | yes | The path of the configuration file. |
+
+### SipSettings
+
+The `[sip]` settings.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `enabled` | boolean | yes | Whether the service speaks SIP. |
+| `listen` | string | yes | The address of the listener, as `address:port`. |
+| `address` | string | yes | The address to advertise. Empty means the local address that routes to the peer. |
+| `user_agent` | string | yes | The User-Agent. Empty means `rustmodem/<version>`. |
+| `trusted_peers` | array of string | yes | The addresses, or CIDR blocks, that may send requests to the listener. |
+| `outbound_peer` | string | yes | Where lines that are not registered send the calls they dial, as `host` or `host:port`. Empty means nowhere. |
+| `ring_timeout_s` | integer | yes | How long a line may ring before the caller is turned away, in seconds. |
+
+### MediaSettings
+
+The `[media]` settings.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `codecs` | array of string | yes | The codecs, most preferred first: `pcmu`, `pcma`. |
+| `ptime_ms` | integer | yes | The packet time in milliseconds. |
+| `rtp_ports` | string | yes | The ports RTP may use, as `first-last`. |
+| `rtp_timeout_s` | integer | yes | How long a call may go without a packet before it is cleared, in seconds. |
+| `capture_dir` | string | yes | The capture directory. Empty means `captures` under the log directory. |
+
+### SipChange
+
+The `sip` part of `config.set`: the keys of `[sip]` to change.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `enabled` | boolean | no | Whether the service speaks SIP. |
+| `listen` | string | no | A new address for the listener, as `address:port`. |
+| `address` | string | no | A new address to advertise. An empty string means the local address that routes to the peer. |
+| `user_agent` | string | no | A new User-Agent. An empty string means `rustmodem/<version>`. |
+| `trusted_peers` | array of string | no | The trusted peers, all of them: addresses or CIDR blocks. |
+| `outbound_peer` | string | no | A new outbound peer, as `host` or `host:port`. An empty string means none. |
+| `ring_timeout_s` | integer | no | How long a line may ring, in seconds. |
+
+### MediaChange
+
+The `media` part of `config.set`: the keys of `[media]` to change.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `codecs` | array of string | no | The codecs, all of them, most preferred first: `pcmu`, `pcma`. |
+| `ptime_ms` | integer | no | A new packet time in milliseconds: 10, 20 or 30. |
+| `rtp_ports` | string | no | The ports RTP may use, as `first-last`. |
+| `rtp_timeout_s` | integer | no | How long a call may go without a packet, in seconds. |
+| `capture_dir` | string | no | A new capture directory. An empty string means the default one. |
+
+### RegisterSpec
+
+The `register` part of `lines.add`: the line is an extension of a PBX.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `server` | string | yes | The registrar, as `host` or `host:port`. |
+| `user` | string | yes | The extension. |
+| `password` | string | yes | The password. It is written to the configuration file and never reported. |
+| `auth_user` | string | no | The user name to authenticate with. Default the extension. |
+| `expires_s` | integer | no | The registration time to ask for, in seconds. Default 300. |
+
+### RegisterChange
+
+The `register` part of `lines.edit`: the keys of the line's registration to change. For a line that has no registration, `server`, `user` and `password` must all be given.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `server` | string | no | A new registrar. An empty string removes the registration: the line is reached by the trunk. |
+| `user` | string | no | A new extension. |
+| `password` | string | no | A new password. Left out, the password stays as it is. |
+| `auth_user` | string | no | A new user name to authenticate with. An empty string means the extension. |
+| `expires_s` | integer | no | A new registration time to ask for, in seconds. |
 
 ### ServiceSettings
 
@@ -647,6 +995,98 @@ The result of `stats.get`: the statistics of the service since it started. The c
 | `retrains` | integer | yes | Retrains and rate renegotiations. Zero until an engine reports them. |
 | `protocols` | array of Tally | yes | The connected calls by error-control protocol, largest count first. Empty until an engine reports one. |
 | `compressions` | array of Tally | yes | The connected calls by data compression, largest count first. Empty until an engine reports one. |
+| `rtp_kbps` | integer | yes | RTP in both directions over the last second or so, headers included, in kbit/s. |
+| `jitter_ms_avg` | number | yes | The mean interarrival jitter of the calls in progress, in milliseconds. |
+| `jitter_ms_max` | number | yes | The most the jitter of a call in progress has been, in milliseconds. |
+| `packet_loss_percent` | number | yes | The packets lost, in a hundred expected, over every call since the service started. |
+| `codec` | string | yes | The codec the service prefers: `PCMU` or `PCMA`. Empty when SIP is off. |
+| `ptime_ms` | integer | yes | The packet time the service asks for, in milliseconds. 0 when SIP is off. |
+| `cpu_percent` | number | yes | How much of one processor the service process has used over the last second or so, in a hundred. |
+| `sip` | SipSummary | yes | SIP in a line of numbers. |
+
+### SipSummary
+
+SIP in a line of numbers.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `listener` | ListenerState | yes | The state of the listener. |
+| `registered` | integer | yes | How many lines are registered. |
+| `registering` | integer | yes | How many lines in service have a registration configured. |
+| `dropped_untrusted` | integer | yes | Requests dropped because they came from an address that is not trusted. |
+
+### SipStatus
+
+The result of `sip.status`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `listener` | ListenerState | yes | The state of the listener. |
+| `listen` | string | yes | The address the listener is bound to, as `address:port`. Empty when SIP is off. |
+| `trusted_peers` | array of string | yes | The addresses that may send requests to the listener. |
+| `outbound_peer` | string | yes | Where lines that are not registered send the calls they dial. Empty means nowhere. |
+| `registrations` | array of SipRegistration | yes | Every line that registers, in id order. |
+| `dropped_untrusted` | integer | yes | Requests dropped because they came from an address that is not trusted. |
+| `calls` | integer | yes | Calls the router has: ringing, connected or being cleared. |
+
+### SipRegistration
+
+One line's registration, with where it registers.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `line` | integer | yes | The line. |
+| `server` | string | yes | The registrar, as the configuration names it. |
+| `user` | string | yes | The extension. |
+| `registration` | Registration | yes | The registration as it stands. |
+
+### SipTrace
+
+A SIP message that passed.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `time_ms` | integer | yes | When, in milliseconds since the Unix epoch. |
+| `direction` | TraceDirection | yes | Which way it went. |
+| `peer` | string | yes | The other end, as `address:port`. |
+| `text` | string | yes | The message as it was on the wire. The response to a digest challenge is in it; the password is not. |
+
+### HuntGroupList
+
+The result of `huntgroups.list`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `groups` | array of HuntGroupInfo | yes | The hunt groups, in the order of the configuration file. |
+
+### HuntGroupInfo
+
+A hunt group: lines that share a number.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `name` | string | yes | The name, unique. |
+| `pilot` | string | yes | The number that calls the group. |
+| `lines` | array of integer | yes | The lines of the group, in hunting order. |
+| `strategy` | string | yes | How the group chooses among its idle lines: `first-idle`, `round-robin` or `least-recent`. |
+
+### RouteList
+
+The result of `routes.list` and of every change to the routes.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `routes` | array of RouteInfo | yes | The routes, in the order they are tried. |
+
+### RouteInfo
+
+A route: where the calls to a number go.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `index` | integer | yes | Where the route is in the list, from 0. |
+| `called` | string | yes | The called number the route is for: exact, or a prefix ending in `*`. |
+| `target` | string | yes | Where its calls go: `line:<id>` or `group:<name>`. |
 
 ### ConnectTally
 
@@ -782,6 +1222,46 @@ What kind of serial port a port is. A string, one of:
 | `serial` | A serial port with a `COM` name. |
 | `other` | Anything else the system lists as a serial device. |
 
+### SipMode
+
+How a line is reached over SIP. A string, one of:
+
+| Value | Meaning |
+|---|---|
+| `none` | Not at all: the service does not speak SIP. |
+| `trunk` | By the trunk: calls come from the trusted peers and go to the outbound peer. |
+| `registered` | As an extension of a PBX the line registers to. |
+
+### RegistrationState
+
+The state of a line's registration. A string, one of:
+
+| Value | Meaning |
+|---|---|
+| `unregistered` | Not registered, and not trying. |
+| `registering` | A REGISTER is out and there is no binding yet. |
+| `registered` | The registrar holds a binding for the line. |
+| `failed` | The last try failed. Another follows. |
+
+### ListenerState
+
+The state of the SIP listener. A string, one of:
+
+| Value | Meaning |
+|---|---|
+| `off` | SIP is off. |
+| `listening` | The listener is bound and takes requests. |
+| `failed` | SIP is on in the configuration and the listener could not be bound. |
+
+### TraceDirection
+
+Which way a traced SIP message went. A string, one of:
+
+| Value | Meaning |
+|---|---|
+| `sent` | The service sent it. |
+| `received` | The service received it. |
+
 ## Errors
 
 The errors the API returns, from the message catalogue
@@ -801,6 +1281,14 @@ service fills in.
 | `RMD0018` | Serial backend &1 at line &2 is not known. | The backend named for the line is not one this version of rustmodem has. Known backends: com0com. | Correct the backend name and try again. |
 | `RMD0019` | Line &1 is not in the configuration. | The change names a line id that the configuration does not have. | List the lines to see which ids exist, then repeat the change with one of them. |
 | `RMD0020` | Line &1 is already in the configuration. | A line cannot be added with an id that the configuration already has. | Choose an id that is not in use, or edit the existing line. |
+| `RMD0027` | Hunt group &1 at line &2 names line &3, which does not exist. | A hunt group can only hold lines that the configuration has. | Add the line, or take it out of the hunt group, and try again. |
+| `RMD0028` | Hunt group name &1 at line &2 is already used at line &3. | Two hunt groups have the same name. Routes name a group by its name, so every group needs its own. | Give one of the hunt groups a different name and try again. |
+| `RMD0029` | Pilot number &1 at line &2 is already used at line &3. | Two hunt groups have the same pilot number. A call to the number can go to one group only. | Give one of the hunt groups a different pilot number and try again. |
+| `RMD0030` | Route &1 at line &2 has target &3, which does not exist. | A route sends its calls to a line or to a hunt group that the configuration has. | Correct the target, or add the line or the hunt group, and try again. |
+| `RMD0032` | Hunt group &1 is not in the configuration. | A change was asked for to a hunt group that the configuration does not have. | List the hunt groups with: rustmodemctl groups |
+| `RMD0033` | Hunt group &1 is already in the configuration. | A hunt group was to be added, or renamed, with a name that another hunt group has. | Choose a name that is not in use, or change the group that has it. |
+| `RMD0034` | There is no route at position &1: the configuration has &2 routes. | A route is named by its position in the list, from 0. The routes may have been changed since they were listed. | List the routes again with: rustmodemctl routes |
+| `RMD0035` | The registration of line &1 is not complete. | A line that registers to a PBX needs the server, the user and the password. One of them was not given and the line has none. | Give the server, the user and the password together. |
 | `RMD1001` | Line &1 does not exist. | The request names a line id that the service does not have. | List the lines to see which ids exist, then repeat the request with one of them. |
 | `RMD1002` | Line &1 is disabled. | The request needs the line to be enabled. | Enable the line and repeat the request. |
 | `RMD1003` | Line &1 is not ringing; its state is &2. | A line can be answered only while a call is ringing on it. | Wait for the line to ring, then repeat the request. |

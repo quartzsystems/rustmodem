@@ -31,6 +31,10 @@ pub fn line(id: u16, state: LineState) -> LineInfo {
         call: None,
         error: None,
         binding: None,
+        engine: "null".to_string(),
+        hunt_groups: Vec::new(),
+        sip: ctlproto::LineSip::default(),
+        capture: false,
     }
 }
 
@@ -45,6 +49,7 @@ pub fn call(direction: Direction, number: &str, started_s: u64) -> CallInfo {
         connect: None,
         bytes_tx: 0,
         bytes_rx: 0,
+        media: None,
     }
 }
 
@@ -119,5 +124,6 @@ pub fn record(id: u64, line: u16, reason: EndReason) -> CallRecord {
         connect: None,
         bytes_tx: 0,
         bytes_rx: 0,
+        media: None,
     }
 }

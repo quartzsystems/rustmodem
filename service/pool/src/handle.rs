@@ -13,7 +13,7 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::Duration;
 
 use config::Config;
-use ctlproto::{CallRecord, LineInfo, Stats};
+use ctlproto::{CallRecord, LineInfo, SipStatus, Stats};
 use msg::{Message, message};
 
 use crate::pool::Pool;
@@ -42,6 +42,12 @@ pub enum Command {
     SetBindings(Vec<(String, String)>, Sender<()>),
     /// Make the lines match this configuration.
     ApplyConfig(Box<Config>, Sender<()>),
+    /// Turn the capture of a line's calls on or off.
+    Capture(LineId, bool, Sender<Result<LineInfo, Message>>),
+    /// The SIP side of the service.
+    SipStatus(Sender<SipStatus>),
+    /// Register a line again now, or every line that registers.
+    Reregister(Option<LineId>, Sender<Result<(), Message>>),
 }
 
 /// The pool's end of the command channel.
@@ -135,5 +141,20 @@ impl PoolHandle {
     /// Make the lines match this configuration.
     pub fn apply_config(&self, config: Config) -> Result<(), Message> {
         self.ask(|answer| Command::ApplyConfig(Box::new(config), answer))
+    }
+
+    /// Turn the capture of a line's calls on or off. The line afterwards.
+    pub fn capture(&self, id: LineId, on: bool) -> Result<LineInfo, Message> {
+        self.ask(|answer| Command::Capture(id, on, answer))?
+    }
+
+    /// The SIP side of the service.
+    pub fn sip_status(&self) -> Result<SipStatus, Message> {
+        self.ask(Command::SipStatus)
+    }
+
+    /// Register a line again now, or every line that registers.
+    pub fn reregister(&self, id: Option<LineId>) -> Result<(), Message> {
+        self.ask(|answer| Command::Reregister(id, answer))?
     }
 }

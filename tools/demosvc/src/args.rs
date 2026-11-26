@@ -27,6 +27,9 @@ Options:
                    busy    the lines call each other, talk and hang up
                    frozen  a fixed set of states and counters on a clock
                            that stands still, for screenshots
+                   sip     SIP on the loopback interface: test peers call
+                           a hunt group of every line over SIP and RTP,
+                           and the last line registers to one of them
   --pipe NAME    the control pipe; default rustmodem-demo
 
 Connect with:  rustmodem-manager --demo
@@ -48,6 +51,8 @@ pub enum Script {
     /// A fixed, deterministic set of states and counters with a fixed
     /// clock.
     Frozen,
+    /// SIP on loopback, with test peers placing calls.
+    Sip,
 }
 
 impl Script {
@@ -57,6 +62,7 @@ impl Script {
             Script::Idle => "idle",
             Script::Busy => "busy",
             Script::Frozen => "frozen",
+            Script::Sip => "sip",
         }
     }
 }
@@ -111,6 +117,7 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Mode, Message> {
                     "idle" => Script::Idle,
                     "busy" => Script::Busy,
                     "frozen" => Script::Frozen,
+                    "sip" => Script::Sip,
                     _ => return Err(refuse(&name)),
                 };
             }

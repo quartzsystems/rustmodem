@@ -149,6 +149,7 @@ impl Service {
                     line: None,
                 },
             ]),
+            cpu: ctlsrv::no_cpu_meter(),
         });
         let binding_server = server.clone();
         let (listener, connector) = memory::listener();
@@ -486,6 +487,7 @@ fn every_kind_of_event_has_a_line() {
         }),
         bytes_tx: 0,
         bytes_rx: 0,
+        media: None,
     };
     let service = Service::start();
     let mut client = service.client();
@@ -518,6 +520,7 @@ fn every_kind_of_event_has_a_line() {
                 connect: None,
                 bytes_tx: 12,
                 bytes_rx: 34,
+                media: None,
             }),
             "line 1 call 7 ended: no_answer, 12 bytes sent, 34 received",
         ),
@@ -707,4 +710,151 @@ fn log_prints_the_last_lines_the_service_logged() {
     let tail: LogTail = serde_json::from_str(&out).unwrap();
     assert_eq!(tail.lines.len(), 2);
     assert_eq!(tail.lines[1].text, "< OK");
+}
+
+#[test]
+fn sip_groups_routes_capture_and_reregister_against_a_service_with_no_sip() {
+    let service = Service::start();
+    let (code, out, errors) = service.ctl(&["sip"]);
+    assert_eq!(
+        (code, out.as_str(), errors.as_str()),
+        (0, "SIP is off.\n", "")
+    );
+    let (code, out, _) = service.ctl(&["sip", "--json"]);
+    assert_eq!(code, 0);
+    let status: ctlproto::SipStatus = serde_json::from_str(&out).unwrap();
+    assert_eq!(status, ctlproto::SipStatus::default());
+
+    let (code, out, _) = service.ctl(&["groups"]);
+    assert_eq!((code, out.as_str()), (0, "GROUP  PILOT  STRATEGY  LINES\n"));
+    let (code, out, _) = service.ctl(&["routes"]);
+    assert_eq!((code, out.as_str()), (0, "#  CALLED  TARGET\n"));
+
+    let (code, out, _) = service.ctl(&["capture", "on", "2"]);
+    assert_eq!((code, out.as_str()), (0, "Line 2: capture on\n"));
+    let (_, out, _) = service.ctl(&["line", "2"]);
+    assert!(out.contains("Capture:            on\n"), "{out}");
+    assert!(out.contains("Engine:             null\n"), "{out}");
+    assert!(out.contains("SIP:                none\n"), "{out}");
+    let (code, out, _) = service.ctl(&["capture", "off", "2"]);
+    assert_eq!((code, out.as_str()), (0, "Line 2: capture off\n"));
+    let (code, _, errors) = service.ctl(&["capture", "on", "9"]);
+    assert_eq!(code, 1);
+    assert!(errors.starts_with("RMD1001: "), "{errors}");
+
+    let (code, out, _) = service.ctl(&["reregister"]);
+    assert_eq!(
+        (code, out.as_str()),
+        (0, "Every line that registers is registering again.\n")
+    );
+    let (code, out, _) = service.ctl(&["reregister", "1"]);
+    assert_eq!((code, out.as_str()), (0, "Line 1 is registering again.\n"));
+    let (code, _, errors) = service.ctl(&["reregister", "9"]);
+    assert_eq!(code, 1);
+    assert!(errors.starts_with("RMD1001: "), "{errors}");
+}
+
+#[test]
+fn the_sip_side_of_a_service_is_laid_out_for_people() {
+    use crate::output;
+    use ctlproto::{
+        HuntGroupInfo, ListenerState, Registration, RegistrationState, RouteInfo, SipRegistration,
+        SipStatus, SipSummary,
+    };
+    let failed = ctlproto::ErrorInfo::from(msg::message("RMD5004", &["3", "pbx"]));
+    let status = SipStatus {
+        listener: ListenerState::Listening,
+        listen: "0.0.0.0:5060".to_string(),
+        trusted_peers: vec!["10.10.20.0/24".to_string(), "10.10.30.5".to_string()],
+        outbound_peer: String::new(),
+        registrations: vec![
+            SipRegistration {
+                line: 2,
+                server: "pbx".to_string(),
+                user: "202".to_string(),
+                registration: Registration {
+                    state: RegistrationState::Registered,
+                    expires_in_s: Some(120),
+                    error: None,
+                },
+            },
+            SipRegistration {
+                line: 3,
+                server: "pbx".to_string(),
+                user: "203".to_string(),
+                registration: Registration {
+                    state: RegistrationState::Failed,
+                    expires_in_s: None,
+                    error: Some(failed),
+                },
+            },
+        ],
+        dropped_untrusted: 4,
+        calls: 1,
+    };
+    assert_eq!(
+        output::sip(&status),
+        "Listener:          listening on 0.0.0.0:5060\n\
+         Trusted peers:     10.10.20.0/24, 10.10.30.5\n\
+         Outbound peer:     none\n\
+         Calls:             1\n\
+         Requests dropped:  4\n\
+         \n\
+         LINE  EXTENSION  REGISTRAR  REGISTRATION\n   \
+            2  202        pbx        registered for 120 s more\n   \
+            3  203        pbx        failed, RMD5004: Registrar pbx did not answer the registration of line 3.\n"
+    );
+
+    assert_eq!(
+        output::groups(&[HuntGroupInfo {
+            name: "dialup".to_string(),
+            pilot: "5551000".to_string(),
+            lines: vec![1, 2, 3],
+            strategy: "round-robin".to_string(),
+        }]),
+        "GROUP   PILOT    STRATEGY     LINES\ndialup  5551000  round-robin  1 2 3\n"
+    );
+    assert_eq!(
+        output::routes(&[
+            RouteInfo {
+                index: 0,
+                called: "5551234".to_string(),
+                target: "line:3".to_string(),
+            },
+            RouteInfo {
+                index: 1,
+                called: "555*".to_string(),
+                target: "group:dialup".to_string(),
+            },
+        ]),
+        "#  CALLED   TARGET\n0  5551234  line:3\n1  555*     group:dialup\n"
+    );
+
+    let stats = Stats {
+        rtp_kbps: 138,
+        jitter_ms_avg: 0.25,
+        jitter_ms_max: 1.875,
+        packet_loss_percent: 0.125,
+        codec: "PCMU".to_string(),
+        ptime_ms: 20,
+        cpu_percent: 1.5,
+        sip: SipSummary {
+            listener: ListenerState::Listening,
+            registered: 1,
+            registering: 2,
+            dropped_untrusted: 4,
+        },
+        ..Stats::default()
+    };
+    let text = output::stats(&stats);
+    assert!(
+        text.ends_with(
+            "SIP:          listening, 1 of 2 lines registered, 4 requests dropped\n\
+             RTP:          138 kbit/s, PCMU at 20 ms\n\
+             Jitter:       0.2 ms average, 1.9 ms at most\n\
+             Packet loss:  0.12 %\n\
+             CPU:          1.5 %\n"
+        ),
+        "{text}"
+    );
 }

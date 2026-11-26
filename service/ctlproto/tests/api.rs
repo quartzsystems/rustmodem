@@ -11,10 +11,13 @@ use std::path::Path;
 use ctlproto::doc::{self, FieldDoc};
 use ctlproto::{
     Call, CallEvent, CallInfo, CallList, CallRecord, ClientFrame, ConnectInfo, ConnectTally,
-    ControlChange, ControlSettings, Counters, Direction, Done, EVENT_NAMES, EndReason, ErrorInfo,
-    Event, Hello, LineInfo, LineList, LineState, LogEvent, LogLevel, LogTail, PROTOCOL, PortInfo,
-    PortKind, PortList, Reloaded, RequestFrame, ServerFrame, ServiceChange, ServiceInfo,
-    ServiceMode, ServiceSettings, Settings, SettingsResult, Stats, Subscription, Tally,
+    ControlChange, ControlSettings, Counters, Direction, Done, EVENT_NAMES, EVENTS_BY_NAME_ONLY,
+    EndReason, ErrorInfo, Event, Hello, HuntGroupInfo, HuntGroupList, LineInfo, LineList, LineSip,
+    LineState, ListenerState, LogEvent, LogLevel, LogTail, MediaChange, MediaInfo, MediaSettings,
+    PROTOCOL, PortInfo, PortKind, PortList, RegisterChange, RegisterSpec, Registration,
+    RegistrationState, Reloaded, RequestFrame, RouteInfo, RouteList, ServerFrame, ServiceChange,
+    ServiceInfo, ServiceMode, ServiceSettings, Settings, SettingsResult, SipChange, SipMode,
+    SipRegistration, SipSettings, SipStatus, SipTrace, Stats, Subscription, Tally, TraceDirection,
     decode_client, decode_server, encode,
 };
 use serde::Serialize;
@@ -65,6 +68,107 @@ fn call_info(full: bool) -> CallInfo {
         connect: full.then(|| connect(full)),
         bytes_tx: 10,
         bytes_rx: 20,
+        media: full.then(|| Box::new(media_info(full))),
+    }
+}
+
+fn media_info(full: bool) -> MediaInfo {
+    MediaInfo {
+        codec: "PCMU".to_string(),
+        ptime_ms: 20,
+        remote: full.then(|| "10.10.20.11:16384".to_string()),
+        rx_packets: 3000,
+        rx_octets: 480_000,
+        tx_packets: 3000,
+        tx_octets: 480_000,
+        lost: 1,
+        late: 2,
+        duplicate: 3,
+        resync: 0,
+        ignored: 0,
+        free_run: 4,
+        slips: 0,
+        jitter_us_avg: 250,
+        jitter_us_max: 1900,
+        tick_p50_us: 40,
+        tick_p99_us: 120,
+        tick_max_us: 900,
+        overruns: 0,
+    }
+}
+
+fn registration(full: bool) -> Registration {
+    Registration {
+        state: if full {
+            RegistrationState::Failed
+        } else {
+            RegistrationState::Registered
+        },
+        expires_in_s: full.then_some(280),
+        error: full.then(error_info),
+    }
+}
+
+fn line_sip(full: bool) -> LineSip {
+    LineSip {
+        mode: if full {
+            SipMode::Registered
+        } else {
+            SipMode::Trunk
+        },
+        extension: full.then(|| "203".to_string()),
+        server: full.then(|| "pbx.example.com".to_string()),
+        auth_user: full.then(|| "line203".to_string()),
+        expires_s: full.then_some(300),
+        registration: full.then(|| registration(full)),
+        has_password: full,
+    }
+}
+
+fn sip_registration(full: bool) -> SipRegistration {
+    SipRegistration {
+        line: 3,
+        server: "pbx.example.com".to_string(),
+        user: "203".to_string(),
+        registration: registration(full),
+    }
+}
+
+fn sip_status(full: bool) -> SipStatus {
+    SipStatus {
+        listener: ListenerState::Listening,
+        listen: "0.0.0.0:5060".to_string(),
+        trusted_peers: vec!["10.10.20.0/24".to_string()],
+        outbound_peer: "10.10.20.11".to_string(),
+        registrations: vec![sip_registration(full)],
+        dropped_untrusted: 2,
+        calls: 1,
+    }
+}
+
+fn sip_trace() -> SipTrace {
+    SipTrace {
+        time_ms: 1_800_000_000_000,
+        direction: TraceDirection::Received,
+        peer: "10.10.20.11:5060".to_string(),
+        text: "OPTIONS sip:rustmodem SIP/2.0\r\n\r\n".to_string(),
+    }
+}
+
+fn hunt_group() -> HuntGroupInfo {
+    HuntGroupInfo {
+        name: "dialup".to_string(),
+        pilot: "5551000".to_string(),
+        lines: vec![1, 2],
+        strategy: "first-idle".to_string(),
+    }
+}
+
+fn route() -> RouteInfo {
+    RouteInfo {
+        index: 0,
+        called: "555*".to_string(),
+        target: "group:dialup".to_string(),
     }
 }
 
@@ -81,6 +185,7 @@ fn call_record(full: bool) -> CallRecord {
         connect: full.then(|| connect(full)),
         bytes_tx: 10,
         bytes_rx: 20,
+        media: full.then(|| Box::new(media_info(full))),
     }
 }
 
@@ -109,6 +214,10 @@ fn line_info(full: bool) -> LineInfo {
         call: full.then(|| call_info(full)),
         error: full.then(error_info),
         binding: full.then(|| "Standard 56000 bps Modem on COM4".to_string()),
+        engine: "null".to_string(),
+        hunt_groups: vec!["dialup".to_string()],
+        sip: line_sip(full),
+        capture: full,
     }
 }
 
@@ -120,6 +229,22 @@ fn settings() -> Settings {
         },
         control: ControlSettings {
             pipe: "rustmodem-control".to_string(),
+        },
+        sip: SipSettings {
+            enabled: true,
+            listen: "0.0.0.0:5060".to_string(),
+            address: String::new(),
+            user_agent: String::new(),
+            trusted_peers: vec!["10.10.20.0/24".to_string()],
+            outbound_peer: "10.10.20.11".to_string(),
+            ring_timeout_s: 60,
+        },
+        media: MediaSettings {
+            codecs: vec!["pcmu".to_string(), "pcma".to_string()],
+            ptime_ms: 20,
+            rtp_ports: "20000-20999".to_string(),
+            rtp_timeout_s: 10,
+            capture_dir: String::new(),
         },
         path: r"C:\ProgramData\Quartz Systems\rustmodem\rustmodem.toml".to_string(),
     }
@@ -229,6 +354,53 @@ fn sample(name: &str, full: bool) -> Value {
             events: vec!["log".to_string()],
         }),
         "Done" => to_value(&Done {}),
+        "LineSip" => to_value(&line_sip(full)),
+        "Registration" => to_value(&registration(full)),
+        "MediaInfo" => to_value(&media_info(full)),
+        "SipSettings" => to_value(&settings().sip),
+        "MediaSettings" => to_value(&settings().media),
+        "SipChange" => to_value(&SipChange {
+            enabled: full.then_some(true),
+            listen: full.then(|| "0.0.0.0:5060".to_string()),
+            address: full.then(String::new),
+            user_agent: full.then(String::new),
+            trusted_peers: full.then(Vec::new),
+            outbound_peer: full.then(String::new),
+            ring_timeout_s: full.then_some(60),
+        }),
+        "MediaChange" => to_value(&MediaChange {
+            codecs: full.then(|| vec!["pcma".to_string()]),
+            ptime_ms: full.then_some(10),
+            rtp_ports: full.then(|| "30000-30099".to_string()),
+            rtp_timeout_s: full.then_some(5),
+            capture_dir: full.then(String::new),
+        }),
+        "RegisterSpec" => to_value(&RegisterSpec {
+            server: "pbx.example.com".to_string(),
+            user: "203".to_string(),
+            password: "secret".to_string(),
+            auth_user: full.then(|| "line203".to_string()),
+            expires_s: full.then_some(300),
+        }),
+        "RegisterChange" => to_value(&RegisterChange {
+            server: full.then(|| "pbx.example.com".to_string()),
+            user: full.then(|| "203".to_string()),
+            password: full.then(|| "secret".to_string()),
+            auth_user: full.then(String::new),
+            expires_s: full.then_some(300),
+        }),
+        "SipSummary" => to_value(&sip_status(full).summary()),
+        "SipStatus" => to_value(&sip_status(full)),
+        "SipRegistration" => to_value(&sip_registration(full)),
+        "SipTrace" => to_value(&sip_trace()),
+        "HuntGroupList" => to_value(&HuntGroupList {
+            groups: vec![hunt_group()],
+        }),
+        "HuntGroupInfo" => to_value(&hunt_group()),
+        "RouteList" => to_value(&RouteList {
+            routes: vec![route()],
+        }),
+        "RouteInfo" => to_value(&route()),
         other => panic!("no sample for documented type {other}"),
     }
 }
@@ -254,6 +426,11 @@ fn event_samples(full: bool) -> Vec<(Event, &'static str)> {
         ),
         (Event::CallEnded(call_record(full)), "CallRecord"),
         (Event::Log(log_event()), "LogEvent"),
+        (
+            Event::SipRegistration(sip_registration(full)),
+            "SipRegistration",
+        ),
+        (Event::SipTrace(sip_trace()), "SipTrace"),
     ]
 }
 
@@ -404,7 +581,7 @@ fn every_types_fields_are_the_documented_ones() {
 
 #[test]
 fn every_field_kind_is_a_json_type_or_something_documented() {
-    let mut known: BTreeSet<String> = ["integer", "string", "boolean"]
+    let mut known: BTreeSet<String> = ["integer", "number", "string", "boolean"]
         .iter()
         .map(|k| k.to_string())
         .collect();
@@ -462,7 +639,19 @@ fn every_enumeration_value_is_documented_and_nothing_else() {
     check("LogLevel", &LogLevel::ALL, LogLevel::as_str);
     check("ServiceMode", &ServiceMode::ALL, ServiceMode::as_str);
     check("PortKind", &PortKind::ALL, PortKind::as_str);
-    assert_eq!(doc::ENUMS.len(), 6);
+    check("SipMode", &SipMode::ALL, SipMode::as_str);
+    check(
+        "RegistrationState",
+        &RegistrationState::ALL,
+        RegistrationState::as_str,
+    );
+    check("ListenerState", &ListenerState::ALL, ListenerState::as_str);
+    check(
+        "TraceDirection",
+        &TraceDirection::ALL,
+        TraceDirection::as_str,
+    );
+    assert_eq!(doc::ENUMS.len(), 10);
 }
 
 #[test]
@@ -534,6 +723,16 @@ fn every_event_is_documented_and_nothing_else() {
     }
     assert!(event_samples(true)[0].0.is_state());
     assert!(!event_samples(true)[4].0.is_state());
+    // A registration is state; a traced message is not, and is the one
+    // event that has to be asked for by name.
+    assert!(event_samples(true)[5].0.is_state());
+    assert!(!event_samples(true)[6].0.is_state());
+    assert_eq!(EVENTS_BY_NAME_ONLY, ["sip.trace"]);
+    assert!(
+        EVENTS_BY_NAME_ONLY
+            .iter()
+            .all(|name| EVENT_NAMES.contains(name))
+    );
 }
 
 #[test]

@@ -5,8 +5,8 @@
 //! What the client prints: tables by default, for people.
 
 use ctlproto::{
-    CallInfo, CallRecord, ErrorInfo, Event, LineInfo, LogEvent, LogLevel, PortInfo, ServiceInfo,
-    Stats,
+    CallInfo, CallRecord, ErrorInfo, Event, HuntGroupInfo, LineInfo, ListenerState, LogEvent,
+    LogLevel, MediaInfo, PortInfo, Registration, RouteInfo, ServiceInfo, SipMode, SipStatus, Stats,
 };
 
 /// A column of a table.
@@ -157,6 +157,37 @@ pub fn stats(stats: &Stats) -> String {
         ("AT commands", stats.at_commands.to_string()),
         ("Retrains", stats.retrains.to_string()),
     ]);
+    // A service with no SIP has none of what follows to show.
+    if stats.sip.listener != ListenerState::Off {
+        out.push_str(&fields(&[
+            (
+                "SIP",
+                format!(
+                    "{}, {} of {} lines registered, {} requests dropped",
+                    stats.sip.listener.as_str(),
+                    stats.sip.registered,
+                    stats.sip.registering,
+                    stats.sip.dropped_untrusted
+                ),
+            ),
+            (
+                "RTP",
+                format!(
+                    "{} kbit/s, {} at {} ms",
+                    stats.rtp_kbps, stats.codec, stats.ptime_ms
+                ),
+            ),
+            (
+                "Jitter",
+                format!(
+                    "{:.1} ms average, {:.1} ms at most",
+                    stats.jitter_ms_avg, stats.jitter_ms_max
+                ),
+            ),
+            ("Packet loss", format!("{:.2} %", stats.packet_loss_percent)),
+            ("CPU", format!("{:.1} %", stats.cpu_percent)),
+        ]));
+    }
     let mut rows: Vec<Vec<String>> = Vec::new();
     for connect in &stats.connects {
         rows.push(vec![
@@ -315,13 +346,172 @@ pub fn line(line: &LineInfo) -> String {
     if let Some(binding) = &line.binding {
         pairs.push(("Binding", binding.clone()));
     }
+    pairs.push(("Engine", line.engine.clone()));
+    pairs.push((
+        "SIP",
+        match line.sip.mode {
+            SipMode::None => "none".to_string(),
+            SipMode::Trunk => "trunk".to_string(),
+            SipMode::Registered => format!(
+                "extension {} of {}{}",
+                line.sip.extension.as_deref().unwrap_or("-"),
+                line.sip.server.as_deref().unwrap_or("-"),
+                match &line.sip.registration {
+                    Some(registration) => format!(": {}", registration_text(registration)),
+                    None => String::new(),
+                }
+            ),
+        },
+    ));
+    if !line.hunt_groups.is_empty() {
+        pairs.push(("Hunt groups", line.hunt_groups.join(", ")));
+    }
+    if line.capture {
+        pairs.push(("Capture", "on".to_string()));
+    }
     if let Some(call) = &line.call {
         pairs.push(("Call", call_summary(call)));
+        if let Some(media) = &call.media {
+            pairs.push(("RTP", media_summary(media)));
+        }
     }
     if let Some(error) = &line.error {
         pairs.push(("Port error", error.to_string()));
     }
     fields(&pairs)
+}
+
+/// A registration in a few words.
+fn registration_text(registration: &Registration) -> String {
+    match (&registration.error, registration.expires_in_s) {
+        (Some(error), _) => format!("{}, {error}", registration.state.as_str()),
+        (None, Some(seconds)) => {
+            format!("{} for {seconds} s more", registration.state.as_str())
+        }
+        (None, None) => registration.state.as_str().to_string(),
+    }
+}
+
+/// The RTP of a call in a line.
+fn media_summary(media: &MediaInfo) -> String {
+    format!(
+        "{} at {} ms{}, {} packets in, {} out, {} lost, {} late, {} duplicate, {} resync, \
+         {} slips, jitter {:.1} ms",
+        media.codec,
+        media.ptime_ms,
+        match &media.remote {
+            Some(remote) => format!(" with {remote}"),
+            None => String::new(),
+        },
+        media.rx_packets,
+        media.tx_packets,
+        media.lost,
+        media.late,
+        media.duplicate,
+        media.resync,
+        media.slips,
+        f64::from(media.jitter_us_avg) / 1000.0
+    )
+}
+
+/// `sip`
+pub fn sip(status: &SipStatus) -> String {
+    if status.listener == ListenerState::Off {
+        return "SIP is off.\n".to_string();
+    }
+    let list = |values: &[String]| {
+        if values.is_empty() {
+            "none".to_string()
+        } else {
+            values.join(", ")
+        }
+    };
+    let mut out = fields(&[
+        (
+            "Listener",
+            format!("{} on {}", status.listener.as_str(), status.listen),
+        ),
+        ("Trusted peers", list(&status.trusted_peers)),
+        (
+            "Outbound peer",
+            if status.outbound_peer.is_empty() {
+                "none".to_string()
+            } else {
+                status.outbound_peer.clone()
+            },
+        ),
+        ("Calls", status.calls.to_string()),
+        ("Requests dropped", status.dropped_untrusted.to_string()),
+    ]);
+    if !status.registrations.is_empty() {
+        let rows: Vec<Vec<String>> = status
+            .registrations
+            .iter()
+            .map(|line| {
+                vec![
+                    line.line.to_string(),
+                    line.user.clone(),
+                    line.server.clone(),
+                    registration_text(&line.registration),
+                ]
+            })
+            .collect();
+        out.push('\n');
+        out.push_str(&table(
+            &[
+                right("LINE"),
+                left("EXTENSION"),
+                left("REGISTRAR"),
+                left("REGISTRATION"),
+            ],
+            &rows,
+        ));
+    }
+    out
+}
+
+/// `groups`
+pub fn groups(groups: &[HuntGroupInfo]) -> String {
+    let rows: Vec<Vec<String>> = groups
+        .iter()
+        .map(|group| {
+            vec![
+                group.name.clone(),
+                group.pilot.clone(),
+                group.strategy.clone(),
+                group
+                    .lines
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ]
+        })
+        .collect();
+    table(
+        &[
+            left("GROUP"),
+            left("PILOT"),
+            left("STRATEGY"),
+            left("LINES"),
+        ],
+        &rows,
+    )
+}
+
+/// `routes`
+pub fn routes(routes: &[RouteInfo]) -> String {
+    let rows: Vec<Vec<String>> = routes
+        .iter()
+        .map(|route| {
+            vec![
+                route.index.to_string(),
+                route.called.clone(),
+                route.target.clone(),
+            ]
+        })
+        .collect();
+    table(&[right("#"), left("CALLED"), left("TARGET")], &rows)
 }
 
 /// What `answer`, `hangup`, `reset`, `enable` and `disable` print: the
@@ -393,6 +583,25 @@ pub fn event(event: &Event) -> String {
             record.bytes_rx
         ),
         Event::Log(log) => format!("log {} [{}] {}", level(log.level), log.source, log.text),
+        Event::SipRegistration(e) => format!(
+            "line {} registration to {} as {} is {}{}",
+            e.line,
+            e.server,
+            e.user,
+            e.registration.state.as_str(),
+            match &e.registration.error {
+                Some(error) => format!(": {error}"),
+                None => String::new(),
+            }
+        ),
+        // The message itself, set off from what is around it.
+        Event::SipTrace(trace) => format!(
+            "sip {} {}
+{}",
+            trace.direction.as_str(),
+            trace.peer,
+            trace.text.trim_end()
+        ),
     }
 }
 

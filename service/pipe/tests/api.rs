@@ -140,6 +140,7 @@ impl Fixture {
                 modem: None,
                 line: None,
             }]),
+            cpu: ctlsrv::no_cpu_meter(),
         });
 
         let stop = Arc::new(Event::new().unwrap());
@@ -295,6 +296,20 @@ fn every_method_round_trips_over_a_real_pipe() {
         ("lines.add", Ok(())),
         ("lines.edit", Ok(())),
         ("lines.remove", Ok(())),
+        // The examples name line 3, which the one before removed, and
+        // what they would have made: each is refused for that.
+        ("lines.capture", Err("RMD1001")),
+        ("sip.status", Ok(())),
+        ("sip.reregister", Err("RMD1001")),
+        ("huntgroups.list", Ok(())),
+        ("huntgroups.add", Err("RMD0027")),
+        ("huntgroups.edit", Err("RMD0032")),
+        ("huntgroups.remove", Err("RMD0032")),
+        ("routes.list", Ok(())),
+        ("routes.add", Err("RMD0030")),
+        ("routes.edit", Err("RMD0034")),
+        ("routes.remove", Err("RMD0034")),
+        ("routes.move", Err("RMD0034")),
         ("calls.list", Ok(())),
         ("config.reload", Ok(())),
         ("config.get", Ok(())),
@@ -480,6 +495,7 @@ fn a_client_that_stops_reading_is_disconnected_and_holds_nobody_up() {
             connect: None,
             bytes_tx: 0,
             bytes_rx: 0,
+            media: None,
         }));
     }
     assert!(

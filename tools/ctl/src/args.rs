@@ -21,10 +21,16 @@ Usage:
   rustmodemctl [OPTIONS] ports
   rustmodemctl [OPTIONS] log [--last N]
   rustmodemctl [OPTIONS] watch          prints events until interrupted
+  rustmodemctl [OPTIONS] sip            the listener and the registrations
+  rustmodemctl [OPTIONS] reregister [<id>]
+  rustmodemctl [OPTIONS] groups         the hunt groups
+  rustmodemctl [OPTIONS] routes         the routes, in the order tried
+  rustmodemctl [OPTIONS] capture on|off <id>
   rustmodemctl [--json] capture check <file>
   rustmodemctl capture wav <file> <out.wav>
 
-The capture commands read a call capture file and ask nothing of the
+capture on and off turn the capture of a line's calls on and off. The
+other capture commands read a call capture file and ask nothing of the
 service. capture check exits with 0 only when the call lost nothing,
 resynchronised nothing and slipped nothing; capture wav writes the call as
 a two-channel WAV file, received on the left and sent on the right.
@@ -75,6 +81,16 @@ pub enum Command {
     Log(Option<u32>),
     /// `watch`
     Watch,
+    /// `sip`
+    Sip,
+    /// `reregister [<id>]`
+    Reregister(Option<u16>),
+    /// `groups`
+    Groups,
+    /// `routes`
+    Routes,
+    /// `capture on <id>` and `capture off <id>`
+    Capture(u16, bool),
     /// `capture check <file>`; the file is the first of the paths.
     CaptureCheck,
     /// `capture wav <file> <out.wav>`; the files are the paths.
@@ -158,7 +174,17 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Options, Message> {
         Some("ports") => alone(&words, Command::Ports)?,
         Some("log") => alone(&words, Command::Log(last))?,
         Some("watch") => alone(&words, Command::Watch)?,
+        Some("sip") => alone(&words, Command::Sip)?,
+        Some("reregister") => match &words[1..] {
+            [] => Command::Reregister(None),
+            _ => Command::Reregister(Some(id(&words)?)),
+        },
+        Some("groups") => alone(&words, Command::Groups)?,
+        Some("routes") => alone(&words, Command::Routes)?,
         Some("capture") => match &words[1..] {
+            [switch, ..] if switch == "on" || switch == "off" => {
+                Command::Capture(id(&words[1..])?, switch == "on")
+            }
             [check, file] if check == "check" => {
                 paths.push(file.clone());
                 Command::CaptureCheck
@@ -220,6 +246,16 @@ mod tests {
         assert_eq!(command(&["log"]), Command::Log(None));
         assert_eq!(command(&["log", "--last", "50"]), Command::Log(Some(50)));
         assert_eq!(command(&["watch"]), Command::Watch);
+        assert_eq!(command(&["sip"]), Command::Sip);
+        assert_eq!(command(&["reregister"]), Command::Reregister(None));
+        assert_eq!(command(&["reregister", "3"]), Command::Reregister(Some(3)));
+        assert_eq!(command(&["groups"]), Command::Groups);
+        assert_eq!(command(&["routes"]), Command::Routes);
+        assert_eq!(command(&["capture", "on", "3"]), Command::Capture(3, true));
+        assert_eq!(
+            command(&["capture", "off", "12"]),
+            Command::Capture(12, false)
+        );
         let check = parse_words(&["capture", "check", "a.rmcap", "--json"]).unwrap();
         assert_eq!((check.command, check.json), (Command::CaptureCheck, true));
         assert_eq!(check.paths, ["a.rmcap"]);
@@ -274,6 +310,14 @@ mod tests {
             &["capture", "wav", "a"],
             &["capture", "wav", "a", "b", "c"],
             &["capture", "play", "a"],
+            &["capture", "on"],
+            &["capture", "on", "three"],
+            &["capture", "off", "1", "2"],
+            &["sip", "status"],
+            &["reregister", "all"],
+            &["reregister", "1", "2"],
+            &["groups", "1"],
+            &["routes", "now"],
         ] {
             let problem = parse_words(words).unwrap_err();
             assert_eq!(problem.id, "RMD0009", "{words:?}");

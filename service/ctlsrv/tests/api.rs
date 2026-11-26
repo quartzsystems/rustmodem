@@ -12,10 +12,13 @@ use std::time::{Duration, Instant};
 
 use common::{Fixture, PIPE, TestClient, VERSION, eventually};
 use ctlproto::{
-    Call, CallEvent, CallList, CallRecord, CallsQuery, ControlChange, Direction, Done, EVENT_NAMES,
-    EndReason, Event, EventSelection, LineChange, LineInfo, LineList, LineRef, LineSpec, LineState,
-    LogEvent, LogLevel, LogTail, LogTailQuery, PROTOCOL, PortKind, PortList, Reloaded, ServerFrame,
-    ServiceChange, ServiceInfo, ServiceMode, Settings, SettingsChange, SettingsResult, Stats,
+    Call, CallEvent, CallList, CallRecord, CallsQuery, CaptureSwitch, ControlChange, Direction,
+    Done, EVENT_NAMES, EndReason, Event, EventSelection, HuntGroupChange, HuntGroupInfo,
+    HuntGroupList, HuntGroupRef, HuntGroupSpec, LineChange, LineInfo, LineList, LineRef, LineSpec,
+    LineState, ListenerState, LogEvent, LogLevel, LogTail, LogTailQuery, MediaChange, PROTOCOL,
+    PortKind, PortList, RegisterChange, RegisterSpec, Reloaded, ReregisterQuery, RouteChange,
+    RouteList, RouteMove, RouteRef, RouteSpec, ServerFrame, ServiceChange, ServiceInfo,
+    ServiceMode, Settings, SettingsChange, SettingsResult, SipChange, SipMode, SipStatus, Stats,
     Subscription,
 };
 use ctlsrv::{LOG_RING, Limits};
@@ -39,6 +42,8 @@ fn spec(id: u16, port: &str) -> LineSpec {
         enabled: None,
         auto_answer_rings: None,
         unknown_command: None,
+        engine: None,
+        register: None,
     }
 }
 
@@ -51,6 +56,8 @@ fn change(id: u16) -> LineChange {
         enabled: None,
         auto_answer_rings: None,
         unknown_command: None,
+        engine: None,
+        register: None,
     }
 }
 
@@ -224,6 +231,228 @@ fn every_method_round_trips() {
                 assert!(!fixture.config_text().contains("id = 3"));
                 assert_eq!(client.lines().len(), 2);
             }
+            "lines.capture" => {
+                let on: LineInfo = client.ok(Call::LinesCapture(CaptureSwitch { id: 2, on: true }));
+                assert!(on.capture);
+                assert!(client.line(2).capture && !client.line(1).capture);
+                let off: LineInfo =
+                    client.ok(Call::LinesCapture(CaptureSwitch { id: 2, on: false }));
+                assert!(!off.capture);
+                assert_eq!(
+                    client.err(Call::LinesCapture(CaptureSwitch { id: 9, on: true })),
+                    "RMD1001"
+                );
+                // It is not a setting of the configuration.
+                assert!(!fixture.config_text().contains("capture"));
+            }
+            "sip.status" => {
+                // This service has no SIP.
+                let status: SipStatus = client.ok(Call::SipStatus);
+                assert_eq!(status, SipStatus::default());
+                assert_eq!(status.listener, ListenerState::Off);
+            }
+            "sip.reregister" => {
+                let all = Call::SipReregister(ReregisterQuery { id: None });
+                assert_eq!(client.ok::<Done>(all), Done {});
+                let one = Call::SipReregister(ReregisterQuery { id: Some(1) });
+                assert_eq!(client.ok::<Done>(one), Done {});
+                assert_eq!(
+                    client.err(Call::SipReregister(ReregisterQuery { id: Some(9) })),
+                    "RMD1001"
+                );
+            }
+            "huntgroups.list" => {
+                let list: HuntGroupList = client.ok(Call::HuntGroupsList);
+                assert!(list.groups.is_empty());
+            }
+            "huntgroups.add" => {
+                let group = |name: &str, pilot: &str, lines: &[u16], strategy: Option<&str>| {
+                    Call::HuntGroupsAdd(HuntGroupSpec {
+                        name: name.to_string(),
+                        pilot: pilot.to_string(),
+                        lines: lines.to_vec(),
+                        strategy: strategy.map(str::to_string),
+                    })
+                };
+                let added: HuntGroupInfo = client.ok(group("dialup", "5551000", &[1, 2], None));
+                assert_eq!(added.strategy, "first-idle");
+                assert_eq!(added.lines, [1, 2]);
+                let list: HuntGroupList = client.ok(Call::HuntGroupsList);
+                assert_eq!(list.groups, [added]);
+                assert!(fixture.config_text().contains("[[hunt_group]]"));
+                // The lines show the groups they are in.
+                assert_eq!(client.line(1).hunt_groups, ["dialup"]);
+                assert_eq!(client.line(2).hunt_groups, ["dialup"]);
+
+                assert_eq!(client.err(group("dialup", "1", &[1], None)), "RMD0033");
+                assert_eq!(client.err(group("b", "5551000", &[1], None)), "RMD0029");
+                assert_eq!(client.err(group("b", "5552000", &[9], None)), "RMD0027");
+                assert_eq!(
+                    client.err(group("b", "5552000", &[1], Some("random"))),
+                    "RMD2003"
+                );
+                let second: HuntGroupInfo =
+                    client.ok(group("night", "5552000", &[2], Some("round-robin")));
+                assert_eq!(second.strategy, "round-robin");
+                assert_eq!(client.line(2).hunt_groups, ["dialup", "night"]);
+            }
+            "huntgroups.edit" => {
+                let edited: HuntGroupInfo = client.ok(Call::HuntGroupsEdit(HuntGroupChange {
+                    name: "night".to_string(),
+                    new_name: Some("late".to_string()),
+                    pilot: Some("5552001".to_string()),
+                    lines: Some(vec![1]),
+                    strategy: Some("least-recent".to_string()),
+                }));
+                assert_eq!(edited.name, "late");
+                assert_eq!(edited.pilot, "5552001");
+                assert_eq!(edited.lines, [1]);
+                assert_eq!(edited.strategy, "least-recent");
+                assert_eq!(client.line(1).hunt_groups, ["dialup", "late"]);
+                assert_eq!(client.line(2).hunt_groups, ["dialup"]);
+
+                let nothing = |name: &str| HuntGroupChange {
+                    name: name.to_string(),
+                    new_name: None,
+                    pilot: None,
+                    lines: None,
+                    strategy: None,
+                };
+                // Only the keys given change.
+                let same: HuntGroupInfo = client.ok(Call::HuntGroupsEdit(nothing("late")));
+                assert_eq!(same, edited);
+                assert_eq!(
+                    client.err(Call::HuntGroupsEdit(nothing("night"))),
+                    "RMD0032"
+                );
+                let mut taken = nothing("late");
+                taken.new_name = Some("dialup".to_string());
+                assert_eq!(client.err(Call::HuntGroupsEdit(taken)), "RMD0033");
+                let mut bad = nothing("late");
+                bad.strategy = Some("random".to_string());
+                assert_eq!(client.err(Call::HuntGroupsEdit(bad)), "RMD0014");
+            }
+            "huntgroups.remove" => {
+                let late = || {
+                    Call::HuntGroupsRemove(HuntGroupRef {
+                        name: "late".to_string(),
+                    })
+                };
+                assert_eq!(client.ok::<Done>(late()), Done {});
+                assert_eq!(client.err(late()), "RMD0032");
+                let list: HuntGroupList = client.ok(Call::HuntGroupsList);
+                assert_eq!(list.groups.len(), 1);
+                assert_eq!(client.line(1).hunt_groups, ["dialup"]);
+            }
+            "routes.list" => {
+                let list: RouteList = client.ok(Call::RoutesList);
+                assert!(list.routes.is_empty());
+            }
+            "routes.add" => {
+                let route = |called: &str, target: &str, index: Option<u32>| {
+                    Call::RoutesAdd(RouteSpec {
+                        called: called.to_string(),
+                        target: target.to_string(),
+                        index,
+                    })
+                };
+                let list: RouteList = client.ok(route("555*", "group:dialup", None));
+                assert_eq!(list.routes.len(), 1);
+                assert_eq!(list.routes[0].index, 0);
+                let list: RouteList = client.ok(route("5551234", "line:2", Some(0)));
+                let shown: Vec<(u32, &str, &str)> = list
+                    .routes
+                    .iter()
+                    .map(|r| (r.index, r.called.as_str(), r.target.as_str()))
+                    .collect();
+                assert_eq!(
+                    shown,
+                    [(0, "5551234", "line:2"), (1, "555*", "group:dialup")]
+                );
+                assert_eq!(client.ok::<RouteList>(Call::RoutesList), list);
+                assert!(fixture.config_text().contains("[[route]]"));
+
+                assert_eq!(client.err(route("9*", "group:nobody", None)), "RMD0030");
+                assert_eq!(client.err(route("9*", "line:9", None)), "RMD0030");
+                assert_eq!(client.err(route("9*", "trunk", None)), "RMD2003");
+                assert_eq!(client.err(route("9*", "line:1", Some(3))), "RMD0034");
+                // A group a route sends calls to cannot be removed.
+                assert_eq!(
+                    client.err(Call::HuntGroupsRemove(HuntGroupRef {
+                        name: "dialup".to_string()
+                    })),
+                    "RMD0030"
+                );
+            }
+            "routes.edit" => {
+                let list: RouteList = client.ok(Call::RoutesEdit(RouteChange {
+                    index: 0,
+                    called: Some("5559999".to_string()),
+                    target: Some("line:1".to_string()),
+                }));
+                assert_eq!(list.routes[0].called, "5559999");
+                assert_eq!(list.routes[0].target, "line:1");
+                assert_eq!(list.routes[1].called, "555*");
+                // Only the keys given change.
+                let same: RouteList = client.ok(Call::RoutesEdit(RouteChange {
+                    index: 0,
+                    called: None,
+                    target: None,
+                }));
+                assert_eq!(same, list);
+                assert_eq!(
+                    client.err(Call::RoutesEdit(RouteChange {
+                        index: 2,
+                        called: None,
+                        target: None,
+                    })),
+                    "RMD0034"
+                );
+                assert_eq!(
+                    client.err(Call::RoutesEdit(RouteChange {
+                        index: 0,
+                        called: None,
+                        target: Some("nowhere".to_string()),
+                    })),
+                    "RMD0014"
+                );
+            }
+            "routes.remove" => {
+                // Left for after the move: the list is two routes here.
+                let list: RouteList = client.ok(Call::RoutesAdd(RouteSpec {
+                    called: "900*".to_string(),
+                    target: "line:2".to_string(),
+                    index: None,
+                }));
+                assert_eq!(list.routes.len(), 3);
+                let list: RouteList = client.ok(Call::RoutesRemove(RouteRef { index: 2 }));
+                assert_eq!(list.routes.len(), 2);
+                assert_eq!(
+                    client.err(Call::RoutesRemove(RouteRef { index: 2 })),
+                    "RMD0034"
+                );
+            }
+            "routes.move" => {
+                let list: RouteList = client.ok(Call::RoutesMove(RouteMove { index: 1, to: 0 }));
+                let called: Vec<&str> = list.routes.iter().map(|r| r.called.as_str()).collect();
+                assert_eq!(called, ["555*", "5559999"]);
+                assert_eq!(client.ok::<RouteList>(Call::RoutesList), list);
+                // The file has them in the order they are tried.
+                let text = fixture.config_text();
+                assert!(text.find("\"555*\"").unwrap() < text.find("\"5559999\"").unwrap());
+                assert_eq!(
+                    client.err(Call::RoutesMove(RouteMove { index: 0, to: 2 })),
+                    "RMD0034"
+                );
+                // What the groups and routes tests made is taken away
+                // again, so that the tests after them find two bare lines.
+                client.ok::<RouteList>(Call::RoutesRemove(RouteRef { index: 0 }));
+                client.ok::<RouteList>(Call::RoutesRemove(RouteRef { index: 0 }));
+                client.ok::<Done>(Call::HuntGroupsRemove(HuntGroupRef {
+                    name: "dialup".to_string(),
+                }));
+                assert!(client.line(1).hunt_groups.is_empty());
+            }
             "calls.list" => {
                 let all: CallList = client.ok(Call::CallsList(CallsQuery { last: None }));
                 // The answered call and the reset one, each seen from both
@@ -273,6 +502,14 @@ fn every_method_round_trips() {
                 assert_eq!(settings.service.log_dir, "");
                 assert_eq!(settings.control.pipe, "rustmodem-control");
                 assert_eq!(settings.path, fixture.config_path.display().to_string());
+                // The defaults of a file that says nothing of SIP.
+                assert!(!settings.sip.enabled);
+                assert_eq!(settings.sip.listen, "0.0.0.0:5060");
+                assert!(settings.sip.trusted_peers.is_empty());
+                assert_eq!(settings.sip.ring_timeout_s, 60);
+                assert_eq!(settings.media.codecs, ["pcmu", "pcma"]);
+                assert_eq!(settings.media.ptime_ms, 20);
+                assert_eq!(settings.media.rtp_ports, "20000-20999");
             }
             "config.set" => {
                 let before: Settings = client.ok(Call::ConfigGet);
@@ -285,6 +522,7 @@ fn every_method_round_trips() {
                         control: pipe.map(|pipe| ControlChange {
                             pipe: Some(pipe.to_string()),
                         }),
+                        ..SettingsChange::default()
                     })
                 };
                 let result: SettingsResult =
@@ -332,6 +570,103 @@ fn every_method_round_trips() {
                 assert_eq!(result.config, before);
                 let result: SettingsResult = client.ok(Call::ConfigSet(SettingsChange::default()));
                 assert!(!result.restart_required);
+
+                // What the router takes while it runs needs no restart.
+                let sip = |sip: SipChange| {
+                    Call::ConfigSet(SettingsChange {
+                        sip: Some(sip),
+                        ..SettingsChange::default()
+                    })
+                };
+                let media = |media: MediaChange| {
+                    Call::ConfigSet(SettingsChange {
+                        media: Some(media),
+                        ..SettingsChange::default()
+                    })
+                };
+                let result: SettingsResult = client.ok(sip(SipChange {
+                    trusted_peers: Some(vec!["10.10.20.0/24".to_string()]),
+                    outbound_peer: Some("10.10.20.11".to_string()),
+                    ring_timeout_s: Some(30),
+                    ..SipChange::default()
+                }));
+                assert!(!result.restart_required);
+                assert_eq!(result.config.sip.trusted_peers, ["10.10.20.0/24"]);
+                assert_eq!(result.config.sip.outbound_peer, "10.10.20.11");
+                assert_eq!(result.config.sip.ring_timeout_s, 30);
+                let result: SettingsResult = client.ok(media(MediaChange {
+                    codecs: Some(vec!["pcma".to_string()]),
+                    ptime_ms: Some(10),
+                    rtp_timeout_s: Some(5),
+                    ..MediaChange::default()
+                }));
+                assert!(!result.restart_required);
+                assert_eq!(result.config.media.codecs, ["pcma"]);
+                assert_eq!(result.config.media.ptime_ms, 10);
+                assert!(fixture.config_text().contains("[media]"));
+
+                // Turning SIP on, the listener's address, the RTP ports and
+                // the capture directory wait for the service to start
+                // again; put back, nothing waits.
+                for (change, back) in [
+                    (
+                        sip(SipChange {
+                            enabled: Some(true),
+                            ..SipChange::default()
+                        }),
+                        sip(SipChange {
+                            enabled: Some(false),
+                            ..SipChange::default()
+                        }),
+                    ),
+                    (
+                        sip(SipChange {
+                            listen: Some("127.0.0.1:5070".to_string()),
+                            ..SipChange::default()
+                        }),
+                        sip(SipChange {
+                            listen: Some("0.0.0.0:5060".to_string()),
+                            ..SipChange::default()
+                        }),
+                    ),
+                    (
+                        media(MediaChange {
+                            rtp_ports: Some("30000-30099".to_string()),
+                            ..MediaChange::default()
+                        }),
+                        media(MediaChange {
+                            rtp_ports: Some("20000-20999".to_string()),
+                            ..MediaChange::default()
+                        }),
+                    ),
+                    (
+                        media(MediaChange {
+                            capture_dir: Some("captures-here".to_string()),
+                            ..MediaChange::default()
+                        }),
+                        media(MediaChange {
+                            capture_dir: Some(String::new()),
+                            ..MediaChange::default()
+                        }),
+                    ),
+                ] {
+                    assert!(client.ok::<SettingsResult>(change).restart_required);
+                    assert!(!client.ok::<SettingsResult>(back).restart_required);
+                }
+                assert_eq!(
+                    client.err(sip(SipChange {
+                        listen: Some("nowhere".to_string()),
+                        ..SipChange::default()
+                    })),
+                    "RMD0014"
+                );
+                assert_eq!(
+                    client.err(media(MediaChange {
+                        ptime_ms: Some(25),
+                        ..MediaChange::default()
+                    })),
+                    "RMD0014"
+                );
                 // The lines were not touched.
                 assert_eq!(client.lines().len(), 2);
             }
@@ -391,8 +726,11 @@ fn every_method_round_trips() {
                 };
                 assert_eq!((info.id, info.state), (2, LineState::Idle));
 
-                // With no names, every event.
+                // With no names, every event but the one that has to be
+                // asked for by name.
                 let sub: Subscription = client.ok(Call::Subscribe(EventSelection::default()));
+                assert_eq!(sub.events, EVENT_NAMES[..6]);
+                let sub: Subscription = client.ok(Call::Subscribe(selection(&["sip.trace"])));
                 assert_eq!(sub.events, EVENT_NAMES);
                 assert_eq!(
                     client.err(Call::Subscribe(selection(&["line.gone"]))),
@@ -403,7 +741,14 @@ fn every_method_round_trips() {
                 let sub: Subscription = client.ok(Call::Unsubscribe(selection(&["log"])));
                 assert_eq!(
                     sub.events,
-                    ["line.state", "call.started", "call.connected", "call.ended"]
+                    [
+                        "line.state",
+                        "call.started",
+                        "call.connected",
+                        "call.ended",
+                        "sip.registration",
+                        "sip.trace"
+                    ]
                 );
                 assert_eq!(
                     client.err(Call::Unsubscribe(selection(&["nope"]))),
@@ -671,6 +1016,7 @@ fn state_event(number: u64) -> Event {
         connect: None,
         bytes_tx: 0,
         bytes_rx: 0,
+        media: None,
     })
 }
 
@@ -893,6 +1239,7 @@ fn a_service_that_can_apply_its_settings_needs_no_restart_for_them() {
                 log_dir: None,
             }),
             control: None,
+            ..SettingsChange::default()
         })
     };
 
@@ -919,6 +1266,7 @@ fn a_service_that_can_apply_its_settings_needs_no_restart_for_them() {
         control: Some(ControlChange {
             pipe: Some("other".to_string()),
         }),
+        ..SettingsChange::default()
     }));
     assert!(result.restart_required);
     // And back: nothing is waiting any more.
@@ -930,6 +1278,111 @@ fn a_service_that_can_apply_its_settings_needs_no_restart_for_them() {
         control: Some(ControlChange {
             pipe: Some("rustmodem-control".to_string()),
         }),
+        ..SettingsChange::default()
     }));
     assert!(!result.restart_required);
+}
+
+/// A line's engine and its registration to a PBX are set when it is
+/// added and changed key by key afterwards. The password goes to the
+/// configuration file and is never reported.
+#[test]
+fn a_line_takes_an_engine_and_a_registration_and_never_shows_the_password() {
+    let fixture = Fixture::new(1);
+    let mut client = fixture.connect();
+
+    let mut new = spec(2, "P2");
+    new.engine = Some("echo".to_string());
+    new.register = Some(RegisterSpec {
+        server: "pbx.example.com".to_string(),
+        user: "202".to_string(),
+        password: "open sesame".to_string(),
+        auth_user: None,
+        expires_s: None,
+    });
+    let reply = client.exchange(&ctlproto::encode(&ctlproto::ClientFrame::Request(
+        Call::LinesAdd(new).request(77),
+    )));
+    let text = format!("{reply:?}");
+    assert!(!text.contains("open sesame"), "{text}");
+    let added = client.line(2);
+    assert_eq!(added.engine, "echo");
+    assert_eq!(added.sip.mode, SipMode::Registered);
+    assert_eq!(added.sip.extension.as_deref(), Some("202"));
+    assert_eq!(added.sip.server.as_deref(), Some("pbx.example.com"));
+    assert_eq!(added.sip.auth_user, None);
+    assert_eq!(added.sip.expires_s, Some(300));
+    assert!(added.sip.has_password);
+    // This service has no SIP, so nothing registers.
+    assert_eq!(added.sip.registration, None);
+    assert!(fixture.config_text().contains("open sesame"));
+    // A line with no registration, in a service with no SIP.
+    assert_eq!(client.line(1).sip.mode, SipMode::None);
+    assert_eq!(client.line(1).engine, "null");
+
+    // Only the keys given change: the password stays.
+    let mut edit = change(2);
+    edit.engine = Some("null".to_string());
+    edit.register = Some(RegisterChange {
+        user: Some("203".to_string()),
+        auth_user: Some("line203".to_string()),
+        expires_s: Some(600),
+        ..RegisterChange::default()
+    });
+    let edited: LineInfo = client.ok(Call::LinesEdit(edit));
+    assert_eq!(edited.engine, "null");
+    assert_eq!(edited.sip.extension.as_deref(), Some("203"));
+    assert_eq!(edited.sip.auth_user.as_deref(), Some("line203"));
+    assert_eq!(edited.sip.expires_s, Some(600));
+    assert!(edited.sip.has_password);
+    assert!(fixture.config_text().contains("open sesame"));
+
+    let mut password = change(2);
+    password.register = Some(RegisterChange {
+        password: Some("another".to_string()),
+        ..RegisterChange::default()
+    });
+    client.ok::<LineInfo>(Call::LinesEdit(password));
+    let text = fixture.config_text();
+    assert!(
+        text.contains("another") && !text.contains("open sesame"),
+        "{text}"
+    );
+
+    // An empty server takes the registration away.
+    let mut remove = change(2);
+    remove.register = Some(RegisterChange {
+        server: Some(String::new()),
+        ..RegisterChange::default()
+    });
+    let removed: LineInfo = client.ok(Call::LinesEdit(remove));
+    assert_eq!(removed.sip.mode, SipMode::None);
+    assert!(!removed.sip.has_password);
+    assert!(!fixture.config_text().contains("register"));
+
+    // A line that has none needs the server, the user and the password
+    // together.
+    let mut partial = change(2);
+    partial.register = Some(RegisterChange {
+        server: Some("pbx".to_string()),
+        user: Some("202".to_string()),
+        ..RegisterChange::default()
+    });
+    assert_eq!(client.err(Call::LinesEdit(partial)), "RMD0035");
+    let mut whole = change(1);
+    whole.register = Some(RegisterChange {
+        server: Some("pbx".to_string()),
+        user: Some("201".to_string()),
+        password: Some("pw".to_string()),
+        ..RegisterChange::default()
+    });
+    let registered: LineInfo = client.ok(Call::LinesEdit(whole));
+    assert_eq!(registered.sip.mode, SipMode::Registered);
+
+    let mut bad = change(1);
+    bad.engine = Some("v90".to_string());
+    assert_eq!(client.err(Call::LinesEdit(bad)), "RMD2003");
+    let mut bad = spec(3, "P3");
+    bad.engine = Some("v90".to_string());
+    assert_eq!(client.err(Call::LinesAdd(bad)), "RMD2003");
 }

@@ -10,8 +10,8 @@ use std::io::Write;
 use at::{Action, HangupCause, Input, LineEvent, Output, Trace};
 use config::{Config, LineConfig};
 use ctlproto::{
-    CallEvent, CallRecord, ConnectInfo, Direction, EndReason, Event, LineInfo, LineState, LogEvent,
-    LogLevel, Stats,
+    CallEvent, CallRecord, ConnectInfo, Direction, EndReason, Event, LineInfo, LineState,
+    ListenerState, LogEvent, LogLevel, SipRegistration, SipStatus, Stats,
 };
 use engine::ModemEvent;
 use msg::{Message, Severity, message};
@@ -21,7 +21,7 @@ use crate::handle::Command;
 use crate::line::{ActiveCall, Line, at_config};
 use crate::media::{MediaEndpoint, MediaEvent, MediaRunner, MediaStats};
 use crate::router::{CallRouter, LineDirectory, LineId, RouterEvent};
-use crate::stats::Tallies;
+use crate::stats::{MediaNow, Tallies};
 use crate::{
     CALL_HISTORY, EngineFactory, EventSink, Now, PORT_RETRY_MS, ProfileStore, SerialFactory,
     TICK_MS,
@@ -41,6 +41,9 @@ const MAX_CATCH_UP_MS: u64 = 2000;
 
 /// The tag of the pool itself in log lines.
 const SOURCE: &str = "POOL";
+
+/// How often the rate of RTP is worked out, in milliseconds.
+const RATE_EVERY_MS: u64 = 1000;
 
 /// What a pool is made from.
 pub struct PoolParts {
@@ -86,6 +89,14 @@ pub struct Pool {
     /// What the host side of each port is bound to, by port name in lower
     /// case, as the pool was last told.
     bindings: BTreeMap<String, String>,
+    /// The codec the configuration prefers and the packet time it asks
+    /// for, while it has SIP on.
+    media_prefs: Option<(String, u32)>,
+    /// Where the SIP listener was to be, when it could not be bound.
+    sip_failed: Option<String>,
+    /// When the rate of RTP was last worked out, the RTP octets there had
+    /// been by then, and the rate.
+    rate: (u64, u64, u32),
 }
 
 /// The lines, as the router may ask about them.
@@ -119,7 +130,17 @@ impl Pool {
             scratch: Vec::new(),
             tallies: Tallies::default(),
             bindings: BTreeMap::new(),
+            media_prefs: None,
+            sip_failed: None,
+            rate: (0, 0, 0),
         }
+    }
+
+    /// Tells the pool that SIP is on in the configuration and its
+    /// listener, which was to be at `listen`, could not be bound: the
+    /// service runs without SIP and says so.
+    pub fn set_sip_failed(&mut self, listen: String) {
+        self.sip_failed = Some(listen);
     }
 
     /// Tells the pool the time without a turn of its loop. A pool is given
@@ -157,6 +178,31 @@ impl Pool {
         self.next_tick_ms = Some(next);
 
         self.finish();
+        self.measure_rate();
+    }
+
+    /// The RTP octets there have been, in the calls that are over and in
+    /// those in progress.
+    fn rtp_octets(&self) -> u64 {
+        let live: u64 = self
+            .lines
+            .iter()
+            .filter_map(|line| line.media.as_ref()?.stats())
+            .map(|stats| stats.wire_octets())
+            .sum();
+        self.tallies.rtp_octets() + live
+    }
+
+    /// Works out the rate of RTP, once a second or so.
+    fn measure_rate(&mut self) {
+        let (at_ms, octets, _) = self.rate;
+        let elapsed = self.now.mono_ms.saturating_sub(at_ms);
+        if elapsed < RATE_EVERY_MS {
+            return;
+        }
+        let now = self.rtp_octets();
+        let kbps = now.saturating_sub(octets) * 8 / elapsed;
+        self.rate = (self.now.mono_ms, now, kbps as u32);
     }
 
     /// The handles the pool's thread may sleep on until a port has work.
@@ -365,6 +411,12 @@ impl Pool {
             | RouterEvent::NoDialtone(line)
             | RouterEvent::Failed(line)
             | RouterEvent::Cleared(line) => *line,
+            RouterEvent::Registration(line) => {
+                // Nothing to do with a call, and nothing to hang up if the
+                // line has gone.
+                self.registration_changed(*line);
+                return;
+            }
         };
         let Some(index) = self.index_of(line) else {
             // The line was removed while the router still had a call for
@@ -440,7 +492,40 @@ impl Pool {
                 self.step(index, Input::Event(LineEvent::CarrierLost));
                 self.end_call(index, EndReason::Remote);
             }
+            // Dealt with above.
+            RouterEvent::Registration(_) => {}
         }
+    }
+
+    /// A line's registration changed state: clients are told of the
+    /// registration, and of the line, which shows it.
+    fn registration_changed(&mut self, id: LineId) {
+        let Some(index) = self.index_of(id) else {
+            return;
+        };
+        let Some(registration) = self.router.registration(self.now.mono_ms, id) else {
+            return;
+        };
+        if let Some(register) = &self.lines[index].config.register {
+            self.publish(Event::SipRegistration(SipRegistration {
+                line: id,
+                server: register.server.clone(),
+                user: register.user.clone(),
+                registration,
+            }));
+        }
+        let info = self.line_info(index);
+        self.publish(Event::LineState(Box::new(info)));
+    }
+
+    /// A line as the control API shows it.
+    fn line_info(&self, index: usize) -> LineInfo {
+        let line = &self.lines[index];
+        let registration = match &line.config.register {
+            Some(_) => self.router.registration(self.now.mono_ms, line.id()),
+            None => None,
+        };
+        line.info(registration)
     }
 
     /// Hands a line's engine and the far end of its call to the media
@@ -506,7 +591,7 @@ impl Pool {
                         if call.direction == Direction::Incoming {
                             self.tallies.connected(&connect);
                         }
-                        let call = call.info();
+                        let call = call.info(None);
                         let source = line.source();
                         self.publish(Event::CallConnected(CallEvent { line: id, call }));
                         self.log_message(
@@ -539,9 +624,18 @@ impl Pool {
             return;
         };
         let id = line.id();
+        let shared = call.shared();
         // A runner that lost the engine with whatever ran it gives none
         // back; the line gets a new one when it next needs it.
         self.lines[index].engine = self.media.stop(id, call);
+        // A runner that keeps statistics has published its last by now.
+        if let Some(stats) = shared.stats() {
+            self.tallies
+                .media_stopped(stats.rx_packets, stats.lost, stats.wire_octets());
+            if let Some(call) = &mut self.lines[index].call {
+                call.media = Some(stats.info());
+            }
+        }
     }
 
     // ----------------------------------------------------------------------
@@ -563,6 +657,7 @@ impl Pool {
             bytes_tx: 0,
             bytes_rx: 0,
             answered: false,
+            media: None,
         };
         self.next_call_id += 1;
         let line = &mut self.lines[index];
@@ -572,7 +667,7 @@ impl Pool {
         }
         let id = line.id();
         let source = line.source();
-        let info = call.info();
+        let info = call.info(None);
         let started = message(
             "RMD1006",
             &[&id.to_string(), direction.as_str(), &call.number],
@@ -863,12 +958,14 @@ impl Pool {
 
     /// Every line, in id order.
     pub fn lines(&self) -> Vec<LineInfo> {
-        self.lines.iter().map(Line::info).collect()
+        (0..self.lines.len())
+            .map(|index| self.line_info(index))
+            .collect()
     }
 
     /// One line.
     pub fn line(&self, id: LineId) -> Result<LineInfo, Message> {
-        self.index(id).map(|index| self.lines[index].info())
+        self.index(id).map(|index| self.line_info(index))
     }
 
     /// Answers the call ringing on a line, as `ATA` from the host would.
@@ -927,7 +1024,58 @@ impl Pool {
 
     /// The statistics since the pool started.
     pub fn stats(&self) -> Stats {
-        self.tallies.snapshot(self.lines_in_use())
+        let mut media = MediaNow {
+            kbps: self.rate.2,
+            ..MediaNow::default()
+        };
+        let mut calls = 0u32;
+        for stats in self
+            .lines
+            .iter()
+            .filter_map(|line| line.media.as_ref()?.stats())
+        {
+            // The jitter is kept in samples, eight to a millisecond.
+            let jitter = f64::from(stats.jitter) / 8.0;
+            let jitter_max = f64::from(stats.jitter_max) / 8.0;
+            calls += 1;
+            media.packets += stats.rx_packets;
+            media.lost += stats.lost;
+            media.jitter_ms_avg += jitter;
+            media.jitter_ms_max = media.jitter_ms_max.max(jitter_max);
+        }
+        if calls > 0 {
+            media.jitter_ms_avg /= f64::from(calls);
+        }
+        let mut stats = self.tallies.snapshot(self.lines_in_use(), &media);
+        if let Some((codec, ptime_ms)) = &self.media_prefs {
+            stats.codec = codec.clone();
+            stats.ptime_ms = *ptime_ms;
+        }
+        stats.sip = self.sip_status().summary();
+        stats
+    }
+
+    /// The SIP side of the service: the router's, or that there is none.
+    pub fn sip_status(&self) -> SipStatus {
+        match (self.router.sip_status(self.now.mono_ms), &self.sip_failed) {
+            (Some(status), _) => status,
+            (None, Some(listen)) => SipStatus {
+                listener: ListenerState::Failed,
+                listen: listen.clone(),
+                ..SipStatus::default()
+            },
+            (None, None) => SipStatus::default(),
+        }
+    }
+
+    /// Registers a line again now, or every line that registers.
+    pub fn reregister(&mut self, id: Option<LineId>) -> Result<(), Message> {
+        if let Some(id) = id {
+            self.index(id)?;
+        }
+        self.router.reregister(self.now.mono_ms, id);
+        self.settle();
+        Ok(())
     }
 
     /// Turns the capture of a line's calls on or off: of the call it has
@@ -972,7 +1120,7 @@ impl Pool {
             let line = &mut self.lines[index];
             if line.binding != binding {
                 line.binding = binding;
-                let info = line.info();
+                let info = self.line_info(index);
                 self.publish(Event::LineState(Box::new(info)));
             }
         }
@@ -990,6 +1138,14 @@ impl Pool {
     /// and changes the ones that differ.
     pub fn apply_config(&mut self, config: &Config) {
         self.router.configure(self.now.mono_ms, config);
+        self.media_prefs = config.sip.enabled.then(|| {
+            let codec = config
+                .media
+                .codecs
+                .first()
+                .map_or("", |codec| codec.as_str());
+            (codec.to_ascii_uppercase(), config.media.ptime_ms)
+        });
 
         // Remove.
         let mut index = 0;
@@ -1027,6 +1183,27 @@ impl Pool {
                     self.change_line(index, wanted);
                 }
                 Some(_) => {}
+            }
+        }
+
+        // What a line shows that is not in its own table: the hunt groups
+        // it is in, and whether there is SIP to reach it by.
+        for index in 0..self.lines.len() {
+            let groups: Vec<String> = config
+                .hunt_groups_of(self.lines[index].id())
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+            let line = &mut self.lines[index];
+            if line.hunt_groups != groups || line.sip != config.sip.enabled {
+                line.hunt_groups = groups;
+                line.sip = config.sip.enabled;
+                // A line that has been published is published again; one
+                // that has not is about to be, whole.
+                if line.published.is_some() {
+                    let info = self.line_info(index);
+                    self.publish(Event::LineState(Box::new(info)));
+                }
             }
         }
         self.finish();
@@ -1144,6 +1321,16 @@ impl Pool {
                 self.apply_config(&config);
                 let _ = answer.send(());
             }
+            Command::Capture(id, on, answer) => {
+                let line = self.set_capture(id, on).and_then(|()| self.line(id));
+                let _ = answer.send(line);
+            }
+            Command::SipStatus(answer) => {
+                let _ = answer.send(self.sip_status());
+            }
+            Command::Reregister(id, answer) => {
+                let _ = answer.send(self.reregister(id));
+            }
         }
     }
 
@@ -1159,8 +1346,8 @@ impl Pool {
                 continue;
             }
             line.published = Some(state);
-            let info = line.info();
             let source = line.source();
+            let info = self.line_info(index);
             let changed = message("RMD1005", &[&info.id.to_string(), state.as_str()]);
             self.publish(Event::LineState(Box::new(info)));
             self.log_message(&source, &changed);
