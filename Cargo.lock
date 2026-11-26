@@ -183,6 +183,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dspkit"
+version = "0.0.4"
+dependencies = [
+ "g711",
+]
+
+[[package]]
 name = "engine"
 version = "0.0.4"
 dependencies = [
