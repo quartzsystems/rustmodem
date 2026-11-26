@@ -42,8 +42,8 @@ pub use goertzel::{Goertzel, SlidingGoertzel};
 pub use hilbert::{FrequencyShifter, Hilbert};
 pub use interp::{FractionalDelay, Resampled, Resampler};
 pub use level::{
-    Agc, AgcSettings, CarrierDetect, CarrierThresholds, LevelMeter, amplitude_to_dbm0,
-    dbm0_to_amplitude, dbm0_to_power, power_to_dbm0,
+    Agc, AgcSettings, CarrierDetect, CarrierThresholds, LevelMeter, MovingAverage,
+    amplitude_to_dbm0, dbm0_to_amplitude, dbm0_to_power, power_to_dbm0,
 };
 pub use osc::{Oscillator, Quadrature};
 

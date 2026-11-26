@@ -13,7 +13,7 @@ cd "$(dirname "$0")/.."
 
 # The pure crates, and `media`, `telephony` and `sippeer`, which use
 # sockets and threads but no runtime. Their tests are looked at too.
-pure="g711 dspkit engine at serial sdp rtp sip msg config ctlproto pool media telephony sippeer glyph model"
+pure="g711 dspkit tones engine at serial sdp rtp sip msg config ctlproto pool media telephony sippeer glyph model"
 # The manager and its wrappers over Win32.
 clients="win32 manager"
 # rustmodemctl itself. Its tests run the commands against the real control

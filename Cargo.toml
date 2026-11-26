@@ -8,6 +8,7 @@ members = [
     # DSP: signal processing shared by every modulation.
     "dsp/g711",
     "dsp/dspkit",
+    "dsp/tones",
     # Modem: the engine trait every softmodem implements, and the null engine.
     "modem/engine",
     # DTE: what the host sees on the COM port.
@@ -80,6 +81,7 @@ png = "0.18.1"
 
 # The workspace's own crates.
 g711 = { path = "dsp/g711" }
+dspkit = { path = "dsp/dspkit" }
 engine = { path = "modem/engine" }
 at = { path = "dte/at" }
 serial = { path = "dte/serial" }

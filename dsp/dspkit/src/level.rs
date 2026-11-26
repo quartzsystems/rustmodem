@@ -269,3 +269,60 @@ impl Agc {
         (self.min_gain, self.max_gain)
     }
 }
+
+/// The mean of the last `N` values, exactly.
+///
+/// It is kept as a running sum, and a running sum in floating point
+/// drifts, so every `N` values it is replaced by a sum made afresh over
+/// exactly those values: the error never grows.
+#[derive(Clone, Copy, Debug)]
+pub struct MovingAverage<const N: usize> {
+    values: [f32; N],
+    at: usize,
+    sum: f32,
+    fresh: f32,
+}
+
+impl<const N: usize> MovingAverage<N> {
+    /// An average over `N` zeros.
+    pub fn new() -> MovingAverage<N> {
+        MovingAverage {
+            values: [0.0; N],
+            at: 0,
+            sum: 0.0,
+            fresh: 0.0,
+        }
+    }
+
+    /// Takes one value and gives the mean of the last `N`.
+    #[inline]
+    pub fn process(&mut self, value: f32) -> f32 {
+        self.sum += value - self.values[self.at];
+        self.fresh += value;
+        self.values[self.at] = value;
+        self.at += 1;
+        if self.at == N {
+            self.at = 0;
+            self.sum = self.fresh;
+            self.fresh = 0.0;
+        }
+        self.sum / N as f32
+    }
+
+    /// The mean of the last `N` values.
+    #[inline]
+    pub fn mean(&self) -> f32 {
+        self.sum / N as f32
+    }
+
+    /// Zeros again.
+    pub fn reset(&mut self) {
+        *self = MovingAverage::new();
+    }
+}
+
+impl<const N: usize> Default for MovingAverage<N> {
+    fn default() -> Self {
+        MovingAverage::new()
+    }
+}

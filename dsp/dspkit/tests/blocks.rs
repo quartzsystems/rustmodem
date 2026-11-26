@@ -931,3 +931,30 @@ fn the_frequency_shifter_moves_a_tone_by_so_many_hertz() {
         }
     }
 }
+
+#[test]
+fn the_moving_average_is_the_mean_of_its_last_values() {
+    let mut average = dspkit::MovingAverage::<8>::new();
+    let values: Vec<f32> = (1..=40).map(|n| n as f32).collect();
+    for (n, &value) in values.iter().enumerate() {
+        let mean = average.process(value);
+        let from = (n + 1).saturating_sub(8);
+        let stated = values[from..=n].iter().sum::<f32>() / 8.0;
+        assert_eq!(mean, stated, "{n}");
+        assert_eq!(average.mean(), mean);
+    }
+    // It does not drift: after ten minutes of values that do not add
+    // exactly, zeros empty it to exactly nothing.
+    let mut average = dspkit::MovingAverage::<160>::new();
+    let mut oscillator = Oscillator::new(977.0);
+    for _ in 0..4_800_000 {
+        average.process(0.1 + oscillator.next_sine());
+    }
+    let mut last = 1.0;
+    for _ in 0..320 {
+        last = average.process(0.0);
+    }
+    assert_eq!(last, 0.0);
+    average.reset();
+    assert_eq!(average.mean(), 0.0);
+}
