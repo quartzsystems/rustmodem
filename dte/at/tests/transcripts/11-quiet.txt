@@ -1,0 +1,17 @@
+# Q1 suppresses every result code, RING and CONNECT included. Echo and data
+# are not affected.
+> ATQ1\r
+< ATQ1\r
+@ ring
+@ ringend
+> ATA\r
+< ATA\r
+! answer
+@ connected
+! mode online
+@ line hello
+< hello
+@ carrierlost
+! mode ringing
+> ATQ0\r
+< ATQ0\r\r\nOK\r\n

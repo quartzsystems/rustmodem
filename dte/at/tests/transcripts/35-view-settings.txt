@@ -1,0 +1,11 @@
+# &V prints the settings, the registers and the stored extended parameters.
+> AT&V\r
+< AT&V\r\r\nACTIVE PROFILE:\r\nE1 Q0 V1 X4 L0 M0 &C1 &D2 &K3\r\n
+< S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S10:014 S12:050\r\n
+< +MS: V21,1,0,0,0,0\r\n+ES: 3,0,2\r\n+DS: 3,0,2048,6\r\n\r\nOK\r\n
+> ATE0X1L2M1&C0&D3&K0S0=1S2=35S6=4S7=90S10=20S12=25\r
+< ATE0X1L2M1&C0&D3&K0S0=1S2=35S6=4S7=90S10=20S12=25\r\r\nOK\r\n
+> AT&V\r
+< \r\nACTIVE PROFILE:\r\nE0 Q0 V1 X1 L2 M1 &C0 &D3 &K0\r\n
+< S00:001 S01:000 S02:035 S03:013 S04:010 S05:008 S06:004 S07:090 S10:020 S12:025\r\n
+< +MS: V21,1,0,0,0,0\r\n+ES: 3,0,2\r\n+DS: 3,0,2048,6\r\n\r\nOK\r\n

@@ -1,0 +1,13 @@
+# The identification commands.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATI\r
+< \r\nrustmodem\r\n\r\nOK\r\n
+> ATI3\r
+< \r\nrustmodem ${VERSION}\r\n\r\nOK\r\n
+> ATI4\r
+< \r\nNULL MODEM,V.250,+MS,+ES,+DS\r\n\r\nOK\r\n
+> ATI0I3I4\r
+< \r\nrustmodem\r\n\r\nrustmodem ${VERSION}\r\n\r\nNULL MODEM,V.250,+MS,+ES,+DS\r\n\r\nOK\r\n
+> ATI7\r
+< \r\nOK\r\n

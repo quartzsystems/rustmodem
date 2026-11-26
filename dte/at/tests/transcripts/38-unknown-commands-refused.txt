@@ -1,0 +1,14 @@
+# A line set to refuse unknown commands stops at the first one with ERROR.
+@ config unknown_command=error
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATS0=2B0S0=3\r
+< \r\nERROR\r\n
+! s 0=2
+> AT+FCLASS=0\r
+< \r\nERROR\r\n
+> ATS95=47\r
+< \r\nERROR\r\n
+> ATS0=3&K3X4\r
+< \r\nOK\r\n
+! s 0=3

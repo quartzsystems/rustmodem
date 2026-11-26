@@ -1,0 +1,19 @@
+# The init strings a Windows standard-modem driver sends when it opens the
+# port, one command line at a time.
+> AT\r
+< AT\r\r\nOK\r\n
+> ATE0V1\r
+< ATE0V1\r\r\nOK\r\n
+# &F puts echo back on, so the next line is echoed again.
+> AT&F\r
+< \r\nOK\r\n
+> ATE0V1\r
+< ATE0V1\r\r\nOK\r\n
+> ATS0=0\r
+< \r\nOK\r\n
+> ATX4\r
+< \r\nOK\r\n
+> AT&C1&D2\r
+< \r\nOK\r\n
+! s 0=0
+! signals dcd=0 dsr=1 cts=1 ri=0

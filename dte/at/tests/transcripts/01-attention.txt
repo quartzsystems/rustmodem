@@ -1,0 +1,5 @@
+# The simplest exchange: attention in either case, and the modem answers OK.
+> AT\r
+< AT\r\r\nOK\r\n
+> at\r
+< at\r\r\nOK\r\n

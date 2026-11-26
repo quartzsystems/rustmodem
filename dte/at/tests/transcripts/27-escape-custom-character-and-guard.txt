@@ -1,0 +1,19 @@
+# S2 chooses the escape character and S12 the guard time.
+> ATE0S2=126S12=5\r
+< ATE0S2=126S12=5\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+@ elapsed 100
+> +++
+! line +++
+@ elapsed 100
+! mode online
+> ~~~
+! line ~~~
+@ elapsed 99
+! mode online
+@ elapsed 1
+< \r\nOK\r\n
+! mode onlinecommand

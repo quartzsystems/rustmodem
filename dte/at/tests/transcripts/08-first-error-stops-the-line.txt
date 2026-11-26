@@ -1,0 +1,14 @@
+# Commands run left to right. The first error stops the line: what came
+# before it has taken effect, what comes after it has not.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATS0=1X9S0=2\r
+< \r\nERROR\r\n
+! s 0=1
+> ATS0=5H2S0=6\r
+< \r\nERROR\r\n
+! s 0=5
+> ATS0=7S6=3\r
+< \r\nOK\r\n
+! s 0=7
+! s 6=3

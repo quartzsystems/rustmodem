@@ -1,0 +1,12 @@
+# A modem that acts on DTR does not answer for a host that is not there.
+> ATE0S0=1\r
+< ATE0S0=1\r\r\nOK\r\n
+@ dtr off
+@ ring
+< \r\nRING\r\n
+! mode ringing
+@ ringend
+@ dtr on
+@ ring
+< \r\nRING\r\n
+! answer

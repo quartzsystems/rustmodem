@@ -1,0 +1,10 @@
+# A command line starts at the first A that is followed by T. Anything
+# else before it is echoed and otherwise ignored.
+> AAT\r
+< AAT\r\r\nOK\r\n
+> AxT\r
+< AxT\r
+> noise AT\r
+< noise AT\r\r\nOK\r\n
+> \r\r\rAT\r
+< \r\r\rAT\r\r\nOK\r\n

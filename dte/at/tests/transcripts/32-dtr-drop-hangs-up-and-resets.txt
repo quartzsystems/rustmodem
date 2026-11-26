@@ -1,0 +1,15 @@
+# With &D3, dropping DTR hangs up and returns every setting to its default:
+# echo is back on afterwards.
+> ATE0&D3S0=3\r
+< ATE0&D3S0=3\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+@ dtr off
+! hangup dtr
+< \r\nOK\r\n
+! s 0=0
+@ dtr on
+> AT\r
+< AT\r\r\nOK\r\n

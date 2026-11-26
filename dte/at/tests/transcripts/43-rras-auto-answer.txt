@@ -1,0 +1,17 @@
+# How a dial-in server uses the line: set up once, then let the modem answer
+# on the first ring and report the rate.
+> ATE0V1&C1&D2S0=1\r
+< ATE0V1&C1&D2S0=1\r\r\nOK\r\n
+@ ring
+< \r\nRING\r\n
+! answer
+! mode handshaking
+@ connected 9600 V.32 LAPM V.42bis
+< \r\nCONNECT 9600\r\n
+! signals dcd=1
+@ line \x7e\xff\x7d\x23
+< \x7e\xff\x7d\x23
+@ dtr off
+! hangup dtr
+< \r\nOK\r\n
+! signals dcd=0

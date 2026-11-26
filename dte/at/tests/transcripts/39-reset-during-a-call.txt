@@ -1,0 +1,20 @@
+# Z hangs up, returns every setting to its default and ends the line: the
+# E0 after it is not processed, so echo is on again.
+> ATE0S0=2\r
+< ATE0S0=2\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+@ elapsed 1000
+> +++
+! line +++
+@ elapsed 1000
+< \r\nOK\r\n
+> ATZE0\r
+! hangup reset
+< \r\nOK\r\n
+! mode command
+! s 0=0
+> AT\r
+< AT\r\r\nOK\r\n

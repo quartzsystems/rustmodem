@@ -1,0 +1,11 @@
+# A/ runs the previous command line again at once, with no terminator.
+> ATI0\r
+< ATI0\r\r\nrustmodem\r\n\r\nOK\r\n
+> A/
+< A/\r\nrustmodem\r\n\r\nOK\r\n
+> a/
+< a/\r\nrustmodem\r\n\r\nOK\r\n
+> ATH2\r
+< ATH2\r\r\nERROR\r\n
+> A/
+< A/\r\nERROR\r\n

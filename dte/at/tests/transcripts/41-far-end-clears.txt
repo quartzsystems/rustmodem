@@ -1,0 +1,28 @@
+# The far end clears the call, first while passing data and then while the
+# host is in online command mode.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+! signals dcd=1
+@ carrierlost
+< \r\nNO CARRIER\r\n
+! mode command
+! signals dcd=0
+> ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+@ elapsed 1000
+> +++
+! line +++
+@ elapsed 1000
+< \r\nOK\r\n
+@ line lost
+@ carrierlost
+< \r\nNO CARRIER\r\n
+! mode command
+> ATO\r
+< \r\nERROR\r\n

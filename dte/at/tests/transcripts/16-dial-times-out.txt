@@ -1,0 +1,14 @@
+# Nothing answers within S7 seconds: the modem hangs up and reports
+# NO ANSWER by itself.
+> ATE0S7=30\r
+< ATE0S7=30\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ elapsed 29000
+! mode handshaking
+@ elapsed 999
+! mode handshaking
+@ elapsed 1
+! hangup timeout
+< \r\nNO ANSWER\r\n
+! mode command

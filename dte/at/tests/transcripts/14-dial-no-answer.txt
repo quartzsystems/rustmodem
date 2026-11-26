@@ -1,0 +1,9 @@
+# The network reports that the number dialled did not answer.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ elapsed 20000
+@ noanswer
+< \r\nNO ANSWER\r\n
+! mode command

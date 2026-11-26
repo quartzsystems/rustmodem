@@ -1,0 +1,11 @@
+# The number dialled is busy.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+! mode handshaking
+@ busy
+< \r\nBUSY\r\n
+! mode command
+> AT\r
+< \r\nOK\r\n

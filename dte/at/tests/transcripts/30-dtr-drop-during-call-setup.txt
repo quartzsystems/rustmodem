@@ -1,0 +1,10 @@
+# DTR dropping while the call is still being set up hangs up too.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+! mode handshaking
+@ dtr off
+! hangup dtr
+< \r\nOK\r\n
+! mode command

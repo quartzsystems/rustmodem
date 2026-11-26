@@ -1,0 +1,11 @@
+# Commands are the same in either case, and spaces are ignored anywhere in
+# the line.
+> at e0 v1\r
+< at e0 v1\r\r\nOK\r\n
+> aT i0\r
+< \r\nrustmodem\r\n\r\nOK\r\n
+> At   s0 = 3\r
+< \r\nOK\r\n
+! s 0=3
+> at d t 5 5 5\r
+! dial 555

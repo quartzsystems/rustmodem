@@ -1,0 +1,27 @@
+# With V0 a result code is a number and a carriage return, with no line
+# feed and nothing before it.
+> ATE0V0\r
+< ATE0V0\r0\r
+@ ring
+< 2\r
+@ ringend
+> ATH2\r
+< 4\r
+> ATD5\r
+! dial 5
+@ nodialtone
+< 6\r
+> ATD5\r
+! dial 5
+@ busy
+< 7\r
+> ATD5\r
+! dial 5
+@ noanswer
+< 8\r
+> ATD5\r
+! dial 5
+@ connected
+< 1\r
+@ carrierlost
+< 3\r

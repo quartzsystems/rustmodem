@@ -1,0 +1,13 @@
+# A line set to accept unknown commands skips them and carries on with the
+# rest of the line.
+@ config unknown_command=ok
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATB0S0=2\\N3X3\r
+< \r\nOK\r\n
+! s 0=2
+> AT+FCLASS=0;+VCID=1;S0=4\r
+< \r\nOK\r\n
+! s 0=4
+> ATS95=47S95?\r
+< \r\n000\r\n\r\nOK\r\n

@@ -1,0 +1,22 @@
+# Data that arrives while the host is in online command mode is held and
+# delivered when the host returns to data mode.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+@ elapsed 1000
+> +++
+! line +++
+@ elapsed 1000
+< \r\nOK\r\n
+@ line while you
+@ line \x20were away
+> ATI0\r
+< \r\nrustmodem\r\n\r\nOK\r\n
+> ATO\r
+< \r\nCONNECT\r\nwhile you were away
+! mode online
+@ line and after
+< and after

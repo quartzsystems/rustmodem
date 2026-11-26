@@ -1,0 +1,19 @@
+# S1 counts rings and returns to zero eight seconds after the last one.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+@ ring
+< \r\nRING\r\n
+@ elapsed 2000
+@ ringend
+@ elapsed 4000
+@ ring
+< \r\nRING\r\n
+@ elapsed 2000
+@ ringend
+> ATS1?\r
+< \r\n002\r\n\r\nOK\r\n
+@ elapsed 5999
+! s 1=2
+@ elapsed 1
+! s 1=0
+! mode command

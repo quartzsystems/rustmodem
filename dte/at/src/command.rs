@@ -1,0 +1,525 @@
+// Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+// licensed under the terms of the MIT license which can be found in the
+// root directory of this project.
+
+//! Executing a command line: the commands of V.250 clause 6 that phase 0
+//! has, in the basic syntax of clause 5.3 and the extended syntax of
+//! clause 5.4.
+
+use crate::interp::{AtInterpreter, State};
+use crate::profile::{FACTORY_DS, FACTORY_ES, FACTORY_MS, RANGE_DS, RANGE_ES, RANGE_MS, REGISTERS};
+use crate::{Action, HangupCause, Output, ResultCode, Trace, UnknownCommand};
+
+/// What `I0` reports: the product code.
+const PRODUCT_CODE: &str = "rustmodem";
+
+/// What `I4` reports: the capability line.
+const CAPABILITIES: &str = "NULL MODEM,V.250,+MS,+ES,+DS";
+
+/// The longest value an extended-syntax parameter may be set to.
+const MAX_EXTENDED_VALUE: usize = 64;
+
+/// What executing one command means for the rest of the line.
+enum Next {
+    /// Go on to the next command.
+    Continue,
+    /// Stop; the command ended the line and issued whatever result it has.
+    Done,
+    /// Stop with `ERROR`.
+    Fail,
+}
+
+/// The extended-syntax parameters phase 0 stores.
+#[derive(Clone, Copy)]
+enum Stored {
+    Ms,
+    Es,
+    Ds,
+}
+
+/// A position in a command line body.
+struct Cursor<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Cursor<'a> {
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.at).copied()
+    }
+
+    fn next(&mut self) -> Option<u8> {
+        let byte = self.peek()?;
+        self.at += 1;
+        Some(byte)
+    }
+
+    /// A decimal number, or `None` if there is no digit here. A number too
+    /// large to matter saturates.
+    fn number(&mut self) -> Option<u32> {
+        let mut value: Option<u32> = None;
+        while let Some(digit) = self.peek().filter(u8::is_ascii_digit) {
+            let digit = u32::from(digit - b'0');
+            value = Some(value.unwrap_or(0).saturating_mul(10).saturating_add(digit));
+            self.at += 1;
+        }
+        value
+    }
+
+    /// Everything left.
+    fn rest(&mut self) -> &'a [u8] {
+        let rest = &self.bytes[self.at..];
+        self.at = self.bytes.len();
+        rest
+    }
+
+    /// Everything up to, but not including, the next byte `stop` accepts.
+    fn until(&mut self, stop: impl Fn(u8) -> bool) -> &'a [u8] {
+        let start = self.at;
+        while self.peek().is_some_and(|b| !stop(b)) {
+            self.at += 1;
+        }
+        &self.bytes[start..self.at]
+    }
+}
+
+impl AtInterpreter {
+    /// Executes a command line body (what came between the `AT` prefix and
+    /// the terminator). `overflow` says the body ran past the length limit.
+    pub(crate) fn execute(&mut self, body: &[u8], overflow: bool, out: &mut Vec<Output>) {
+        let shown = format!("AT{}", String::from_utf8_lossy(body));
+        out.push(Output::Trace(Trace::Command(shown)));
+        if overflow {
+            self.result(ResultCode::Error, out);
+            return;
+        }
+        // V.250 clause 5.2.1: space characters are ignored, and commands
+        // are the same in either case.
+        let text: Vec<u8> = body
+            .iter()
+            .filter(|b| **b != b' ')
+            .map(u8::to_ascii_uppercase)
+            .collect();
+        let mut cursor = Cursor {
+            bytes: &text,
+            at: 0,
+        };
+        // V.250 clause 5.3.1: commands run in the order given, and the
+        // first one that fails ends the line with ERROR.
+        while let Some(command) = cursor.next() {
+            match self.command(command, &mut cursor, out) {
+                Next::Continue => {}
+                Next::Done => return,
+                Next::Fail => {
+                    self.result(ResultCode::Error, out);
+                    return;
+                }
+            }
+        }
+        self.result(ResultCode::Ok, out);
+    }
+
+    fn command(&mut self, command: u8, cursor: &mut Cursor<'_>, out: &mut Vec<Output>) -> Next {
+        match command {
+            // V.250 clause 6.3.5: answer.
+            b'A' => {
+                if self.state != State::OnHook {
+                    return Next::Fail;
+                }
+                self.answer(out);
+                Next::Done
+            }
+            b'D' => self.dial(cursor, out),
+            // V.250 clause 6.2.4: command echo.
+            b'E' => match parameter(cursor, 1) {
+                Some(n) => {
+                    self.profile.echo = n == 1;
+                    Next::Continue
+                }
+                None => Next::Fail,
+            },
+            // V.250 clause 6.3.6: hook control. H1 is accepted and does
+            // nothing.
+            b'H' => match parameter(cursor, 1) {
+                Some(0) => {
+                    if self.state != State::OnHook {
+                        out.push(Output::Action(Action::Hangup(HangupCause::Command)));
+                        self.go_on_hook();
+                    }
+                    Next::Continue
+                }
+                Some(_) => Next::Continue,
+                None => Next::Fail,
+            },
+            // V.250 clause 6.1.3: identification.
+            b'I' => match parameter(cursor, 9) {
+                Some(0) => {
+                    self.info(&[PRODUCT_CODE], out);
+                    Next::Continue
+                }
+                Some(3) => {
+                    let version = format!("rustmodem {}", env!("CARGO_PKG_VERSION"));
+                    self.info(&[&version], out);
+                    Next::Continue
+                }
+                Some(4) => {
+                    self.info(&[CAPABILITIES], out);
+                    Next::Continue
+                }
+                Some(_) => Next::Continue,
+                None => Next::Fail,
+            },
+            // V.250 clauses 6.3.13 and 6.3.14: speaker. Stored, no effect.
+            b'L' => match parameter(cursor, 3) {
+                Some(n) => {
+                    self.profile.volume = n as u8;
+                    Next::Continue
+                }
+                None => Next::Fail,
+            },
+            b'M' => match parameter(cursor, 3) {
+                Some(n) => {
+                    self.profile.speaker = n as u8;
+                    Next::Continue
+                }
+                None => Next::Fail,
+            },
+            // V.250 clause 6.3.7: return to online data state.
+            b'O' => {
+                if parameter(cursor, 0).is_none() || self.state != State::OnlineCommand {
+                    return Next::Fail;
+                }
+                self.enter_online();
+                self.result(ResultCode::Connect, out);
+                self.release_held(out);
+                Next::Done
+            }
+            // V.250 clause 6.2.5: result code suppression.
+            b'Q' => match parameter(cursor, 1) {
+                Some(n) => {
+                    self.profile.quiet = n == 1;
+                    Next::Continue
+                }
+                None => Next::Fail,
+            },
+            b'S' => self.register_command(cursor, out),
+            // V.250 clause 6.2.6: response format.
+            b'V' => match parameter(cursor, 1) {
+                Some(n) => {
+                    self.profile.verbose = n == 1;
+                    Next::Continue
+                }
+                None => Next::Fail,
+            },
+            // V.250 clause 6.2.7: result code selection.
+            b'X' => match parameter(cursor, 4) {
+                Some(n) => {
+                    self.profile.x = n as u8;
+                    Next::Continue
+                }
+                None => Next::Fail,
+            },
+            // V.250 clause 6.1.1: reset to the stored profile, which in
+            // phase 0 is the factory one. Any call is cleared, and the rest
+            // of the line is not processed.
+            b'Z' => {
+                if parameter(cursor, 0).is_none() {
+                    return Next::Fail;
+                }
+                if self.state != State::OnHook {
+                    out.push(Output::Action(Action::Hangup(HangupCause::Reset)));
+                    self.go_on_hook();
+                }
+                self.reset_profile();
+                self.result(ResultCode::Ok, out);
+                Next::Done
+            }
+            b'&' => self.ampersand_command(cursor, out),
+            b'+' => self.extended_command(cursor, out),
+            // Commands of other vendors' sets. Those that start with one of
+            // these characters take one more letter; by convention those
+            // that start with # take a whole word.
+            b'#' => {
+                cursor.until(|b| !b.is_ascii_alphabetic());
+                self.skip_unknown(cursor)
+            }
+            b'\\' | b'%' | b'*' | b'-' | b'$' | b'^' | b')' | b':' | b'@' => {
+                cursor.next();
+                self.skip_unknown(cursor)
+            }
+            _ => self.skip_unknown(cursor),
+        }
+    }
+
+    /// Steps over what follows the name of a command this interpreter does
+    /// not have: a number, then either `?` or `=` and a value.
+    fn skip_unknown(&self, cursor: &mut Cursor<'_>) -> Next {
+        cursor.number();
+        match cursor.peek() {
+            Some(b'?') => {
+                cursor.next();
+            }
+            Some(b'=') => {
+                cursor.next();
+                cursor.until(|b| !(b.is_ascii_digit() || b == b','));
+            }
+            _ => {}
+        }
+        self.unknown()
+    }
+
+    /// A command this interpreter does not have: skipped or refused, as the
+    /// line is configured.
+    fn unknown(&self) -> Next {
+        match self.config.unknown_command {
+            UnknownCommand::Ok => Next::Continue,
+            UnknownCommand::Error => Next::Fail,
+        }
+    }
+
+    /// V.250 clause 6.3.1: dial. The dial string is the rest of the line.
+    /// Digits, `*`, `#`, `+`, `,` and `W` are kept; everything else,
+    /// including the `T` and `P` modifiers, is dropped. A final `;` asks to
+    /// stay in command mode once the number has been dialled.
+    fn dial(&mut self, cursor: &mut Cursor<'_>, out: &mut Vec<Output>) -> Next {
+        if self.state != State::OnHook {
+            return Next::Fail;
+        }
+        let rest = cursor.rest();
+        let (string, stay_in_command) = match rest.strip_suffix(b";") {
+            Some(string) => (string, true),
+            None => (rest, false),
+        };
+        let number: String = string
+            .iter()
+            .filter(|b| b.is_ascii_digit() || matches!(**b, b'*' | b'#' | b'+' | b',' | b'W'))
+            .map(|b| char::from(*b))
+            .collect();
+        out.push(Output::Action(Action::Dial(number)));
+        if stay_in_command {
+            self.start_dialled();
+            self.result(ResultCode::Ok, out);
+        } else {
+            self.start_handshake(true);
+        }
+        Next::Done
+    }
+
+    /// V.250 clause 5.3.2: `S<n>=<v>` and `S<n>?`.
+    fn register_command(&mut self, cursor: &mut Cursor<'_>, out: &mut Vec<Output>) -> Next {
+        let Some(number) = cursor.number() else {
+            return Next::Fail;
+        };
+        match cursor.next() {
+            Some(b'?') => match self.profile.register(number) {
+                Some(value) => {
+                    self.info(&[&format!("{value:03}")], out);
+                    Next::Continue
+                }
+                None => match self.config.unknown_command {
+                    UnknownCommand::Ok => {
+                        self.info(&["000"], out);
+                        Next::Continue
+                    }
+                    UnknownCommand::Error => Next::Fail,
+                },
+            },
+            Some(b'=') => {
+                // A missing value is zero.
+                let value = cursor.number().unwrap_or(0);
+                if value > 255 {
+                    return Next::Fail;
+                }
+                match number {
+                    // S1 counts rings; a value written to it is not kept.
+                    1 => Next::Continue,
+                    // S3, S4 and S5 are characters of the 7-bit set.
+                    3..=5 if value > 127 => Next::Fail,
+                    _ => {
+                        if self.profile.set_register(number, value as u8) {
+                            Next::Continue
+                        } else {
+                            self.unknown()
+                        }
+                    }
+                }
+            }
+            _ => Next::Fail,
+        }
+    }
+
+    fn ampersand_command(&mut self, cursor: &mut Cursor<'_>, out: &mut Vec<Output>) -> Next {
+        match cursor.next() {
+            // V.250 clause 6.2.8: circuit 109 (DCD) behaviour.
+            Some(b'C') => match parameter(cursor, 1) {
+                Some(n) => {
+                    self.profile.dcd_follows_carrier = n == 1;
+                    Next::Continue
+                }
+                None => Next::Fail,
+            },
+            // V.250 clause 6.2.9: circuit 108 (DTR) behaviour.
+            Some(b'D') => match parameter(cursor, 3) {
+                Some(n) => {
+                    self.profile.dtr_action = n as u8;
+                    Next::Continue
+                }
+                None => Next::Fail,
+            },
+            // V.250 clause 6.1.2: factory defaults.
+            Some(b'F') => match parameter(cursor, 0) {
+                Some(_) => {
+                    self.reset_profile();
+                    Next::Continue
+                }
+                None => Next::Fail,
+            },
+            // Flow control: none, or RTS/CTS. Stored, no effect.
+            Some(b'K') => match cursor.number().unwrap_or(0) {
+                n @ (0 | 3) => {
+                    self.profile.flow = n as u8;
+                    Next::Continue
+                }
+                _ => Next::Fail,
+            },
+            Some(b'V') => match parameter(cursor, 0) {
+                Some(_) => {
+                    self.view(out);
+                    Next::Continue
+                }
+                None => Next::Fail,
+            },
+            // BLOCKED(phase1): &W is accepted but stores nothing; stored
+            // profiles come with the manager.
+            Some(b'W') => match parameter(cursor, 1) {
+                Some(_) => Next::Continue,
+                None => Next::Fail,
+            },
+            Some(_) => self.skip_unknown(cursor),
+            None => self.unknown(),
+        }
+    }
+
+    /// `&V`: the current settings and registers.
+    fn view(&mut self, out: &mut Vec<Output>) {
+        let p = &self.profile;
+        let settings = format!(
+            "E{} Q{} V{} X{} L{} M{} &C{} &D{} &K{}",
+            u8::from(p.echo),
+            u8::from(p.quiet),
+            u8::from(p.verbose),
+            p.x,
+            p.volume,
+            p.speaker,
+            u8::from(p.dcd_follows_carrier),
+            p.dtr_action,
+            p.flow,
+        );
+        let registers = REGISTERS
+            .iter()
+            .map(|number| {
+                let value = p.register(u32::from(*number)).unwrap_or(0);
+                format!("S{number:02}:{value:03}")
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let ms = format!("+MS: {}", p.ms);
+        let es = format!("+ES: {}", p.es);
+        let ds = format!("+DS: {}", p.ds);
+        self.info(
+            &["ACTIVE PROFILE:", &settings, &registers, &ms, &es, &ds],
+            out,
+        );
+    }
+
+    /// V.250 clause 5.4: an extended-syntax command, `+<name>` followed by
+    /// `=<value>` (set), `?` (read) or `=?` (test), and ended by `;` or the
+    /// end of the line. Phase 0 has `+MS` (clause 6.4.1), `+ES` (6.5.1) and
+    /// `+DS` (6.6.1), and only stores what they are set to.
+    fn extended_command(&mut self, cursor: &mut Cursor<'_>, out: &mut Vec<Output>) -> Next {
+        enum Form<'a> {
+            Set(&'a [u8]),
+            Read,
+            Test,
+            Action,
+        }
+        let name = cursor.until(|b| matches!(b, b'=' | b'?' | b';'));
+        let form = match cursor.peek() {
+            Some(b'=') => {
+                cursor.next();
+                if cursor.peek() == Some(b'?') {
+                    cursor.next();
+                    Form::Test
+                } else {
+                    Form::Set(cursor.until(|b| b == b';'))
+                }
+            }
+            Some(b'?') => {
+                cursor.next();
+                Form::Read
+            }
+            _ => Form::Action,
+        };
+        // Nothing may follow the command but its separator.
+        let junk = cursor.until(|b| b == b';');
+        if cursor.peek() == Some(b';') {
+            cursor.next();
+        }
+
+        let (stored, label, factory, range) = match name {
+            b"MS" => (Stored::Ms, "+MS: ", FACTORY_MS, RANGE_MS),
+            b"ES" => (Stored::Es, "+ES: ", FACTORY_ES, RANGE_ES),
+            b"DS" => (Stored::Ds, "+DS: ", FACTORY_DS, RANGE_DS),
+            _ => return self.unknown(),
+        };
+        if !junk.is_empty() {
+            return Next::Fail;
+        }
+        match form {
+            Form::Set(value) => {
+                let acceptable = value.len() <= MAX_EXTENDED_VALUE
+                    && value
+                        .iter()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(*b, b',' | b'.'));
+                if !acceptable {
+                    return Next::Fail;
+                }
+                // The value is ASCII, checked just above. An empty value
+                // returns the parameter to its default (clause 5.4.4.2).
+                let value = if value.is_empty() {
+                    factory.to_string()
+                } else {
+                    value.iter().map(|b| char::from(*b)).collect()
+                };
+                *self.stored_mut(stored) = value;
+                Next::Continue
+            }
+            Form::Read => {
+                let line = format!("{label}{}", self.stored_mut(stored));
+                self.info(&[&line], out);
+                Next::Continue
+            }
+            Form::Test => {
+                let line = format!("{label}{range}");
+                self.info(&[&line], out);
+                Next::Continue
+            }
+            Form::Action => Next::Fail,
+        }
+    }
+
+    fn stored_mut(&mut self, stored: Stored) -> &mut String {
+        match stored {
+            Stored::Ms => &mut self.profile.ms,
+            Stored::Es => &mut self.profile.es,
+            Stored::Ds => &mut self.profile.ds,
+        }
+    }
+}
+
+/// The number after a basic-syntax command: missing means zero (V.250
+/// clause 5.3.1), and one above `max` is an error.
+fn parameter(cursor: &mut Cursor<'_>, max: u32) -> Option<u32> {
+    let value = cursor.number().unwrap_or(0);
+    (value <= max).then_some(value)
+}

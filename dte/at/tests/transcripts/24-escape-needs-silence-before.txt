@@ -1,0 +1,20 @@
+# Escape characters that follow data without a guard time of silence are
+# only data.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+@ elapsed 1000
+> data+++
+! line data+++
+@ elapsed 2000
+! mode online
+> x
+! line x
+@ elapsed 999
+> +++
+! line +++
+@ elapsed 2000
+! mode online

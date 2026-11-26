@@ -1,0 +1,9 @@
+# The editing character (S5, backspace) removes the previous character and
+# is echoed as backspace, space, backspace. It cannot remove the AT prefix.
+# Other control characters are ignored and not echoed.
+> ATE5\x081\r
+< ATE5\x08 \x081\r\r\nOK\r\n
+> AT\x08\x08\r
+< AT\r\r\nOK\r\n
+> AT\x07I\x000\r
+< ATI0\r\r\nrustmodem\r\n\r\nOK\r\n

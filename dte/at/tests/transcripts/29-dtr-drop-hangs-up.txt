@@ -1,0 +1,18 @@
+# With &D2, the default, dropping DTR hangs up. On hook it only discards a
+# half-typed command line.
+> ATI
+< ATI
+@ dtr off
+@ dtr on
+> AT\r
+< AT\r\r\nOK\r\n
+> ATD2\r
+< ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+@ dtr off
+! hangup dtr
+< \r\nOK\r\n
+! mode command
+! signals dcd=0

@@ -1,0 +1,15 @@
+# With S0 set, the modem answers by itself on that ring.
+> ATE0S0=2\r
+< ATE0S0=2\r\r\nOK\r\n
+@ ring
+< \r\nRING\r\n
+! mode ringing
+@ elapsed 2000
+@ ringend
+@ elapsed 4000
+@ ring
+< \r\nRING\r\n
+! answer
+! mode handshaking
+@ connected
+< \r\nCONNECT\r\n

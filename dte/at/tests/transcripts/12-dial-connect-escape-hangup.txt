@@ -1,0 +1,29 @@
+# A whole outgoing call: dial, connect, data both ways, the escape sequence,
+# and hang-up.
+> ATE0V1\r
+< ATE0V1\r\r\nOK\r\n
+> ATDT5551234\r
+! dial 5551234
+! mode handshaking
+! signals dcd=0
+@ elapsed 3000
+@ connected 0
+< \r\nCONNECT\r\n
+! mode online
+! signals dcd=1
+> hello, far end\r\n
+! line hello, far end\r\n
+@ line hello, near end\r\n
+< hello, near end\r\n
+@ elapsed 1000
+> +++
+! line +++
+@ elapsed 1000
+< \r\nOK\r\n
+! mode onlinecommand
+! signals dcd=1
+> ATH\r
+! hangup command
+< \r\nOK\r\n
+! mode command
+! signals dcd=0

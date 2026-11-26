@@ -1,0 +1,24 @@
+# Four escape characters are not an escape sequence; neither are three
+# followed by data inside the guard time, nor two.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+@ elapsed 1000
+> ++++
+! line ++++
+@ elapsed 2000
+! mode online
+> +++
+! line +++
+@ elapsed 500
+> x
+! line x
+@ elapsed 2000
+! mode online
+> ++
+! line ++
+@ elapsed 2000
+! mode online

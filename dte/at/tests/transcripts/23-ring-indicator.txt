@@ -1,0 +1,17 @@
+# RI is on during the ring-on interval and goes off when the call is
+# answered.
+! signals ri=0
+@ ring
+< \r\nRING\r\n
+! signals ri=1
+@ elapsed 2000
+@ ringend
+! signals ri=0
+@ elapsed 4000
+@ ring
+< \r\nRING\r\n
+! signals ri=1
+> ATA\r
+< ATA\r
+! answer
+! signals ri=0

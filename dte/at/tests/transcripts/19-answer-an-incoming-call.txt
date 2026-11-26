@@ -1,0 +1,26 @@
+# An incoming call rings twice, the host answers, and the far end clears.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+@ ring
+< \r\nRING\r\n
+! mode ringing
+@ elapsed 2000
+@ ringend
+@ elapsed 4000
+@ ring
+< \r\nRING\r\n
+! s 1=2
+> ATA\r
+! answer
+! mode handshaking
+@ connected 2400
+< \r\nCONNECT 2400\r\n
+! mode online
+@ line login:
+< login:
+> guest\r
+! line guest\r
+@ elapsed 9000
+@ carrierlost
+< \r\nNO CARRIER\r\n
+! mode command

@@ -1,0 +1,28 @@
+# Each escape character must come less than the guard time after the one
+# before. One that comes later opens a new sequence instead.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+@ elapsed 1000
+> +
+! line +
+@ elapsed 999
+> +
+! line +
+@ elapsed 1000
+> +
+! line +
+@ elapsed 400
+> +
+! line +
+@ elapsed 400
+> +
+! line +
+@ elapsed 999
+! mode online
+@ elapsed 1
+< \r\nOK\r\n
+! mode onlinecommand

@@ -1,0 +1,16 @@
+# A dial string that ends in ; returns OK and stays in command mode while
+# the call goes on. When the far end connects, the modem is in online
+# command mode and O takes it to data.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATD2;\r
+! dial 2
+< \r\nOK\r\n
+! mode command
+> ATI0\r
+< \r\nrustmodem\r\n\r\nOK\r\n
+@ connected
+! mode onlinecommand
+> ATO\r
+< \r\nCONNECT\r\n
+! mode online

@@ -1,0 +1,11 @@
+# S3 ends a command line and, with S4, frames every response.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATS3=33S4=45\r
+< !-OK!-
+> ATI0!
+< !-rustmodem!-!-OK!-
+> ATV0!
+< 0!
+> ATI0!
+< rustmodem!-0!

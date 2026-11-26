@@ -1,0 +1,11 @@
+# &F returns every setting to its default, including the configured S0, and
+# the rest of the line still runs.
+@ config auto_answer_rings=3
+! s 0=3
+> ATE0V0X1S0=0S7=10\r
+< ATE0V0X1S0=0S7=10\r0\r
+> AT&FS7?\r
+< \r\n050\r\n\r\nOK\r\n
+! s 0=3
+> AT\r
+< AT\r\r\nOK\r\n

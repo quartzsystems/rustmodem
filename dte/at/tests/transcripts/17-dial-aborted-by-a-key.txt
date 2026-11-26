@@ -1,0 +1,14 @@
+# A character from the host while the call is being set up aborts it. A line
+# feed that arrives in the same write as the dial command does not.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATD2\r\n
+! dial 2
+! mode handshaking
+@ elapsed 500
+> x
+! hangup abort
+< \r\nNO CARRIER\r\n
+! mode command
+> AT\r
+< \r\nOK\r\n

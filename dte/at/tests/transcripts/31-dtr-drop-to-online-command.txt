@@ -1,0 +1,15 @@
+# With &D1, dropping DTR during a call goes to online command mode, as the
+# escape sequence does.
+> ATE0&D1\r
+< ATE0&D1\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+@ dtr off
+< \r\nOK\r\n
+! mode onlinecommand
+@ dtr on
+> ATO\r
+< \r\nCONNECT\r\n
+! mode online

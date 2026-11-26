@@ -1,0 +1,21 @@
+# Events that make no sense in the current mode are ignored.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+@ connected
+@ carrierlost
+@ busy
+@ noanswer
+@ nodialtone
+@ line stray
+! mode command
+> ATA\r
+! answer
+@ busy
+@ nodialtone
+@ ring
+! mode handshaking
+@ connected
+< \r\nCONNECT\r\n
+@ ring
+@ busy
+! mode online

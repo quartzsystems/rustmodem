@@ -1,0 +1,16 @@
+# In data mode every byte goes through unchanged in both directions, and
+# nothing that looks like a command is acted on.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ connected
+< \r\nCONNECT\r\n
+> \x00\x01\x7f\x80\xff\x11\x13\r\n
+! line \x00\x01\x7f\x80\xff\x11\x13\r\n
+> ATH\r
+! line ATH\r
+! mode online
+@ line \xff\x00NO CARRIER\r\n\x1b
+< \xff\x00NO CARRIER\r\n\x1b
+! mode online

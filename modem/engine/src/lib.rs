@@ -5,3 +5,7 @@
 //! The ModemEngine trait, modem events and the null engine.
 
 #![forbid(unsafe_code)]
+
+mod info;
+
+pub use info::ConnectInfo;

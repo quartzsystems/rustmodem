@@ -1,0 +1,15 @@
+# A longer init of the kind the INF file of a 56k modem carries: several
+# commands on one line, some from other vendors' sets, which this line skips.
+> AT&FE0V1&C1&D2S95=47S0=0\r
+< AT&FE0V1&C1&D2S95=47S0=0\r\r\nOK\r\n
+> ATS7=60S30=0L0M1\\N3%C1&K3B0N1X4\r
+< \r\nOK\r\n
+! s 7=60
+> AT#CID=1\r
+< \r\nOK\r\n
+> ATI3\r
+< \r\nrustmodem ${VERSION}\r\n\r\nOK\r\n
+> ATDT5551234\r
+! dial 5551234
+@ connected
+< \r\nCONNECT\r\n

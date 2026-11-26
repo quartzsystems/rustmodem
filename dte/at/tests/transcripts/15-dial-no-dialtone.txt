@@ -1,0 +1,8 @@
+# There is no dial tone.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> ATD2\r
+! dial 2
+@ nodialtone
+< \r\nNO DIALTONE\r\n
+! mode command

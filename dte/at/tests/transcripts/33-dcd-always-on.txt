@@ -1,0 +1,15 @@
+# With &C0, DCD is on whether or not there is a carrier.
+> ATE0&C0\r
+< ATE0&C0\r\r\nOK\r\n
+! signals dcd=1
+> ATD2\r
+! dial 2
+! signals dcd=1
+@ connected
+< \r\nCONNECT\r\n
+@ carrierlost
+< \r\nNO CARRIER\r\n
+! signals dcd=1
+> AT&C1\r
+< \r\nOK\r\n
+! signals dcd=0

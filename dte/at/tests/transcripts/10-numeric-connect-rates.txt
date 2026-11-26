@@ -1,0 +1,40 @@
+# With V0 and X1 or above, a connection at a rate with a conventional code
+# reports that code; any other rate reports 1.
+> ATE0V0\r
+< ATE0V0\r0\r
+> ATD5\r
+! dial 5
+@ connected 1200
+< 5\r
+@ carrierlost
+< 3\r
+> ATD5\r
+! dial 5
+@ connected 2400
+< 10\r
+@ carrierlost
+< 3\r
+> ATD5\r
+! dial 5
+@ connected 9600
+< 12\r
+@ carrierlost
+< 3\r
+> ATD5\r
+! dial 5
+@ connected 14400
+< 13\r
+@ carrierlost
+< 3\r
+> ATD5\r
+! dial 5
+@ connected 33600
+< 1\r
+@ carrierlost
+< 3\r
+> ATX0\r
+< 0\r
+> ATD5\r
+! dial 5
+@ connected 2400
+< 1\r

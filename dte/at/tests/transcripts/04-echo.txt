@@ -1,0 +1,15 @@
+# With E1 every character received in command mode is echoed, including
+# characters that are not part of a command line.
+> xyz\r
+< xyz\r
+> AT\r
+< AT\r\r\nOK\r\n
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> xyz\r
+> AT\r
+< \r\nOK\r\n
+> ATE1\r
+< \r\nOK\r\n
+> AT\r
+< AT\r\r\nOK\r\n
