@@ -3,7 +3,9 @@
 // root directory of this project.
 
 //! One line: an AT interpreter, a modem engine and a serial port, with the
-//! buffers between them and the line's counters.
+//! buffers between them and the line's counters. While a call is connected
+//! the engine is with the media runner and the line holds the call's
+//! [`MediaCall`] in its place.
 
 use std::collections::VecDeque;
 
@@ -15,6 +17,7 @@ use engine::ModemEngine;
 use msg::Message;
 use serial::SerialBackend;
 
+use crate::media::MediaCall;
 use crate::router::LineId;
 
 /// The call a line is in, from dialling or being offered it until it ends.
@@ -67,9 +70,11 @@ impl ActiveCall {
 pub(crate) struct Line {
     pub config: LineConfig,
     pub interpreter: AtInterpreter,
-    pub engine: Box<dyn ModemEngine>,
-    /// The engine has been started for the current call.
-    pub engine_running: bool,
+    /// The line's engine, while it has no call connected. During one the
+    /// engine is with the media runner.
+    pub engine: Option<Box<dyn ModemEngine>>,
+    /// The media of the call that is connected: the engine is running.
+    pub media: Option<MediaCall>,
     /// The serial port, while it is open.
     pub serial: Option<Box<dyn SerialBackend>>,
     /// When to try next to open the port, on the pool's clock.
@@ -102,8 +107,8 @@ impl Line {
         Line {
             config,
             interpreter,
-            engine,
-            engine_running: false,
+            engine: Some(engine),
+            media: None,
             serial: None,
             retry_at_ms: 0,
             error: None,

@@ -281,6 +281,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "media"
+version = "0.0.2"
+dependencies = [
+ "engine",
+ "pool",
+ "proptest",
+ "rtp",
+ "windows",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -367,6 +378,7 @@ dependencies = [
  "ctlproto",
  "engine",
  "msg",
+ "rtrb",
  "serde_json",
  "serial",
 ]
@@ -448,6 +460,12 @@ version = "0.0.2"
 dependencies = [
  "proptest",
 ]
+
+[[package]]
+name = "rtrb"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5974e397833d890f2f74963408e0d4a6cd8eda2f6a445ae06750291b5d7a997e"
 
 [[package]]
 name = "sdp"

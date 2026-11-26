@@ -23,7 +23,8 @@ use ctlsrv::{Hub, Limits, Server, ServerParts};
 use engine::{NullConfig, NullEngine};
 use msg::Message;
 use pool::{
-    EventSink, MemoryProfiles, Now, NullSwitch, Pool, PoolParts, SerialFactory, command_channel,
+    EventSink, InlineRunner, MemoryProfiles, Now, NullSwitch, Pool, PoolParts, SerialFactory,
+    command_channel,
 };
 use serial::{MemoryHost, SerialBackend, memory_pair};
 
@@ -96,6 +97,7 @@ impl Service {
         let hosts: Hosts = Arc::default();
         let mut pool = Pool::new(PoolParts {
             router: Box::new(NullSwitch::new()),
+            media: Box::new(InlineRunner::new()),
             serial: Box::new(Factory(Arc::clone(&hosts))),
             engines: Box::new(|_| Box::new(NullEngine::new(NullConfig::default()))),
             sink: Box::new(HubSink(hub.clone())),

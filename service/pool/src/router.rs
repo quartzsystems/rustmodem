@@ -4,16 +4,19 @@
 
 //! The call router: what stands between the lines and the network.
 //!
-//! A [`CallRouter`] takes the calls the lines make, offers calls to lines,
-//! and carries the media of connected calls. Phase 0 has no network, so its
-//! router is the [`NullSwitch`], which connects lines to each other.
-//! BLOCKED(phase2): a SIP router replaces the null switch behind this same
-//! trait, without touching the lines.
+//! A [`CallRouter`] takes the calls the lines make and offers calls to
+//! lines. When a call is through it hands the pool the far end of its
+//! media, a [`MediaEndpoint`], and has nothing more to do with the audio.
+//!
+//! The [`NullSwitch`] is the router with no network: it connects lines to
+//! each other. With SIP enabled the router of `service/telephony` takes
+//! its place behind this same trait, without touching the lines.
 
 use std::collections::VecDeque;
 
 use ctlproto::LineState;
-use engine::SILENCE_OCTET;
+
+use crate::media::{LocalEndpoint, MediaEndpoint};
 
 /// A line id.
 pub type LineId = u16;
@@ -35,7 +38,7 @@ pub trait LineDirectory {
 }
 
 /// Something the router tells a line.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum RouterEvent {
     /// A call is being offered to the line.
     Incoming {
@@ -57,6 +60,8 @@ pub enum RouterEvent {
         line: LineId,
         /// Whether the line made the call.
         originate: bool,
+        /// The far end of the call's media.
+        media: MediaEndpoint,
     },
     /// The number the line dialled is busy.
     Busy(LineId),
@@ -84,11 +89,9 @@ pub trait CallRouter: Send {
     /// Runs the router's timers and gives the next thing it has to say.
     fn poll(&mut self, now_ms: u64) -> Option<RouterEvent>;
 
-    /// Fills `rx` with the media received for the line in this tick.
-    fn receive(&mut self, line: LineId, rx: &mut [u8]);
-
-    /// Takes the media the line sent in this tick.
-    fn send(&mut self, line: LineId, tx: &[u8]);
+    /// Stops the router: every call is cleared and what it holds on the
+    /// network is given up. A router with no network has nothing to do.
+    fn shutdown(&mut self, _now_ms: u64) {}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,9 +110,6 @@ struct SwitchCall {
     /// The line called; `None` when the number is not a line.
     callee: Option<LineId>,
     phase: Phase,
-    /// The last tick of media each end sent: the caller's, then the
-    /// callee's. Taken by the other end's next `receive`.
-    frames: [Option<Vec<u8>>; 2],
 }
 
 impl SwitchCall {
@@ -192,7 +192,6 @@ impl CallRouter for NullSwitch {
                         since_ms: now_ms,
                         ring_on: true,
                     },
-                    frames: [None, None],
                 });
                 self.events.push_back(RouterEvent::Incoming {
                     line: callee,
@@ -217,7 +216,6 @@ impl CallRouter for NullSwitch {
                 phase: Phase::Unobtainable {
                     at_ms: now_ms + UNOBTAINABLE_DELAY_MS,
                 },
-                frames: [None, None],
             }),
         }
     }
@@ -233,13 +231,17 @@ impl CallRouter for NullSwitch {
                     self.events.push_back(RouterEvent::RingEnd(line));
                 }
                 call.phase = Phase::Connected;
+                // The media of the two lines is joined end to end.
+                let (caller, callee) = LocalEndpoint::pair();
                 self.events.push_back(RouterEvent::Connected {
                     line: call.caller,
                     originate: true,
+                    media: MediaEndpoint::new(caller),
                 });
                 self.events.push_back(RouterEvent::Connected {
                     line,
                     originate: false,
+                    media: MediaEndpoint::new(callee),
                 });
             }
             // Answering when nothing is calling gets nothing.
@@ -279,38 +281,5 @@ impl CallRouter for NullSwitch {
     fn poll(&mut self, now_ms: u64) -> Option<RouterEvent> {
         self.timers(now_ms);
         self.events.pop_front()
-    }
-
-    fn receive(&mut self, line: LineId, rx: &mut [u8]) {
-        let frame = self
-            .calls
-            .iter_mut()
-            .filter(|call| call.phase == Phase::Connected)
-            .find_map(|call| {
-                if call.caller == line {
-                    call.frames[1].take()
-                } else if call.callee == Some(line) {
-                    call.frames[0].take()
-                } else {
-                    None
-                }
-            });
-        match frame {
-            Some(frame) if frame.len() == rx.len() => rx.copy_from_slice(&frame),
-            _ => rx.fill(SILENCE_OCTET),
-        }
-    }
-
-    fn send(&mut self, line: LineId, tx: &[u8]) {
-        for call in &mut self.calls {
-            if call.phase != Phase::Connected {
-                continue;
-            }
-            if call.caller == line {
-                call.frames[0] = Some(tx.to_vec());
-            } else if call.callee == Some(line) {
-                call.frames[1] = Some(tx.to_vec());
-            }
-        }
     }
 }

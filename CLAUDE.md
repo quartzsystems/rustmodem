@@ -42,9 +42,11 @@ control the service over a local API; everything is in-house Rust under MIT.
    `BLOCKED(phaseN): reason` or `NEEDS-CODY: reason`. No bare `TODO`, `FIXME`
    or `unimplemented!()`.
 8. **`unsafe`.** `#![forbid(unsafe_code)]` in every crate except `dte/serial`,
-   `service/svc`, `service/pipe` and `ui/win32`, where each `unsafe` block
-   carries a `// SAFETY:` comment. Everything the manager needs from Win32
-   goes through a safe wrapper in `ui/win32`.
+   `service/svc`, `service/pipe`, `service/media` and `ui/win32`, where each
+   `unsafe` block carries a `// SAFETY:` comment. In `service/media` it is
+   in `os.rs` only, for thread priority (MMCSS) and the socket calls `std`
+   cannot make; every other module of the crate forbids it. Everything the
+   manager needs from Win32 goes through a safe wrapper in `ui/win32`.
 9. **Ask, do not guess,** when the handoff is silent on something that changes
    an interface. Record the answer in the phase record.
 

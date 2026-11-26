@@ -15,8 +15,8 @@ use ctlproto::{CallRecord, Event, LineState, LogEvent};
 use engine::{NullConfig, NullEngine};
 use msg::{Message, message};
 use pool::{
-    EventSink, LineId, Now, NullSwitch, Pool, PoolParts, Profile, ProfileStore, SerialFactory,
-    TICK_MS,
+    CallRouter, EngineFactory, EventSink, InlineRunner, LineId, MediaRunner, Now, NullSwitch, Pool,
+    PoolParts, Profile, ProfileStore, SerialFactory, TICK_MS,
 };
 use serial::{MemoryHost, SerialBackend, memory_pair};
 
@@ -151,13 +151,32 @@ impl Harness {
     /// A pool with the given configuration and stored profiles. No host
     /// has opened its port.
     pub fn with_profiles(config: Config, null: NullConfig, profiles: SharedProfiles) -> Harness {
+        Harness::with_parts(
+            config,
+            profiles,
+            Box::new(NullSwitch::new()),
+            Box::new(InlineRunner::new()),
+            Box::new(move |_| Box::new(NullEngine::new(null))),
+        )
+    }
+
+    /// A pool with the given configuration, router, media runner and
+    /// engines. No host has opened its port.
+    pub fn with_parts(
+        config: Config,
+        profiles: SharedProfiles,
+        router: Box<dyn CallRouter>,
+        media: Box<dyn MediaRunner>,
+        engines: EngineFactory,
+    ) -> Harness {
         let ports = Arc::new(Mutex::new(Ports::default()));
         let events = Arc::new(Mutex::new(Vec::new()));
         let call_log = SharedLog::default();
         let pool = Pool::new(PoolParts {
-            router: Box::new(NullSwitch::new()),
+            router,
+            media,
             serial: Box::new(Factory(Arc::clone(&ports))),
-            engines: Box::new(move |_| Box::new(NullEngine::new(null))),
+            engines,
             sink: Box::new(Sink(Arc::clone(&events))),
             profiles: Box::new(profiles.clone()),
             call_log: Some(Box::new(call_log.clone())),

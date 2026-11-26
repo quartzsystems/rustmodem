@@ -18,7 +18,8 @@ use engine::{NullConfig, NullEngine};
 use msg::{Message, message};
 use pipe::{Event, MAX_WAIT_HANDLES, PipeListener, PipeSecurity, wait_any};
 use pool::{
-    EventSink, Now, NullSwitch, Pool, PoolInbox, PoolParts, SerialFactory, TICK_MS, command_channel,
+    EventSink, InlineRunner, Now, NullSwitch, Pool, PoolInbox, PoolParts, SerialFactory, TICK_MS,
+    command_channel,
 };
 use serial::{Com0comBackend, SerialBackend};
 
@@ -183,6 +184,7 @@ fn start_inner(
 
     let mut pool = Pool::new(PoolParts {
         router: Box::new(NullSwitch::new()),
+        media: Box::new(InlineRunner::new()),
         serial: Box::new(Ports),
         engines: Box::new(|_| Box::new(NullEngine::new(NullConfig::default()))),
         sink: Box::new(Sink {

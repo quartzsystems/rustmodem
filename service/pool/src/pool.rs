@@ -13,12 +13,13 @@ use ctlproto::{
     CallEvent, CallRecord, ConnectInfo, Direction, EndReason, Event, LineInfo, LineState, LogEvent,
     LogLevel, Stats,
 };
-use engine::{FRAME_20MS, ModemEvent};
+use engine::ModemEvent;
 use msg::{Message, Severity, message};
 use serial::{ModemSignals, SerialEvent, SerialOperation, WaitHandle};
 
 use crate::handle::Command;
 use crate::line::{ActiveCall, Line, at_config};
+use crate::media::{MediaEndpoint, MediaEvent, MediaRunner};
 use crate::router::{CallRouter, LineDirectory, LineId, RouterEvent};
 use crate::stats::Tallies;
 use crate::{
@@ -45,6 +46,9 @@ const SOURCE: &str = "POOL";
 pub struct PoolParts {
     /// What stands between the lines and the network.
     pub router: Box<dyn CallRouter>,
+    /// Carries the media of connected calls. It has to be one that takes
+    /// the media endpoints the router gives.
+    pub media: Box<dyn MediaRunner>,
     /// Opens the serial ports.
     pub serial: Box<dyn SerialFactory>,
     /// Makes the modem engines.
@@ -61,6 +65,7 @@ pub struct PoolParts {
 pub struct Pool {
     lines: Vec<Line>,
     router: Box<dyn CallRouter>,
+    media: Box<dyn MediaRunner>,
     serial: Box<dyn SerialFactory>,
     engines: EngineFactory,
     sink: Box<dyn EventSink>,
@@ -98,6 +103,7 @@ impl Pool {
         Pool {
             lines: Vec::new(),
             router: parts.router,
+            media: parts.media,
             serial: parts.serial,
             engines: parts.engines,
             sink: parts.sink,
@@ -167,6 +173,9 @@ impl Pool {
     /// applies the signals and publishes the states that have changed.
     fn finish(&mut self) {
         for index in 0..self.lines.len() {
+            // A runner with a clock of its own reports whenever it has
+            // something to say, not only in a tick.
+            self.engine_events(index);
             self.pump(index);
         }
         self.settle();
@@ -178,21 +187,17 @@ impl Pool {
         self.publish_states();
     }
 
-    /// One tick: 20 ms pass for every interpreter, and every engine in a
-    /// call takes and gives 160 octets.
+    /// One tick: 20 ms pass for every interpreter, and for the media of
+    /// every connected call whose runner goes by the pool's clock.
     fn tick(&mut self) {
-        let mut rx = [0u8; FRAME_20MS];
-        let mut tx = [0u8; FRAME_20MS];
         for index in 0..self.lines.len() {
             if !self.lines[index].config.enabled {
                 continue;
             }
             self.step(index, Input::Elapsed(TICK_MS as u32));
-            if self.lines[index].engine_running {
+            if self.lines[index].media.is_some() {
                 let id = self.lines[index].id();
-                self.router.receive(id, &mut rx);
-                self.lines[index].engine.process(&rx, &mut tx);
-                self.router.send(id, &tx);
+                self.media.tick(id);
                 self.engine_events(index);
             }
         }
@@ -254,7 +259,7 @@ impl Pool {
                 Output::DteBytes(bytes) => line.to_host.extend(bytes),
                 Output::LineBytes(bytes) => {
                     // Data has somewhere to go only while the engine runs.
-                    if line.engine_running {
+                    if line.media.is_some() {
                         let count = bytes.len() as u64;
                         line.counters.bytes_tx += count;
                         self.tallies.bytes_out(count);
@@ -379,7 +384,9 @@ impl Pool {
                 self.step(index, Input::Event(LineEvent::RingEnd));
                 self.end_call(index, EndReason::Abandoned);
             }
-            RouterEvent::Connected { originate, .. } => {
+            RouterEvent::Connected {
+                originate, media, ..
+            } => {
                 let line = &mut self.lines[index];
                 line.incoming = false;
                 if !line.interpreter.off_hook() {
@@ -388,12 +395,15 @@ impl Pool {
                     self.router.hangup(self.now.mono_ms, line.config.id);
                     return;
                 }
-                if originate {
-                    line.engine.originate();
-                } else {
-                    line.engine.answer();
+                if !self.start_media(index, media, originate) {
+                    // The runner cannot carry this call: it ends as one
+                    // that could not be set up.
+                    let id = self.lines[index].id();
+                    self.step(index, Input::Event(LineEvent::CarrierLost));
+                    self.end_call(index, EndReason::Failed);
+                    self.router.hangup(self.now.mono_ms, id);
+                    return;
                 }
-                line.engine_running = true;
                 self.engine_events(index);
             }
             RouterEvent::Busy(_) => {
@@ -431,9 +441,44 @@ impl Pool {
         }
     }
 
-    /// Takes what a line's engine has to report.
+    /// Hands a line's engine and the far end of its call to the media
+    /// runner. Returns whether the runner took them.
+    fn start_media(&mut self, index: usize, endpoint: MediaEndpoint, originate: bool) -> bool {
+        // A call that connects on top of one that is connected replaces
+        // it.
+        self.stop_engine(index);
+        let id = self.lines[index].id();
+        let engine = match self.lines[index].engine.take() {
+            Some(engine) => engine,
+            None => (self.engines)(id),
+        };
+        match self.media.start(id, engine, endpoint, originate) {
+            Ok(call) => {
+                self.lines[index].media = Some(call);
+                true
+            }
+            Err(engine) => {
+                self.lines[index].engine = Some(engine);
+                false
+            }
+        }
+    }
+
+    /// Takes what the media of a line's call has to report.
     fn engine_events(&mut self, index: usize) {
-        while let Some(event) = self.lines[index].engine.poll_event() {
+        loop {
+            let Some(call) = &mut self.lines[index].media else {
+                return;
+            };
+            let Some(event) = call.poll_event() else {
+                return;
+            };
+            let event = match event {
+                MediaEvent::Modem(event) => event,
+                // Nothing comes from the far end any more: to the line
+                // that is the carrier lost.
+                MediaEvent::Stalled => ModemEvent::CarrierLost,
+            };
             match event {
                 ModemEvent::Connect(info) => {
                     let connect = ConnectInfo {
@@ -464,10 +509,8 @@ impl Pool {
                 }
                 ModemEvent::CarrierLost => {
                     // The engine has stopped by itself.
-                    let line = &mut self.lines[index];
-                    line.engine_running = false;
-                    line.to_line.clear();
-                    let id = line.id();
+                    self.stop_engine(index);
+                    let id = self.lines[index].id();
                     self.step(index, Input::Event(LineEvent::CarrierLost));
                     self.end_call(index, EndReason::Remote);
                     self.router.hangup(self.now.mono_ms, id);
@@ -479,13 +522,18 @@ impl Pool {
         }
     }
 
+    /// Ends the media of a line's call, if it has any, and takes the
+    /// engine back from the runner.
     fn stop_engine(&mut self, index: usize) {
         let line = &mut self.lines[index];
-        if line.engine_running {
-            line.engine.hangup();
-            line.engine_running = false;
-        }
         line.to_line.clear();
+        let Some(call) = line.media.take() else {
+            return;
+        };
+        let id = line.id();
+        // A runner that lost the engine with whatever ran it gives none
+        // back; the line gets a new one when it next needs it.
+        self.lines[index].engine = self.media.stop(id, call);
     }
 
     // ----------------------------------------------------------------------
@@ -734,16 +782,16 @@ impl Pool {
         }
     }
 
-    /// Moves data between a line's buffers and its engine.
+    /// Moves data between a line's buffers and the media of its call.
     fn pump(&mut self, index: usize) {
-        if !self.lines[index].engine_running {
-            return;
-        }
         // Host to far end.
         let line = &mut self.lines[index];
+        let Some(call) = &mut line.media else {
+            return;
+        };
         while !line.to_line.is_empty() {
             let (front, _) = line.to_line.as_slices();
-            let taken = line.engine.dte_write(front);
+            let taken = call.write(front);
             if taken == 0 {
                 break;
             }
@@ -756,7 +804,10 @@ impl Pool {
             if line.to_host.len() >= HIGH_WATER {
                 break;
             }
-            let count = line.engine.dte_read(&mut buffer);
+            let Some(call) = &mut line.media else {
+                break;
+            };
+            let count = call.read(&mut buffer);
             if count == 0 {
                 break;
             }
@@ -993,6 +1044,7 @@ impl Pool {
             self.take_down(index);
         }
         self.settle();
+        self.router.shutdown(now.mono_ms);
         self.operator_reason = EndReason::Operator;
         if let Some(log) = &mut self.call_log {
             let _ = log.flush();

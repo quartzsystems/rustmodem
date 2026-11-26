@@ -1,0 +1,30 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+[package]
+name = "media"
+description = "Media threads: RTP sockets, the tick-on-receive loop and call capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+engine.workspace = true
+pool.workspace = true
+rtp.workspace = true
+
+[target."cfg(windows)".dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Networking_WinSock",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

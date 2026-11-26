@@ -21,6 +21,7 @@ members = [
     "service/ctlsrv",
     "service/pipe",
     "service/pool",
+    "service/media",
     "service/telephony",
     "service/svc",
     # UI: the manager.
@@ -52,6 +53,8 @@ toml_edit = "0.25.21"
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 windows = "0.62.2"
 windows-service = "0.8.1"
+# The lock-free rings between the pool and the media of a call.
+rtrb = "0.4.1"
 # Digest authentication in voip/sip.
 md-5 = "0.11.0"
 sha2 = "0.11.2"
@@ -62,6 +65,7 @@ png = "0.18.1"
 engine = { path = "modem/engine" }
 at = { path = "dte/at" }
 serial = { path = "dte/serial" }
+rtp = { path = "voip/rtp" }
 msg = { path = "service/msg" }
 config = { path = "service/config" }
 ctlproto = { path = "service/ctlproto" }

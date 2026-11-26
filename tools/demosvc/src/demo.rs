@@ -15,8 +15,8 @@ use ctlsrv::{Clock, Hub, Limits, Listener, Server, ServerParts};
 use msg::{Message, Severity, message};
 use pipe::{Event, PipeListener, PipeSecurity};
 use pool::{
-    EventSink, MemoryProfiles, Now, NullSwitch, Pool, PoolHandle, PoolInbox, PoolParts, TICK_MS,
-    command_channel,
+    EventSink, InlineRunner, MemoryProfiles, Now, NullSwitch, Pool, PoolHandle, PoolInbox,
+    PoolParts, TICK_MS, command_channel,
 };
 
 use crate::args::{Options, Script};
@@ -115,6 +115,7 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
     let negotiation = Arc::new(Mutex::new(Negotiation::default()));
     let mut pool = Pool::new(PoolParts {
         router: Box::new(NullSwitch::new()),
+        media: Box::new(InlineRunner::new()),
         serial: hosts.factory(),
         engines: Box::new(move |_| Box::new(DemoEngine::new(Arc::clone(&negotiation)))),
         sink: Box::new(Sink(hub.clone())),

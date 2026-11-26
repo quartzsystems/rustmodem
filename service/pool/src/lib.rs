@@ -7,8 +7,13 @@
 //! A [`Pool`] owns the lines. Each line joins one AT interpreter, one modem
 //! engine and one serial port. The pool is driven from one thread: every
 //! call to [`Pool::service`] reads the serial ports, steps the
-//! interpreters, carries out what they ask for, ticks the engines of lines
-//! in a call, moves data and applies the signals.
+//! interpreters, carries out what they ask for, moves data and applies the
+//! signals.
+//!
+//! The pool does not touch audio. The engine of a line in a connected call
+//! is with a [`MediaRunner`], which ticks it against the far end the
+//! router handed over, and the pool exchanges data and events with it
+//! through a [`MediaCall`].
 //!
 //! The pool reads no clock and opens no files. The caller gives it the time
 //! ([`Now`]), the serial ports ([`SerialFactory`]), somewhere to send
@@ -20,6 +25,7 @@
 
 mod handle;
 mod line;
+mod media;
 mod pool;
 mod router;
 mod stats;
@@ -34,15 +40,20 @@ use serial::SerialBackend;
 
 pub use at::Profile;
 pub use handle::{Command, PoolHandle, PoolInbox, command_channel};
+pub use media::{
+    EVENT_QUEUE, InlineRunner, LocalEndpoint, LocalLink, MediaCall, MediaEndpoint, MediaEvent,
+    MediaPort, MediaRunner, MediaShared, MediaStats, RING_BYTES, media_pair,
+};
 pub use pool::{Pool, PoolParts};
 pub use router::{
     CallRouter, LineDirectory, LineId, NullSwitch, RING_OFF_MS, RING_ON_MS, RouterEvent,
     UNOBTAINABLE_DELAY_MS,
 };
 
-/// How often the engines are ticked, in milliseconds.
-/// BLOCKED(phase2): ticks move from this timer to RTP packet arrival on
-/// media threads.
+/// The pool's clock, in milliseconds: how often the interpreters' timers
+/// are run, and how often [`InlineRunner`] ticks the engines of the calls
+/// it carries. A media runner with a clock of its own, the RTP packets of
+/// the far end, does not go by this.
 pub const TICK_MS: u64 = 20;
 
 /// How long the pool waits before trying again to open a serial port that
