@@ -7,11 +7,11 @@
 
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use msg::{Message, message};
-use pipe::Event;
+use svc::shutdown;
 use windows_service::service::{
     ServiceAccess, ServiceControl, ServiceControlAccept, ServiceErrorControl, ServiceExitCode,
     ServiceInfo, ServiceStartType, ServiceState, ServiceStatus, ServiceType,
@@ -69,11 +69,13 @@ fn service_main(_start_parameters: Vec<OsString>) {
 }
 
 fn serve() -> windows_service::Result<()> {
-    let stop = Arc::new(Event::new().map_err(windows_service::Error::Winapi)?);
-    let handler_stop = Arc::clone(&stop);
+    // The runtime is built here, on the thread the service control
+    // manager started the service on, which then waits on it.
+    let runtime = svc::runtime::build().map_err(windows_service::Error::Winapi)?;
+    let (handler_stop, mut stopping) = shutdown::channel();
     let status = service_control_handler::register(SERVICE_NAME, move |control| match control {
         ServiceControl::Stop | ServiceControl::Shutdown => {
-            handler_stop.set();
+            handler_stop.trigger();
             ServiceControlHandlerResult::NoError
         }
         ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
@@ -101,10 +103,10 @@ fn serve() -> windows_service::Result<()> {
 
     report(ServiceState::StartPending, ServiceExitCode::Win32(0))?;
     let config = CONFIG.get().cloned().flatten();
-    match runner::start(config, RunMode::Service, Arc::clone(&stop)) {
+    match runner::start(config, RunMode::Service) {
         Ok(running) => {
             report(ServiceState::Running, ServiceExitCode::Win32(0))?;
-            stop.wait_forever();
+            runtime.block_on(stopping.wait());
             report(ServiceState::StopPending, ServiceExitCode::Win32(0))?;
             running.stop();
             report(ServiceState::Stopped, ServiceExitCode::Win32(0))

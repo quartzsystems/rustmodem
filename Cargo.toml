@@ -61,6 +61,17 @@ getrandom = "0.4.3"
 # Digest authentication in voip/sip.
 md-5 = "0.11.0"
 sha2 = "0.11.2"
+# The runtime of the service's I/O shell: the control server, the named
+# pipe, the SIP socket and the pool's task. Never a dependency of a pure
+# crate or of a media thread; docs/RUNTIME.md says where it may be.
+tokio = { version = "1.54.1", default-features = false, features = [
+    "rt-multi-thread",
+    "net",
+    "time",
+    "sync",
+    "macros",
+    "io-util",
+] }
 # For the screenshot tests of the manager, which read their goldens.
 png = "0.18.1"
 

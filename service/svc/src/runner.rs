@@ -101,18 +101,14 @@ pub struct Running {
     logger: Logger,
 }
 
-/// Starts the service. `stop` is the signal that will end it; the caller
-/// sets it and then calls [`Running::stop`].
+/// Starts the service. The caller waits for the signal that ends it and
+/// then calls [`Running::stop`].
 ///
 /// A configuration that cannot be used is reported as `RMD` messages to the
 /// log, to the Event Log in service mode, and to the caller, who in console
 /// mode prints them to standard error.
-pub fn start(
-    config_path: Option<PathBuf>,
-    mode: RunMode,
-    stop: Arc<Event>,
-) -> Result<Running, Vec<Message>> {
-    start_inner(config_path, mode, stop).inspect_err(|problems| {
+pub fn start(config_path: Option<PathBuf>, mode: RunMode) -> Result<Running, Vec<Message>> {
+    start_inner(config_path, mode).inspect_err(|problems| {
         // The log directory comes from the configuration, which may be
         // what is wrong; the default one is the best place left.
         let fallback = Logger::open(
@@ -134,11 +130,7 @@ pub fn start(
     })
 }
 
-fn start_inner(
-    config_path: Option<PathBuf>,
-    mode: RunMode,
-    stop: Arc<Event>,
-) -> Result<Running, Vec<Message>> {
+fn start_inner(config_path: Option<PathBuf>, mode: RunMode) -> Result<Running, Vec<Message>> {
     let console = mode == RunMode::Console;
     let config_path = config_path.unwrap_or_else(config::default_path);
     let file = ConfigFile::load(&config_path)?;
@@ -179,6 +171,8 @@ fn start_inner(
         logger.message(SOURCE, problem);
     }
 
+    // What stops the threads of the service: `Running::stop` sets it.
+    let stop = Arc::new(Event::new().map_err(|e| fail(message("RMD0003", &[&e.to_string()])))?);
     let listener = PipeListener::bind(
         &config.control.pipe,
         PipeSecurity::AdministratorsOnly,

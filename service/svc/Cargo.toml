@@ -22,6 +22,7 @@ pipe.workspace = true
 pool.workspace = true
 serial.workspace = true
 telephony.workspace = true
+tokio.workspace = true
 toml_edit.workspace = true
 
 [build-dependencies]
@@ -39,6 +40,10 @@ windows = { workspace = true, features = [
 
 [lints]
 workspace = true
+
+[lib]
+name = "svc"
+path = "src/lib.rs"
 
 [[bin]]
 name = "rustmodem-svc"

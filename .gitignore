@@ -4,3 +4,4 @@
 /tools/fuzz/artifacts/
 /tools/fuzz/coverage/
 *.log
+/refs/itu/

@@ -6,21 +6,21 @@
 //! output, stopped by Ctrl+C.
 
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use msg::{Message, message};
+use svc::shutdown::{self, Shutdown};
 use windows::Win32::System::Console::SetConsoleCtrlHandler;
 use windows::core::BOOL;
 
 use crate::runner::{self, RunMode};
-use pipe::Event;
 
-/// Set by the console control handler to ask the service to stop.
-static STOP: OnceLock<Arc<Event>> = OnceLock::new();
+/// What the console control handler asks the service to stop with.
+static STOP: OnceLock<Shutdown> = OnceLock::new();
 
 /// Set by the main thread when the service has stopped.
-static DONE: OnceLock<Arc<Event>> = OnceLock::new();
+static DONE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
 
 /// How long the handler waits for the service to stop. Windows ends the
 /// process when the handler for a console close returns, so the handler
@@ -31,36 +31,33 @@ const STOP_WAIT: Duration = Duration::from_secs(10);
 /// console closing.
 unsafe extern "system" fn on_console_control(_kind: u32) -> BOOL {
     if let Some(stop) = STOP.get() {
-        stop.set();
+        stop.trigger();
     }
-    if let Some(done) = DONE.get() {
-        done.wait(STOP_WAIT);
-    }
+    let (done, changed) = &DONE;
+    let guard = done.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = changed.wait_timeout_while(guard, STOP_WAIT, |done| !*done);
     // Handled: Windows should not also end the process itself.
     true.into()
 }
 
 /// Runs the service in the foreground until Ctrl+C.
 pub fn run(config: Option<PathBuf>) -> Result<(), Vec<Message>> {
-    let event = || {
-        Event::new()
-            .map(Arc::new)
-            .map_err(|e| vec![message("RMD0023", &[&e.to_string()])])
-    };
-    let stop = event()?;
-    let done = event()?;
-    // These are set once per process; console mode runs once.
-    let _ = STOP.set(Arc::clone(&stop));
-    let _ = DONE.set(Arc::clone(&done));
+    let runtime = svc::runtime::build().map_err(|e| vec![message("RMD0003", &[&e.to_string()])])?;
+    let (shutdown, mut stopping) = shutdown::channel();
+    // This is set once per process; console mode runs once.
+    let _ = STOP.set(shutdown);
     // SAFETY: the handler is a function that lives for the whole program
-    // and touches only the two events above, which are never freed.
+    // and touches only the two statics above, which are never freed.
     unsafe { SetConsoleCtrlHandler(Some(on_console_control), true) }
         .map_err(|e| vec![message("RMD0023", &[&e.message()])])?;
 
-    let outcome = runner::start(config, RunMode::Console, Arc::clone(&stop)).map(|running| {
-        stop.wait_forever();
+    let outcome = runner::start(config, RunMode::Console).map(|running| {
+        runtime.block_on(stopping.wait());
         running.stop();
     });
-    done.set();
+    drop(runtime);
+    let (done, changed) = &DONE;
+    *done.lock().unwrap_or_else(|e| e.into_inner()) = true;
+    changed.notify_all();
     outcome
 }
