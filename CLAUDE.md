@@ -45,10 +45,36 @@ control the service over a local API; everything is in-house Rust under MIT.
    `service/svc`, `service/pipe`, `service/media` and `ui/win32`, where each
    `unsafe` block carries a `// SAFETY:` comment. In `service/media` it is
    in `os.rs` only, for thread priority (MMCSS) and the socket calls `std`
-   cannot make; every other module of the crate forbids it. Everything the
-   manager needs from Win32 goes through a safe wrapper in `ui/win32`.
+   cannot make; every other module of the crate forbids it. In
+   `service/svc` it is in the program only: the library, which is the
+   runner, forbids it. Everything the manager needs from Win32 goes through
+   a safe wrapper in `ui/win32`.
 9. **Ask, do not guess,** when the handoff is silent on something that changes
    an interface. Record the answer in the phase record.
+10. **Tokio lives in the I/O shell of the service.** A pure crate or a media
+    thread that gains a Tokio dependency is a defect; `ci/pure.sh` fails the
+    build on one. `docs/RUNTIME.md` has the model, and the rule for adding
+    I/O.
+
+    Where Tokio is used:
+
+    | Place | Use |
+    |---|---|
+    | `service/svc` | Owns the runtime. The pool's task, the serial bridge, the control listener, the SIP socket's task, the binding refresh, shutdown |
+    | `service/ctlsrv` | The control server: a reading task and a writing task for each client |
+    | `service/pipe`, feature `server` | The named pipe server on `tokio::net::windows::named_pipe` |
+    | `tools/demosvc` | The same runner as the service |
+
+    Where Tokio is not used, and must not appear as a dependency:
+
+    | Place | Why |
+    |---|---|
+    | `dte/at`, `modem/engine`, `service/msg`, `service/config`, `service/ctlproto`, `service/pool`, `voip/sdp`, `voip/rtp`, `voip/sip`, `service/telephony`, `ui/model`, `ui/glyph` | Pure state machines given bytes and a time. They stay that way: it is what makes them testable on Linux with a mock clock |
+    | Media threads in `service/media` | Real-time. A dedicated OS thread for each call, with nothing on the tick path that can allocate, lock or yield to a scheduler |
+    | Serial port I/O in `dte/serial` | Overlapped I/O on COM handles has no Tokio reactor. Each port keeps a thread and talks to the pool's task through channels |
+    | The capture writer | It has its own thread fed by a ring |
+    | `ui/manager`, `ui/win32`, `tools/ctl` | A Win32 message loop and a command-line client. They keep the blocking pipe client |
+    | `tools/sippeer` | The test peer keeps its own sockets and clock |
 
 Every user-visible error is an `RMD` message from `service/msg`. No free-text
 error strings cross a crate boundary to the user. The manager shows a message
@@ -75,13 +101,17 @@ voip/sip            SIP messages, transactions, dialogs, digest, registration
 service/msg         RMD message catalogue
 service/config      TOML schema, validation, write-back
 service/ctlproto    control API message types
-service/ctlsrv      control API server
-service/pipe        named pipe transport: listener and client
+service/ctlsrv      control API server, on Tokio
+service/pipe        named pipe transport: the listener, on Tokio and behind
+                    the `server` feature, and the blocking client
 service/pool        lines, line state machine, the media seam, null switch,
                     statistics
 service/media       media threads: RTP sockets, the tick loop, call capture
 service/telephony   the SIP call router: trunk, registrations, hunt groups
-service/svc         rustmodem-svc.exe
+                    (pure, sans-I/O)
+service/svc         rustmodem-svc.exe, and as a library the runner: the
+                    runtime, the pool's task, the serial bridge, the SIP
+                    socket
 ui/model            the manager's data model (pure)
 ui/glyph            icons drawn in code; .ico and .res writers (pure)
 ui/win32            safe wrappers over the Win32 controls the manager uses
@@ -97,11 +127,17 @@ Pure crates (no OS calls, must pass on Linux): `engine`, `at`, `sdp`, `rtp`,
 `sip`, `msg`, `config`, `ctlproto`, `pool`, `glyph`, `model`, and the trait
 and memory backend of `serial`. `media`, `telephony` and `sippeer` use
 sockets and threads and nothing of Windows that has no counterpart: they
-build and pass on Linux too, and CI runs them there.
+build and pass on Linux too, and CI runs them there. `ctlsrv` and the
+library of `svc` are not pure, being on Tokio, but need nothing of Windows:
+CI lints and tests them on Linux as well. The program of `svc` is for
+Windows only.
 
 The `voip` crates and the router are sans-I/O: they are given bytes and the
-time and give back bytes, timers and events. No async runtime anywhere:
-threads and wait handles. No SIP, SDP or RTP crate: these are in-house.
+time and give back bytes, timers and events. The one async runtime is
+Tokio, in the service's I/O shell and nowhere else (rule 10): the pool is
+owned by one task, every serial port and every call has a thread, and
+`docs/RUNTIME.md` says what runs where. No SIP, SDP or RTP crate: these
+are in-house.
 
 The media path is sample-exact, and that is the property to keep: for every
 10 ms frame a call delivers to its modem, exactly one frame is sent back,
@@ -123,7 +159,9 @@ is captured and checked, and `docs/GATEWAYS.md` what to set on a gateway.
 | 9 | Extensions |
 
 The record of each phase is in `docs/`: `docs/PHASE0.md`, `docs/PHASE1.md`,
-`docs/PHASE2.md`. Phases 0, 1 and 2 are built.
+`docs/PHASE2.md`. Phases 0, 1 and 2 are built. After phase 2 the service's
+control plane was moved onto Tokio (0.0.4); `docs/RUNTIME.md` is the
+runtime model and the record of that.
 
 ## Running the manager
 
@@ -150,6 +188,7 @@ Run all of these before every commit:
 ```
 bash ci/headers.sh
 bash ci/version.sh
+bash ci/pure.sh
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo deny check
@@ -163,17 +202,22 @@ The pure crates on Linux (CI does this; WSL works locally):
 cargo fmt --check
 cargo clippy -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p glyph -p model --all-targets -- -D warnings
 cargo test -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p glyph -p model
+cargo clippy -p ctlsrv --all-targets -- -D warnings
+cargo clippy -p svc --lib --test '*' -- -D warnings
+cargo test -p ctlsrv
+cargo test -p svc --lib --test '*'
 ```
 
 Run that job whole before a push, not the tests alone: code that is dead on
 Linux only fails its clippy and nothing else. The list is `PURE` in
-`.github/workflows/ci.yml`.
+`.github/workflows/ci.yml`, and the last four lines are the steps after it
+there: the control server and the runner.
 
 `cargo test --workspace` opens the manager's window many times over: its
 tests run it against the demo service on the desktop of whoever runs them.
 Two tests take a minute each: the manager's smoke test, and the soak test
 (`service/svc/tests/soak.rs`), which holds 24 calls over SIP and RTP
-on loopback and fails on one packet lost. `RM_SOAK_MINUTES=10` makes the
+on loopback, on the service's own runner, and fails on one packet lost. `RM_SOAK_MINUTES=10` makes the
 soak ten minutes, and `RM_CAPTURE_MINUTES=10` does the same for the
 captured calls of `service/svc/tests/peer.rs`.
 

@@ -21,6 +21,12 @@ and carries the operator's actions, the SIP ones among them. See
 [docs/PHASE0.md](docs/PHASE0.md), [docs/PHASE1.md](docs/PHASE1.md) and
 [docs/PHASE2.md](docs/PHASE2.md).
 
+The service's control plane runs on Tokio: the pool on one task, the
+control server, the named pipe and the SIP socket beside it. Each serial
+port and each call has a thread of its own, and the audio path has no
+runtime in it at all. [docs/RUNTIME.md](docs/RUNTIME.md) says what runs
+where.
+
 ## Layout
 
 | Folder | Contents |
@@ -28,11 +34,11 @@ and carries the operator's actions, the SIP ones among them. See
 | `modem/` | The modem engine trait, the null engine and the echo engine |
 | `dte/` | The AT command interpreter and the serial backends |
 | `voip/` | SDP, RTP and SIP, written in-house and free of I/O |
-| `service/` | Messages, configuration, control API, the pool, the media threads, the SIP router and the service |
+| `service/` | Messages, configuration, control API, the pool, the media threads, the SIP router, and the service with its runner |
 | `ui/` | The manager: its data model, its icons, the Win32 wrappers and the window |
 | `tools/` | `rustmodemctl`, the demo service, the test SIP peer and the fuzz targets |
-| `docs/` | Architecture, the AT command set, the control API, telephony, call capture, gateways, com0com set-up |
-| `ci/` | The licence header and version checks |
+| `docs/` | Architecture, the runtime model, the AT command set, the control API, telephony, call capture, gateways, com0com set-up |
+| `ci/` | The licence header and version checks, and the check that Tokio stays out of the pure crates |
 
 ## Building
 

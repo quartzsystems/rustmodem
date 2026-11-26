@@ -340,7 +340,9 @@ These need an elevated prompt. Criterion 5 also needs com0com.
   `--uninstall`, start and stop as a service, the Event Log) are built and
   compile but were not run: they need an elevated prompt. Console mode was run
   end to end by the tests, including a clean stop on Ctrl+Break.
-- The pool waits on at most 63 port handles between ticks. With more lines
-  than that, the remaining ports are served at the next 20 ms tick.
+- ~~The pool waits on at most 63 port handles between ticks. With more
+  lines than that, the remaining ports are served at the next 20 ms tick.~~
+  Gone since 0.0.4: each port has a thread of its own. See
+  [RUNTIME.md](RUNTIME.md).
 - The null engine carries about 8000 bytes a second. It is a stand-in, not a
   modem.

@@ -256,20 +256,22 @@ impl Observer for Watcher {
 
 /// The SIP listener, bound before the configuration is written, so that
 /// the configuration can say where it is. It is bound on the runtime its
-/// task is to run on.
-pub fn listen() -> Result<SipSocket, Message> {
+/// task is to run on, and `waker` wakes the pool's task for each datagram.
+pub fn listen(waker: svc::sipsock::Waker) -> Result<SipSocket, Message> {
     let any = loopback(0);
-    SipSocket::bind(any, Arc::new(|| {}))
+    SipSocket::bind(any, waker)
         .map_err(|error| message("RMD5002", &[&any.to_string(), &error.to_string()]))
 }
 
 /// The router and the media runner that carries its calls.
 pub type Parts = (Box<dyn CallRouter>, Box<dyn MediaRunner>);
 
-/// The router on `transport` and the media runner, for a pool.
+/// The router on `transport` and the media runner, for a pool. The media
+/// threads tell the pool's task of their events with `media_waker`.
 pub fn start(
     config: &Config,
     transport: SipSocket,
+    media_waker: media::Waker,
     directory: &Path,
     hub: &Hub,
     clock: &Clock,
@@ -297,8 +299,8 @@ pub fn start(
         }),
     )
     .map_err(failed)?;
-    let runner = ThreadedRunner::with_capture(config.lines.len(), Arc::new(|| true), writer)
-        .map_err(failed)?;
+    let runner =
+        ThreadedRunner::with_capture(config.lines.len(), media_waker, writer).map_err(failed)?;
     let router = SipRouter::new(RouterParts {
         settings: Settings::new(config, crate::VERSION),
         transport: Box::new(transport),

@@ -14,6 +14,19 @@ they are a checklist at the end. Nothing of the manual seven has been done:
 the service has never met a SIP device that is not its own test peer, and
 has never sent a packet off the loopback interface.
 
+## Runtime retrofit
+
+After this phase the service's control plane was moved onto Tokio, as its
+own piece of work, in 0.0.4. Nothing this record says the service does
+changed; what it says about threads did. The pool is on a task, not a
+thread; each serial port has a thread; the SIP socket is read by a task in
+`service/svc`, and `telephony`'s `UdpTransport` is gone; a media thread
+wakes the pool's task through a channel, not a Win32 event. The four test
+files that need a socket, `soak.rs`, `transparency.rs`, `udp.rs` and
+`peer.rs`, are in `service/svc/tests/` now, and the commands below that run
+them say `-p svc`. [RUNTIME.md](RUNTIME.md) has the runtime model and the
+record of the change.
+
 ## What needs Cody
 
 | Item | Where | What to do |
@@ -361,7 +374,7 @@ Phase 2 adds four crates, all of them the handoff's list, and nothing else.
 Criterion 12 was also run against the test peer, which is not what it asks
 for but is what could be done without a gateway: a ten-minute call to an
 echo line with capture on, checked as `rustmodemctl capture check` checks
-it (`RM_CAPTURE_MINUTES=10 cargo test -p telephony --test peer a_clean_call`).
+it (`RM_CAPTURE_MINUTES=10 cargo test -p svc --test peer a_clean_call`).
 
 | Packet time | Received | Sent | Lost | Resync | Slips | Largest gap |
 |---|---|---|---|---|---|---|
@@ -481,7 +494,7 @@ target = "group:dialup"
 
   ```
   set RM_SOAK_MINUTES=10
-  cargo test --release -p telephony --test soak -- --nocapture
+  cargo test --release -p svc --test soak -- --nocapture
   ```
 
 - [ ] It passes, and the line it prints has the tick times: record the

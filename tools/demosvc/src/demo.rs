@@ -3,22 +3,29 @@
 // root directory of this project.
 
 //! Putting the demo service together and running it.
+//!
+//! The demo service runs on the service's own runner: the pool on its
+//! task, the control server on the runtime, a thread for each port, and
+//! with the `sip` script the SIP socket on its task and a media thread
+//! for each call. What it adds is who plays the hosts and the callers.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use config::{Config, ConfigFile, ControlConfig, LineConfig};
 use ctlproto::{Event as ControlEvent, LogEvent, LogLevel, ServiceMode};
-use ctlsrv::{Clock, Hub, Limits, PoolLink, PoolRequests, Server, ServerParts};
+use ctlsrv::{Clock, Hub, Limits, PoolLink, Server, ServerParts};
 use msg::{Message, Severity, message};
 use pipe::{PipeListener, PipeSecurity};
 use pool::{
     CallRouter, EngineFactory, EventSink, InlineRunner, MediaRunner, MemoryProfiles, Now,
-    NullSwitch, Pool, PoolParts, TICK_MS,
+    NullSwitch, Pool, PoolParts,
 };
-use tokio::sync::mpsc::error::TryRecvError;
+use svc::bridge::BridgedPorts;
+use svc::pooltask::{LINGER, PoolClock, PoolTask};
+use tokio::sync::Notify;
 
 use crate::args::{Options, Script};
 use crate::busy::{Driver, STEP_MS};
@@ -35,9 +42,6 @@ const CONTROL_SOURCE: &str = "CTL";
 /// The name of the configuration file the demo service makes for itself.
 const CONFIG_FILE: &str = "rustmodem-demo.toml";
 
-/// How long the pool's thread sleeps between turns of its loop.
-const POOL_SLEEP: Duration = Duration::from_millis(5);
-
 /// Everything the pool publishes goes to the control clients, log lines
 /// and all: the demo service keeps no log file.
 struct Sink(Hub);
@@ -46,12 +50,6 @@ impl EventSink for Sink {
     fn publish(&mut self, event: ControlEvent) {
         self.0.publish(&event);
     }
-}
-
-fn unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis() as u64)
 }
 
 /// The directory the demo service keeps its configuration file in. Each
@@ -109,11 +107,16 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
     // service's do, and are made on it.
     let runtime = svc::runtime::build().map_err(|e| one(message("RMD0003", &[&e.to_string()])))?;
     let _on_runtime = runtime.enter();
+    // What wakes the pool's task: the SIP socket and the ports' threads
+    // through one notification, the media threads through their channel.
+    let wake = Arc::new(Notify::new());
+    let (media_waker, media_events) = svc::mediawake::channel();
     // The `sip` script binds its sockets first: the configuration says
     // where they are.
     let mut far_end = None;
     if options.script == Script::Sip {
-        let transport = sip::listen().map_err(one)?;
+        let sip_wake = Arc::clone(&wake);
+        let transport = sip::listen(Arc::new(move || sip_wake.notify_one())).map_err(one)?;
         let callers = sip::Callers::bind(options.lines)
             .map_err(|e| one(message("RMD0003", &[&e.to_string()])))?;
         sip::configure(&mut config, transport.local(), callers.peer());
@@ -139,22 +142,27 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
         ctlsrv::system_clock()
     };
     let started_ms = clock();
+    let unix_clock = Arc::clone(&clock);
 
     // Over SIP the lines run the engines their configuration names, on
     // the media threads; otherwise they run the demo engine, which shows
     // the rates and protocols of later phases, on the pool's clock.
     let sip_on = far_end.is_some();
     let mut callers = None;
+    let mut media_events = Some(media_events);
     let (router, media, engines): (Box<dyn CallRouter>, Box<dyn MediaRunner>, EngineFactory) =
         match far_end {
             Some((transport, far_end)) => {
                 let service = transport.local();
                 let (router, media) =
-                    sip::start(&config, transport, &directory, &hub, &clock).map_err(one)?;
+                    sip::start(&config, transport, media_waker, &directory, &hub, &clock)
+                        .map_err(one)?;
                 callers = Some((far_end, service));
                 (router, media, Box::new(pool::engine_for))
             }
             None => {
+                // No call has a thread: there are no events to wait for.
+                media_events = None;
                 let negotiation = Arc::new(Mutex::new(Negotiation::default()));
                 (
                     Box::new(NullSwitch::new()),
@@ -166,7 +174,15 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
     let mut pool = Pool::new(PoolParts {
         router,
         media,
-        serial: hosts.factory(),
+        // Each port has a thread, as in the service. The frozen script
+        // is the exception: it plays its calls by stepping the pool and
+        // the hosts by hand, one after the other, so that every run comes
+        // out the same, and its ports are read by the pool directly.
+        serial: if frozen {
+            hosts.factory()
+        } else {
+            Box::new(BridgedPorts::new(hosts.factory(), Arc::clone(&wake)))
+        },
         engines,
         sink: Box::new(Sink(hub.clone())),
         profiles: Box::new(MemoryProfiles::new()),
@@ -252,13 +268,34 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
             .filter_map(|port| Some((port.name.clone(), port.binding()?)))
             .collect(),
     );
-    let frozen_at = frozen.then(|| frozen::play(&mut pool, &hosts, options.lines, &frozen_clock));
+    // With the frozen script the pool is served at one time for ever:
+    // what the operator asks for is done, and nothing moves on by itself.
+    let pool_clock = if frozen {
+        PoolClock::Frozen(frozen::play(
+            &mut pool,
+            &hosts,
+            options.lines,
+            &frozen_clock,
+        ))
+    } else {
+        PoolClock::Running(unix_clock)
+    };
+    // Nothing stops the demo service but the end of its process; the
+    // signal is kept so that its tasks do not take its absence for one.
+    let (_shutdown, stopping) = svc::shutdown::channel();
+    runtime.spawn(
+        PoolTask {
+            pool,
+            requests,
+            wake,
+            media_events,
+            clock: pool_clock,
+            linger: LINGER,
+        }
+        .run(stopping),
+    );
 
     let spawn_failed = |e: std::io::Error| one(message("RMD0003", &[&e.to_string()]));
-    std::thread::Builder::new()
-        .name("pool".to_string())
-        .spawn(move || run_pool(pool, requests, frozen_at))
-        .map_err(spawn_failed)?;
     if !frozen {
         let active = options.script == Script::Busy;
         std::thread::Builder::new()
@@ -284,29 +321,6 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
     runtime
         .block_on(server.serve(&mut listener, ctlsrv::never_stops()))
         .map_err(|error| one(message("RMD2007", &[listener.name(), &error.to_string()])))
-}
-
-/// The pool's thread. With `frozen_at` the pool is served at that one
-/// time for ever: what the operator asks for is done, and nothing moves on
-/// by itself.
-fn run_pool(mut pool: Pool, mut requests: PoolRequests, frozen_at: Option<Now>) {
-    let started = Instant::now();
-    loop {
-        loop {
-            match requests.try_recv() {
-                Ok(request) => request.run(&mut pool),
-                Err(TryRecvError::Empty) => break,
-                // Nothing can ask anything of the pool any more.
-                Err(TryRecvError::Disconnected) => return,
-            }
-        }
-        let now = frozen_at.unwrap_or_else(|| Now {
-            mono_ms: started.elapsed().as_millis() as u64,
-            unix_ms: unix_ms(),
-        });
-        pool.service(now);
-        std::thread::sleep(POOL_SLEEP.min(Duration::from_millis(TICK_MS)));
-    }
 }
 
 /// The thread that plays the hosts.

@@ -3,6 +3,46 @@
 All notable changes to rustmodem are recorded here. Versions follow the
 `VERSION` file.
 
+## 0.0.4 (runtime retrofit)
+
+The service's control plane runs on Tokio. Nothing the service does has
+changed: no control API message, no file format, no AT command. A
+`rustmodemctl` or a manager of 0.0.3 works against a service of 0.0.4. The
+runtime model and the record of the change are in
+[docs/RUNTIME.md](docs/RUNTIME.md).
+
+- **One runtime.** Two worker threads, `rm-ctl-0` and `rm-ctl-1`. The pool
+  is owned by one task, which sleeps until the pool's next deadline and
+  wakes for whatever arrives. Stopping is one channel that Ctrl+C,
+  Ctrl+Break and the service's stop control all send on.
+- **No limit on lines from wait handles.** Each serial port has a thread of
+  its own, which talks to the pool's task through channels. The pool no
+  longer waits on its ports' handles, of which one wait took 64: with more
+  than 63 lines, the ports past the 63rd were served only at the 20 ms
+  tick.
+- **Control server.** A reading task and a writing task for each client,
+  in place of two threads. The named pipe is Tokio's, with the same
+  security, and still refuses remote clients. The queue of a client that
+  does not keep up is as it was.
+- **SIP socket.** Read by a task, in `service/svc`. `service/telephony` has
+  no socket in it and no runtime.
+- **Media threads.** Unchanged, and without Tokio. They tell the pool of an
+  event through a channel they never wait on, and the pool looks for the
+  data of the calls every 10 ms while a call is up, where it looked every
+  20 ms.
+- **Clients.** `rustmodemctl` and the manager are as they were, on the
+  blocking pipe client, and do not depend on Tokio.
+- **Checks.** `ci/pure.sh` fails the build if Tokio is in the dependency
+  graph of a pure crate, of the media threads or of the manager. The Linux
+  job also lints and tests the control server and the service's runner.
+- **Tests.** A hundred lines at once; a control client that does not read
+  cannot delay the pool; the stop signal ends every task and thread with a
+  call up and a line registered. The soak runs on the service's own runner.
+
+A port's write that fails is now reported as `RMD3005` where it was
+`RMD3003` or `RMD3004`: see "Where the build differs" in
+[docs/RUNTIME.md](docs/RUNTIME.md).
+
 ## 0.0.3 (phase 2: telephony)
 
 Real telephone calls reach the lines, over SIP and RTP written in-house.

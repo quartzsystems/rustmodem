@@ -27,6 +27,11 @@ jobs:
         run: ci/version.sh
       - name: Format
         run: cargo fmt --check
+      # Tokio is the runtime of the service's I/O shell and of nothing
+      # else: docs/RUNTIME.md.
+      - name: No Tokio in the pure crates
+        shell: bash
+        run: ci/pure.sh
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Install cargo-deny

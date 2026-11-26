@@ -6,14 +6,17 @@
 //!
 //! `rustmodem-svc.exe` owns the lines. It runs as the Windows service
 //! `rustmodem`, or in the foreground with `--console`. Either way it reads
-//! the configuration, opens each line's serial port, runs the pool on one
-//! thread and serves the control API on a named pipe.
+//! the configuration, builds the Tokio runtime, runs the pool on a task of
+//! it with a thread for each line's serial port, and serves the control
+//! API on a named pipe.
 //!
-//! This crate is where the operating system is: the service control
-//! manager, the event log, the console, the registry and the wait on the
-//! serial ports. The named pipe is in the `pipe` crate, which the demo
-//! service and the manager share. This is one of the crates that may use
-//! `unsafe`; every use is a Win32 call and says why it is sound.
+//! This program is where the operating system is: the service control
+//! manager, the event log, the console and the registry. The runner it
+//! starts, which the demo service starts too, is the library of this
+//! crate; `docs/RUNTIME.md` says what runs where. The named pipe is in the
+//! `pipe` crate, which the demo service and the manager share. This is one
+//! of the crates that may use `unsafe`; every use is a Win32 call and says
+//! why it is sound, and the library has none.
 
 #![deny(unsafe_code)]
 
