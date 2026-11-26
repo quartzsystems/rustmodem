@@ -241,3 +241,59 @@ fn a_reset_drops_the_character_in_progress() {
         Framed::default()
     );
 }
+
+#[test]
+fn noise_cannot_make_the_bits_come_faster_than_the_line_rate() {
+    // Lines that change at random, slowly and quickly, and a line that
+    // falls to space for a sample over and over, which is as many false
+    // starts as there can be.
+    let mut state = 0x2545_F491_4F6C_DD1Du64;
+    let mut random = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut lines: Vec<Vec<bool>> = Vec::new();
+    for hold in [1u64, 2, 3, 7, 13, 14, 27, 40] {
+        let mut line = Vec::new();
+        let mut level = true;
+        for _ in 0..80_000 {
+            if random() % hold == 0 {
+                level = !level;
+            }
+            line.push(level);
+        }
+        lines.push(line);
+    }
+    for period in [2usize, 5, 13, 14, 15, 26, 27, 28] {
+        lines.push((0..80_000).map(|n| n % period != 0).collect());
+    }
+    for (which, line) in lines.iter().enumerate() {
+        let mut receiver = StartStopReceiver::new();
+        let mut last: Option<usize> = None;
+        let mut bits = 0usize;
+        let mut characters = 0usize;
+        for (n, &level) in line.iter().enumerate() {
+            let out = receiver.process(level);
+            if out.bit.is_some() {
+                if let Some(last) = last {
+                    // Never closer than a third of a bit time.
+                    assert!(n - last >= 9, "line {which}: bits at {last} and {n}");
+                }
+                last = Some(n);
+                bits += 1;
+            }
+            if out.character.is_some() {
+                // A character comes with its stop bit.
+                assert_eq!(out.bit, Some(true));
+                characters += 1;
+            }
+            assert!(!(out.framing_error && out.character.is_some()));
+        }
+        // Ten seconds: 3000 bit times. No more than an eighth over, and
+        // ten bits to a character.
+        assert!(bits <= 3000 * 9 / 8 + 2, "line {which}: {bits} bits");
+        assert!(characters * 10 <= bits, "line {which}");
+    }
+}

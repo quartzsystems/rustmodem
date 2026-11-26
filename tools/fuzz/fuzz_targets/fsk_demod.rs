@@ -43,7 +43,8 @@ fuzz_target!(|data: &[u8]| {
     let (allocations, ()) = alloccount::count(|| {
         let mut characters = 0usize;
         let mut bits = 0usize;
-        for &octet in octets {
+        let mut last_bit: Option<usize> = None;
+        for (n, &octet) in octets.iter().enumerate() {
             let out = receiver.process(law.decode(octet));
             assert!(out.soft.is_finite() && (-1.0..=1.0).contains(&out.soft));
             if out.framed.character.is_some() {
@@ -54,14 +55,21 @@ fuzz_target!(|data: &[u8]| {
                 characters += 1;
             }
             if out.framed.bit.is_some() {
+                // Whatever the line does, no two bits are closer than a
+                // third of a bit time.
+                if let Some(last) = last_bit {
+                    assert!(n - last >= 9);
+                }
+                last_bit = Some(n);
                 bits += 1;
             }
             assert!(!(out.framed.framing_error && out.framed.character.is_some()));
         }
-        // No more bits than the line rate allows, and ten to a
-        // character.
-        assert!(bits <= octets.len() * 300 / 8000 + 2);
-        assert!(characters * 10 <= bits + 10);
+        // No more bits than an eighth over the line rate, with one for
+        // each time the carrier may have come, and ten to a character.
+        let carriers = octets.len() / (8 * carrier_on_ms as usize) + 1;
+        assert!(bits <= octets.len() * 300 * 9 / 8 / 8000 + 2 * carriers);
+        assert!(characters * 10 <= bits);
         assert!(receiver.demodulator().level_dbm0() < 4.0);
         assert!(receiver.demodulator().frequency_error_hz().abs() <= 150.0);
         assert!((0.0..=1.0).contains(&receiver.eye_opening()));

@@ -126,37 +126,101 @@ pub struct Framed {
 enum State {
     /// The line is at mark; a fall to space begins a character.
     Idle,
-    /// In a frame: `bit` 0 is the start bit, 1 to 8 the data bits, and 9
-    /// the stop bit.
+    /// The line has fallen to space, and whether that is a start bit is
+    /// not known until its middle.
+    Start,
+    /// In a frame, after its start bit: `bit` 1 to 8 are the data bits
+    /// and 9 is the stop bit.
     Frame { bit: u8, data: u8 },
     /// The line is held at space; nothing is taken until it is at mark
     /// again.
     Break,
 }
 
+/// A bit clock: the time since the last bit boundary, in units of which
+/// SAMPLE_RATE make a bit, and whether this bit has been sampled.
+#[derive(Clone, Copy, Debug)]
+struct BitClock {
+    into_bit: u32,
+    sampled: bool,
+}
+
+/// Half a bit, in the units of a bit clock.
+const HALF_BIT: u32 = SAMPLE_RATE / 2;
+
+impl BitClock {
+    /// A clock at a bit boundary.
+    const fn at_boundary() -> BitClock {
+        BitClock {
+            into_bit: 0,
+            sampled: false,
+        }
+    }
+
+    /// Moves the time on by a sample. Says whether this is the sample in
+    /// the middle of a bit, and whether a bit ended.
+    #[inline]
+    fn tick(&mut self) -> (bool, bool) {
+        self.into_bit += BIT_RATE;
+        let mut middle = false;
+        if !self.sampled && self.into_bit >= HALF_BIT {
+            self.sampled = true;
+            middle = true;
+        }
+        let mut ended = false;
+        if self.into_bit >= SAMPLE_RATE {
+            self.into_bit -= SAMPLE_RATE;
+            self.sampled = false;
+            ended = true;
+        }
+        (middle, ended)
+    }
+
+    /// Moves the timing a quarter of the way towards having a bit
+    /// boundary now.
+    #[inline]
+    fn nudge(&mut self) {
+        if self.into_bit < HALF_BIT {
+            // The boundary was expected `into_bit` ago: the timing is
+            // early, and is put back.
+            self.into_bit -= self.into_bit / 4;
+        } else {
+            // The boundary was expected later: the timing is late, and is
+            // put on, but not past the boundary itself.
+            self.into_bit += (SAMPLE_RATE - self.into_bit) / 4;
+        }
+    }
+}
+
 /// Takes characters out of start-stop frames, from the demodulator's
 /// decision at every sample.
+///
+/// Whatever the line does, the bits it gives are never closer together
+/// than a third of a bit time, and over any stretch they are no more than
+/// an eighth faster than 300 a second: noise cannot make it run away.
 #[derive(Clone, Debug)]
 pub struct StartStopReceiver {
     state: State,
-    // The time since the last bit boundary, in units of which SAMPLE_RATE
-    // make a bit. A bit is sampled when this passes half a bit.
-    into_bit: u32,
-    sampled: bool,
+    clock: BitClock,
+    // The clock the idle line was being read by when a fall to space was
+    // taken for the beginning of a start bit. If it was not one, the idle
+    // line goes on being read by this clock as if nothing had happened.
+    idle_clock: BitClock,
+    // Whether the timing has been moved in the bit that is passing: it is
+    // moved once a bit and no more.
+    nudged: bool,
     last: bool,
     framing_errors: u32,
 }
-
-/// Half a bit, in the units of `into_bit`.
-const HALF_BIT: u32 = SAMPLE_RATE / 2;
 
 impl StartStopReceiver {
     /// A receiver on an idle line.
     pub fn new() -> StartStopReceiver {
         StartStopReceiver {
             state: State::Idle,
-            into_bit: 0,
-            sampled: false,
+            clock: BitClock::at_boundary(),
+            idle_clock: BitClock::at_boundary(),
+            nudged: false,
             last: true,
             framing_errors: 0,
         }
@@ -173,33 +237,54 @@ impl StartStopReceiver {
         match self.state {
             State::Idle => {
                 if fell {
-                    // The beginning of a start bit: the character's
-                    // timing is from here.
-                    self.state = State::Frame { bit: 0, data: 0 };
-                    self.into_bit = 0;
-                    self.sampled = false;
+                    // Perhaps the beginning of a start bit: if it is, the
+                    // character's timing is from here.
+                    self.idle_clock = self.clock;
+                    self.clock = BitClock::at_boundary();
+                    self.nudged = false;
+                    self.state = State::Start;
                     return out;
                 }
                 // The idle line is mark, a bit time at a time.
-                if self.tick() {
+                if self.clock.tick().0 {
                     out.bit = Some(true);
                 }
             }
+            State::Start => {
+                // The idle line's clock runs on meanwhile. An idle bit
+                // whose middle passes now is not given: if this is a
+                // start bit there was no such bit, and if it is not, one
+                // mark the fewer on an idle line is nothing.
+                self.idle_clock.tick();
+                if self.clock.tick().0 {
+                    if mark {
+                        // Mark in the middle: a moment of noise, not a
+                        // start bit. Nothing is given for it, and the
+                        // idle line is read as it was being read.
+                        self.clock = self.idle_clock;
+                        self.state = State::Idle;
+                    } else {
+                        out.bit = Some(false);
+                        self.state = State::Frame { bit: 1, data: 0 };
+                    }
+                }
+            }
             State::Frame { bit, data } => {
-                if changed && bit > 0 {
+                if changed && !self.nudged {
                     // A change inside the frame is at a bit boundary.
                     // Move a quarter of the way to it: enough to follow a
                     // far end whose clock is not ours, without being
                     // thrown by one noisy edge.
-                    self.nudge();
+                    self.clock.nudge();
+                    self.nudged = true;
                 }
-                if self.tick() {
+                let (middle, ended) = self.clock.tick();
+                if ended {
+                    self.nudged = false;
+                }
+                if middle {
                     out.bit = Some(mark);
                     self.state = match bit {
-                        // A start bit that is mark in its middle was a
-                        // moment of noise, not a start bit.
-                        0 if mark => State::Idle,
-                        0 => State::Frame { bit: 1, data: 0 },
                         1..=8 => {
                             let data = data | (u8::from(mark) << (bit - 1));
                             State::Frame { bit: bit + 1, data }
@@ -228,7 +313,7 @@ impl StartStopReceiver {
                 // After a break, or a character that did not end, the
                 // line must be at mark before a fall can begin a
                 // character.
-                if self.tick() {
+                if self.clock.tick().0 {
                     out.bit = Some(mark);
                     if mark {
                         self.state = State::Idle;
@@ -239,38 +324,6 @@ impl StartStopReceiver {
         out
     }
 
-    /// Moves the time on by a sample. Says whether this is the sample in
-    /// the middle of a bit.
-    #[inline]
-    fn tick(&mut self) -> bool {
-        self.into_bit += BIT_RATE;
-        let mut middle = false;
-        if !self.sampled && self.into_bit >= HALF_BIT {
-            self.sampled = true;
-            middle = true;
-        }
-        if self.into_bit >= SAMPLE_RATE {
-            self.into_bit -= SAMPLE_RATE;
-            self.sampled = false;
-        }
-        middle
-    }
-
-    /// Moves the bit timing a quarter of the way towards having a bit
-    /// boundary now.
-    #[inline]
-    fn nudge(&mut self) {
-        if self.into_bit < HALF_BIT {
-            // The boundary was expected `into_bit` ago: the timing is
-            // early, and is put back.
-            self.into_bit -= self.into_bit / 4;
-        } else {
-            // The boundary was expected later: the timing is late, and is
-            // put on, but not past the boundary itself.
-            self.into_bit += (SAMPLE_RATE - self.into_bit) / 4;
-        }
-    }
-
     /// The characters lost to a wrong stop bit so far.
     pub fn framing_errors(&self) -> u32 {
         self.framing_errors
@@ -279,8 +332,9 @@ impl StartStopReceiver {
     /// An idle line again. The count of framing errors is kept.
     pub fn reset(&mut self) {
         self.state = State::Idle;
-        self.into_bit = 0;
-        self.sampled = false;
+        self.clock = BitClock::at_boundary();
+        self.idle_clock = BitClock::at_boundary();
+        self.nudged = false;
         self.last = true;
     }
 }
