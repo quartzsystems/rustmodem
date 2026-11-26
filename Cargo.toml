@@ -5,6 +5,8 @@
 [workspace]
 resolver = "3"
 members = [
+    # DSP: signal processing shared by every modulation.
+    "dsp/g711",
     # Modem: the engine trait every softmodem implements, and the null engine.
     "modem/engine",
     # DTE: what the host sees on the COM port.
