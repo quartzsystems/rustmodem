@@ -12,6 +12,11 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
+msg.workspace = true
+toml_edit.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
 
 [lints]
 workspace = true

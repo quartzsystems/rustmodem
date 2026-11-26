@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 28698f0432a9899df3babee44430897d7db6c1f21ebb85d77aa5130347fa5344 # shrinks to config = Config { service: ServiceConfig { log_level: Warning, log_dir: "" }, control: ControlConfig { pipe: "|).3`rl" }, lines: [LineConfig { id: 647, name: Some("\n"), serial: SerialConfig { backend: Com0com, port: "F7yN5e_647" }, enabled: true, auto_answer_rings: 45, unknown_command: Ok }, LineConfig { id: 778, name: Some("\r\u{fb282}×�¯#/?"), serial: SerialConfig { backend: Com0com, port: "FJ-Yd--_778" }, enabled: true, auto_answer_rings: 239, unknown_command: Ok }, LineConfig { id: 831, name: Some("{0\u{bc1e5}Ѩ!t\u{1b}\\"), serial: SerialConfig { backend: Com0com, port: "Fsm-2_831" }, enabled: false, auto_answer_rings: 36, unknown_command: Error }, LineConfig { id: 893, name: None, serial: SerialConfig { backend: Com0com, port: "h8C.44H8S_893" }, enabled: false, auto_answer_rings: 26, unknown_command: Ok }] }, pick = Index(12891255992482605537), rings = 99, enabled = false, setting = Ok, which = 3
