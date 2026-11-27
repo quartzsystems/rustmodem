@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use ctlproto::{
     Call, CallList, CallsQuery, ErrorInfo, EventSelection, LineInfo, LineList, LineRef, LogTail,
-    LogTailQuery, ReregisterQuery, ServerFrame, ServiceInfo, Stats,
+    LogTailQuery, ReregisterQuery, ServerFrame, ServiceInfo, ServiceMode, Stats,
 };
 use model::{Column, Command, ConnectionState, Model, RowChange, filter_of};
 use msg::message;
@@ -48,6 +48,7 @@ use crate::link::{Incoming, Link, Tagged};
 use crate::message as messages;
 use crate::requests::{Purpose, Requests, read};
 use crate::settings::{self, Saved};
+use crate::setup;
 use crate::view::{self, View, ids};
 
 /// The timer that ticks once a second.
@@ -62,6 +63,15 @@ const KEY_DELETE: u16 = 0x2E;
 
 /// The Windows error for "the user said no".
 const ERROR_CANCELLED: i32 = 1223;
+
+/// The serial backend of a line on a RustModem port, as the service
+/// calls it.
+const VCOM: &str = "vcom";
+
+/// Remove line, for a line on a RustModem port: the line and its port.
+pub const ID_REMOVE_WITH_PORT: u16 = 903;
+/// Remove line, for a line on a RustModem port: the line alone.
+pub const ID_REMOVE_LINE_ONLY: u16 = 904;
 
 /// The command the window sends itself when it has opened with a service
 /// command on its command line. Below the ids of the commands, above
@@ -92,6 +102,10 @@ pub type PortsHook = Rc<dyn Fn() -> Vec<String>>;
 /// Told the folder that would be opened in Explorer.
 pub type FolderHook = Rc<dyn Fn(&std::path::Path)>;
 
+/// Stands in for the setup program: given the words of a port command,
+/// answers with how it ended.
+pub type SetupHook = Rc<dyn Fn(&[String]) -> setup::Outcome>;
+
 /// What a test puts in place of the things that would stop it: the
 /// system's dialogs, which wait for a person.
 #[derive(Clone, Default)]
@@ -116,6 +130,10 @@ pub struct Hooks {
     pub serial_ports: Option<PortsHook>,
     /// Stands in for opening a folder in Explorer: told the folder.
     pub open_folder: Option<FolderHook>,
+    /// Stands in for the setup program, which makes and removes ports
+    /// and asks to be an administrator for it. With it the port commands
+    /// are offered whatever the service is.
+    pub setup: Option<SetupHook>,
 }
 
 /// How the manager is started.
@@ -871,6 +889,39 @@ impl Manager {
         }
     }
 
+    /// Whether RustModem ports can be made and removed from here: the
+    /// setup program is beside the manager, and the service is one whose
+    /// ports are Windows' own. The demo service's are made up.
+    pub(crate) fn ports_can_change(&self) -> bool {
+        if self.options.hooks.setup.is_some() {
+            return true;
+        }
+        let demo = self
+            .state
+            .try_borrow()
+            .ok()
+            .and_then(|state| state.model.service().map(|info| info.mode))
+            .is_none_or(|mode| mode == ServiceMode::Demo);
+        !demo && setup::program().is_some()
+    }
+
+    /// Runs the setup program as an administrator with the words of a
+    /// port command and waits for it, with `owner` taking no input in
+    /// the meantime. Windows asks the person whether to allow it.
+    pub(crate) fn port_command(&self, owner: Hwnd, words: Vec<String>) -> setup::Outcome {
+        if let Some(hook) = &self.options.hooks.setup {
+            return hook(&words);
+        }
+        let could_not = |detail: &str| {
+            setup::Outcome::Failed(message("RMD9013", &[setup::PROGRAM, detail]).into())
+        };
+        let Some(program) = setup::program() else {
+            return could_not("it is not there");
+        };
+        self.wait_for(owner, move || setup::run(&program, &words))
+            .unwrap_or_else(|| could_not("it did not finish"))
+    }
+
     /// The serial ports of this computer, for the AT console.
     pub(crate) fn serial_ports(&self) -> Vec<String> {
         match &self.options.hooks.serial_ports {
@@ -1235,10 +1286,57 @@ impl Manager {
             links: Vec::new(),
             default: Some(id::NO),
         };
+        // A RustModem port was made for a line, and can go with it.
+        if line.backend == VCOM && self.ports_can_change() {
+            let port = &line.port;
+            let dialog = TaskDialog {
+                buttons: TaskButtons::CANCEL,
+                links: vec![
+                    (
+                        ID_REMOVE_WITH_PORT,
+                        format!(
+                            "Remove the line and its port\n{port} and its modem are removed \
+                             from Windows, which asks for an administrator."
+                        ),
+                    ),
+                    (
+                        ID_REMOVE_LINE_ONLY,
+                        format!("Remove the line only\n{port} stays, for another line."),
+                    ),
+                ],
+                default: Some(id::CANCEL),
+                ..dialog
+            };
+            match self.task(Some(window), &dialog) {
+                ID_REMOVE_WITH_PORT => self.remove_line_and_port(window, id, port),
+                ID_REMOVE_LINE_ONLY => self.change(window, |state, _| {
+                    state.request(Call::LinesRemove(LineRef { id }), Purpose::Remove(id));
+                }),
+                _ => {}
+            }
+            return;
+        }
         if self.task(Some(window), &dialog) == id::YES {
             self.change(window, |state, _| {
                 state.request(Call::LinesRemove(LineRef { id }), Purpose::Remove(id));
             });
+        }
+    }
+
+    /// Removes a line and then its RustModem port. The line goes first:
+    /// while it is there the service has the port open.
+    fn remove_line_and_port(&self, window: Hwnd, id: u16, port: &str) {
+        let removed = self.call::<serde::de::IgnoredAny>(window, Call::LinesRemove(LineRef { id }));
+        if let Err(error) = removed {
+            self.show_error(window, &error);
+            return;
+        }
+        self.change(window, |state, update| {
+            update.rows(state.model.line_removed(id));
+        });
+        if let setup::Outcome::Failed(error) = self.port_command(window, setup::remove_words(port))
+        {
+            self.show_error(window, &error);
         }
     }
 

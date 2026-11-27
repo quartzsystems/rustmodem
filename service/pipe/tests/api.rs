@@ -189,6 +189,7 @@ impl Fixture {
                 pair: Some("A1".to_string()),
                 host_port: Some("COM11".to_string()),
                 modem: None,
+                driver_version: None,
                 line: None,
             }]),
             cpu: ctlsrv::no_cpu_meter(),

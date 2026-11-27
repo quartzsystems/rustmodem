@@ -75,22 +75,22 @@ mod program {
             Command::PortAdd { com, count } => match ports::add(&mut SetupApi, com, count) {
                 Ok(names) => {
                     for name in names {
-                        say(&message("RMD9004", &[&name]), true);
+                        report(&cli, &message("RMD9004", &[&name]));
                     }
                     exit::OK
                 }
                 Err(failure) => {
-                    say(&failure, true);
+                    report(&cli, &failure);
                     exit::FAILED
                 }
             },
             Command::PortRemove { com } => match ports::remove(&mut SetupApi, &com) {
                 Ok(()) => {
-                    say(&message("RMD9005", &[&com]), true);
+                    report(&cli, &message("RMD9005", &[&com]));
                     exit::OK
                 }
                 Err(failure) => {
-                    say(&failure, true);
+                    report(&cli, &failure);
                     exit::FAILED
                 }
             },
@@ -128,6 +128,25 @@ mod program {
                 ..TaskDialog::default()
             },
         );
+    }
+
+    /// Says how a port command went: on the console, and in the file
+    /// `--log` names, for the manager, which runs this program with no
+    /// window and reads the file. Each message is four lines there: its
+    /// id, its text, its cause and its recovery.
+    fn report(cli: &Cli, message: &Message) {
+        say(message, true);
+        let Some(path) = &cli.log else { return };
+        let lines = format!(
+            "{}\n{}\n{}\n{}\n",
+            message.id, message.text, message.cause, message.recovery
+        );
+        use std::io::Write;
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .and_then(|mut file| file.write_all(lines.as_bytes()));
     }
 
     /// Asks a question with Yes and No. A quiet run is not asked and the

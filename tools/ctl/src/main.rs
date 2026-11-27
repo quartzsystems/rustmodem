@@ -62,6 +62,8 @@ fn main() -> ExitCode {
             println!("rustmodem-ctl {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
         }
+        // The port commands are the setup program's, and need no service.
+        Command::Port => return setup(&options.paths, options.verbose),
         // The capture commands read a file and need no service.
         Command::CaptureCheck | Command::CaptureWav => {
             let stdout = io::stdout();
@@ -89,6 +91,34 @@ fn main() -> ExitCode {
     let outcome = Client::connect(&options.pipe)
         .and_then(|mut client| run(&options, &mut client, &mut stdout.lock(), None));
     ExitCode::from(report(outcome, options.verbose, &mut io::stderr().lock()))
+}
+
+/// Runs the setup program, which is beside this one, with the words of a
+/// port command, and ends as it ends. The setup program asks to run as an
+/// administrator if it is not one.
+fn setup(words: &[String], verbose: bool) -> ExitCode {
+    const SETUP: &str = "rustmodem-setup.exe";
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|own| Some(own.parent()?.join(SETUP)))
+        .filter(|path| path.is_file());
+    let ran = match &beside {
+        Some(program) => std::process::Command::new(program)
+            .args(words)
+            .status()
+            .map_err(|e| e.to_string()),
+        None => Err("it is not there".to_string()),
+    };
+    match ran {
+        Ok(status) if status.success() => ExitCode::SUCCESS,
+        // The setup program has said what was wrong.
+        Ok(_) => ExitCode::from(EXIT_API),
+        Err(detail) => {
+            let error = ErrorInfo::from(msg::message("RMD9013", &[SETUP, &detail]));
+            eprint!("{}", output::error(&error, verbose));
+            ExitCode::from(EXIT_API)
+        }
+    }
 }
 
 /// Prints a failure and gives the exit code for the outcome.
@@ -200,7 +230,11 @@ fn run<R: BufRead, W: Write>(
             })
         }
         // Handled before a connection is made.
-        Command::Help | Command::Version | Command::CaptureCheck | Command::CaptureWav => Ok(()),
+        Command::Help
+        | Command::Version
+        | Command::CaptureCheck
+        | Command::CaptureWav
+        | Command::Port => Ok(()),
     }
 }
 

@@ -358,6 +358,7 @@ fn port_info(full: bool) -> PortInfo {
         pair: full.then(|| "CNCA0".to_string()),
         host_port: full.then(|| "COM4".to_string()),
         modem: full.then(|| "Standard 56000 bps Modem".to_string()),
+        driver_version: full.then(|| "0.2.0.0".to_string()),
         line: full.then_some(1),
     }
 }

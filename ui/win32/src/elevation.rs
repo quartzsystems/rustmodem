@@ -2,16 +2,20 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! Administrator rights: whether the program has them, and starting it
-//! again with them.
+//! Administrator rights: whether the program has them, starting it again
+//! with them, and running another program with them.
 
 use std::io;
 
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-use windows::Win32::UI::Shell::{SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, ShellExecuteExW};
-use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, GetExitCodeProcess, INFINITE, OpenProcessToken, WaitForSingleObject,
+};
+use windows::Win32::UI::Shell::{
+    SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW,
+};
+use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_SHOWNORMAL};
 use windows::core::w;
 
 use crate::util::{pcwstr, wide};
@@ -105,6 +109,58 @@ pub fn relaunch_elevated(owner: Option<Hwnd>, arguments: &[String]) -> io::Resul
 }
 
 /// Opens a folder in Explorer, as a double click on it would.
+/// Runs another program as an administrator, with no window of its own,
+/// waits for it to end, and gives its exit code. Windows asks the person
+/// whether to allow it; the answer no is the error "cancelled by the
+/// user" (1223).
+///
+/// It waits, so it is for a thread that may: not the one a window's
+/// messages come to.
+pub fn run_elevated(
+    owner: Option<Hwnd>,
+    program: &std::path::Path,
+    arguments: &[String],
+) -> io::Result<u32> {
+    let program = wide(&program.display().to_string());
+    let parameters: Vec<String> = arguments.iter().map(|a| quote_argument(a)).collect();
+    let parameters = wide(&parameters.join(" "));
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOASYNC | SEE_MASK_NOCLOSEPROCESS,
+        hwnd: owner.map(|owner| owner.0).unwrap_or_default(),
+        lpVerb: w!("runas"),
+        lpFile: pcwstr(&program),
+        lpParameters: pcwstr(&parameters),
+        nShow: SW_HIDE.0,
+        ..SHELLEXECUTEINFOW::default()
+    };
+    // SAFETY: `info` and the strings it points to live through the call.
+    // The process handle it gives back is waited on, asked for the exit
+    // code and closed here, and nowhere else.
+    unsafe {
+        ShellExecuteExW(&mut info).map_err(|error| {
+            const FACILITY_WIN32: u32 = 0x8007;
+            let code = error.code().0 as u32;
+            if code >> 16 == FACILITY_WIN32 {
+                io::Error::from_raw_os_error((code & 0xFFFF) as i32)
+            } else {
+                error.into()
+            }
+        })?;
+        if info.hProcess.is_invalid() {
+            return Err(io::Error::other(
+                "the program was started and gave no process",
+            ));
+        }
+        WaitForSingleObject(info.hProcess, INFINITE);
+        let mut code = 0u32;
+        let asked = GetExitCodeProcess(info.hProcess, &mut code);
+        let _ = CloseHandle(info.hProcess);
+        asked?;
+        Ok(code)
+    }
+}
+
 pub fn open_folder(owner: Option<Hwnd>, folder: &std::path::Path) -> io::Result<()> {
     let folder = wide(&folder.display().to_string());
     let mut info = SHELLEXECUTEINFOW {

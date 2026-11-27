@@ -20,7 +20,8 @@ use std::time::{Duration, Instant};
 
 use common::{Bench, DemoService, close, fresh_lines, pipe_name};
 use ctlproto::{LineInfo, LineState};
-use manager::{Hooks, ids};
+use manager::setup::Outcome;
+use manager::{Hooks, ids, ports_ids};
 use model::{Column, Command, Filter};
 use win32::{Hwnd, ListView, gui_handles, id};
 
@@ -186,10 +187,27 @@ fn a_minute_of_everything_leaks_nothing_and_ends_with_the_model_right() {
     let opened = Rc::new(RefCell::new(Vec::new()));
     let asked = Rc::new(Cell::new(0u32));
     let messages = Rc::new(RefCell::new(Vec::new()));
+    // How many ports the setup program was asked to make. Something
+    // stands in for it that makes none.
+    let ports_asked = Rc::new(Cell::new(0u32));
     let hooks = Hooks {
         dialog: Some(Rc::new({
             let opened = Rc::clone(&opened);
+            let adding = Cell::new(false);
             move |name: &str, window: Hwnd| {
+                // Ports and drivers: Add port is pressed, and the dialog
+                // is closed when it says it is up again with the ports
+                // as they are after it.
+                if name == "ports" {
+                    if adding.replace(true) {
+                        adding.set(false);
+                        close(name, window);
+                    } else {
+                        opened.borrow_mut().push(name.to_string());
+                        window.command(ports_ids::ADD);
+                    }
+                    return;
+                }
                 opened.borrow_mut().push(name.to_string());
                 // The console and the diagnostics are closed by the
                 // round, once they have been seen to stay open.
@@ -215,6 +233,14 @@ fn a_minute_of_everything_leaks_nothing_and_ends_with_the_model_right() {
         })),
         file: Some(Rc::new(|_: &str| None)),
         serial_ports: Some(Rc::new(|| vec!["COM11".to_string(), "COM12".to_string()])),
+        setup: Some(Rc::new({
+            let ports_asked = Rc::clone(&ports_asked);
+            move |words: &[String]| {
+                assert_eq!(words, ["port", "add"]);
+                ports_asked.set(ports_asked.get() + 1);
+                Outcome::Done
+            }
+        })),
         ..Hooks::default()
     };
     let bench = Bench::open_with(&name, hooks);
@@ -247,6 +273,8 @@ fn a_minute_of_everything_leaks_nothing_and_ends_with_the_model_right() {
     // is in a call.
     assert!(messages.borrow().is_empty(), "{:?}", messages.borrow());
     assert!(asked.get() <= rounds, "{} questions", asked.get());
+    // A port was asked for in every round.
+    assert_eq!(ports_asked.get(), rounds);
 
     // Still connected, with every line, and calls going on.
     bench.opened.manager.with_model(|model| {

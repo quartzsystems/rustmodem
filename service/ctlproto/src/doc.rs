@@ -2203,6 +2203,12 @@ pub const TYPES: &[TypeDoc] = &[
                 "string",
                 "The friendly name of a modem device attached to the host port.",
             ),
+            optional(
+                "driver_version",
+                "string",
+                "For a RustModem port, the version of the driver package its modem was \
+                 installed from.",
+            ),
             optional("line", "integer", "The id of the line that uses the port."),
         ],
     },
@@ -2313,6 +2319,11 @@ pub const ENUMS: &[EnumDoc] = &[
         text: "What kind of serial port a port is.",
         values: &[
             ("com0com", "One end of a com0com null-modem pair."),
+            (
+                "vcom",
+                "A RustModem port: a virtual COM port of RustModem's own driver. Applications \
+                 open it by the same name the service does.",
+            ),
             ("serial", "A serial port with a `COM` name."),
             (
                 "other",

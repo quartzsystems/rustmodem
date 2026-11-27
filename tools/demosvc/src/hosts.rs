@@ -22,6 +22,19 @@ const SPARE_PAIRS: u16 = 4;
 /// ports.
 const MODEM: &str = "Standard 56000 bps Modem";
 
+/// The RustModem ports the demo machine pretends to have, no line on
+/// either: each its name and its modem, as Windows names the first of a
+/// kind and those after it.
+pub const VCOM_PORTS: [(&str, &str); 2] = [
+    ("COM40", "RustModem Softmodem"),
+    ("COM41", "RustModem Softmodem #2"),
+];
+
+/// The version of the driver package the demo machine pretends they were
+/// installed from. It is not this program's version: the pictures of the
+/// manager are not to change with every release.
+const DRIVER_VERSION: &str = "0.2.0.0";
+
 #[derive(Default)]
 struct Inner {
     /// The host's end of every port the pool has opened, by port name.
@@ -83,10 +96,10 @@ pub fn port_of_line(id: u16) -> String {
     format!("CNCB{}", id - 1)
 }
 
-/// The serial ports the demo machine pretends to have: one real port, and
-/// a com0com pair for each line and a few to spare. Most host ports have a
-/// modem installed on them; every fourth has none, to show a line bound to
-/// a bare port.
+/// The serial ports the demo machine pretends to have: one real port, a
+/// com0com pair for each line and a few to spare, and two RustModem
+/// ports. Most host ports have a modem installed on them; every fourth has
+/// none, to show a line bound to a bare port.
 pub fn demo_ports(lines: u16) -> Vec<PortInfo> {
     let mut ports = vec![PortInfo {
         name: "COM1".to_string(),
@@ -94,6 +107,7 @@ pub fn demo_ports(lines: u16) -> Vec<PortInfo> {
         pair: None,
         host_port: None,
         modem: None,
+        driver_version: None,
         line: None,
     }];
     for pair in 0..lines + SPARE_PAIRS {
@@ -106,6 +120,7 @@ pub fn demo_ports(lines: u16) -> Vec<PortInfo> {
             pair: Some(format!("CNCA{pair}")),
             host_port: Some(host_port.clone()),
             modem: has_modem.then(|| MODEM.to_string()),
+            driver_version: None,
             line: None,
         });
         // The host's end, as an application sees it.
@@ -115,6 +130,18 @@ pub fn demo_ports(lines: u16) -> Vec<PortInfo> {
             pair: Some(format!("CNCB{pair}")),
             host_port: Some(format!("CNCB{pair}")),
             modem: None,
+            driver_version: None,
+            line: None,
+        });
+    }
+    for (name, modem) in VCOM_PORTS {
+        ports.push(PortInfo {
+            name: name.to_string(),
+            kind: PortKind::Vcom,
+            pair: None,
+            host_port: None,
+            modem: Some(modem.to_string()),
+            driver_version: Some(DRIVER_VERSION.to_string()),
             line: None,
         });
     }
@@ -128,7 +155,7 @@ mod tests {
     #[test]
     fn every_line_has_a_pair_and_there_are_some_to_spare() {
         let ports = demo_ports(4);
-        assert_eq!(ports.len(), 1 + 2 * 8);
+        assert_eq!(ports.len(), 1 + 2 * 8 + VCOM_PORTS.len());
         for line in 1..=4 {
             let name = port_of_line(line);
             let port = ports.iter().find(|p| p.name == name).unwrap();
@@ -145,6 +172,20 @@ mod tests {
         // A spare pair has no modem yet.
         assert_eq!(binding("CNCB5").as_deref(), Some("COM16"));
         assert_eq!(binding("COM1"), None);
+    }
+
+    #[test]
+    fn a_rustmodem_port_is_one_name_bound_to_its_modem() {
+        let ports = demo_ports(4);
+        let port = ports.iter().find(|p| p.name == "COM40").unwrap();
+        assert_eq!(port.kind, PortKind::Vcom);
+        assert_eq!((&port.pair, &port.host_port), (&None, &None));
+        assert_eq!(port.binding().as_deref(), Some("RustModem Softmodem"));
+        assert_eq!(port.driver_version.as_deref(), Some("0.2.0.0"));
+        // No line of the demo is on one, whatever their number.
+        assert!(demo_ports(30).iter().all(|p| {
+            p.kind != PortKind::Vcom || (1..=30).all(|line| port_of_line(line) != p.name)
+        }));
     }
 
     #[test]

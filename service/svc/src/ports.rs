@@ -5,9 +5,11 @@
 //! The serial ports of the machine: what `ports.list` reports and what the
 //! lines' bindings are made from.
 //!
-//! Three things are read from the registry and put together:
+//! Four things are read from the registry and put together:
 //!
 //! - the serial ports Windows has, from the `SERIALCOMM` device map;
+//! - which of those are RustModem ports: the driver names its entry in
+//!   the device map `\Device\RustModem` and the port's name;
 //! - the com0com pairs, from the parameters the com0com driver keeps for
 //!   each of its ports;
 //! - the modems, from the Modem device class, each with the port it is
@@ -65,6 +67,8 @@ pub struct ModemDevice {
     pub name: String,
     /// The port, for example `COM4`.
     pub attached_to: String,
+    /// The version of the driver package the modem was installed from.
+    pub driver_version: Option<String>,
 }
 
 /// What the registry says, before it is put together.
@@ -72,6 +76,8 @@ pub struct ModemDevice {
 pub struct Raw {
     /// The port names in the `SERIALCOMM` device map.
     pub serialcomm: Vec<String>,
+    /// Those of them that are RustModem ports.
+    pub vcom: Vec<String>,
     /// The ports of the com0com pairs.
     pub com0com: Vec<Com0comPort>,
     /// The modems.
@@ -83,16 +89,19 @@ pub struct Raw {
 ///
 /// A com0com port is listed under the name it is opened by, with the
 /// driver's name for the other end of its pair, the name applications see
-/// for that other end, and any modem attached there. Every other port in
-/// the device map is listed as it is, with any modem attached to it.
+/// for that other end, and any modem attached there. A RustModem port is
+/// one port with one name, which the service and the host both open, each
+/// its own side: it is listed with its modem and no host port, so that
+/// its binding is the modem's name. Every other port in the device map is
+/// listed as it is, with any modem attached to it.
 pub fn inventory(raw: &Raw) -> Vec<PortInfo> {
     // Windows port names do not distinguish case.
-    let modem_on = |port: &str| {
+    let device_on = |port: &str| {
         raw.modems
             .iter()
             .find(|modem| modem.attached_to.eq_ignore_ascii_case(port))
-            .map(|modem| modem.name.clone())
     };
+    let modem_on = |port: &str| device_on(port).map(|modem| modem.name.clone());
     let mut ports: Vec<PortInfo> = Vec::new();
     for port in &raw.com0com {
         let other = port.pair().and_then(|pair| {
@@ -106,7 +115,19 @@ pub fn inventory(raw: &Raw) -> Vec<PortInfo> {
             kind: PortKind::Com0com,
             pair: other.map(|other| other.driver_name.clone()),
             modem: host_port.as_deref().and_then(modem_on),
+            driver_version: None,
             host_port,
+            line: None,
+        });
+    }
+    for name in &raw.vcom {
+        ports.push(PortInfo {
+            name: name.clone(),
+            kind: PortKind::Vcom,
+            pair: None,
+            host_port: None,
+            modem: modem_on(name),
+            driver_version: device_on(name).and_then(|modem| modem.driver_version.clone()),
             line: None,
         });
     }
@@ -131,6 +152,7 @@ pub fn inventory(raw: &Raw) -> Vec<PortInfo> {
             pair: None,
             host_port: None,
             modem: modem_on(name),
+            driver_version: None,
             line: None,
         });
     }
@@ -179,7 +201,13 @@ fn read() -> Raw {
 
     let mut raw = Raw::default();
     if let Some(map) = Key::open(SERIALCOMM) {
-        raw.serialcomm = map.strings().into_iter().map(|(_, port)| port).collect();
+        for (device, port) in map.strings() {
+            // The driver's own name for its entry: driver/vcom.
+            if device.starts_with(r"\Device\RustModem") {
+                raw.vcom.push(port.clone());
+            }
+            raw.serialcomm.push(port);
+        }
     }
     if let Some(parameters) = Key::open(COM0COM_PARAMETERS) {
         let devices = Key::open(COM0COM_DEVICES);
@@ -211,7 +239,11 @@ fn read() -> Raw {
                 .string("FriendlyName")
                 .or_else(|| modem.string("DriverDesc"))
                 .unwrap_or_else(|| "Modem".to_string());
-            raw.modems.push(ModemDevice { name, attached_to });
+            raw.modems.push(ModemDevice {
+                name,
+                attached_to,
+                driver_version: modem.string("DriverVersion"),
+            });
         }
     }
     raw
@@ -233,6 +265,7 @@ mod tests {
         ModemDevice {
             name: name.to_string(),
             attached_to: attached_to.to_string(),
+            driver_version: None,
         }
     }
 
@@ -275,6 +308,7 @@ mod tests {
                 com0com("CNCB1", "", None),
             ],
             modems: vec![modem("Standard 56000 bps Modem", "com5")],
+            ..Raw::default()
         };
         let ports = inventory(&raw);
         assert_eq!(ports.len(), 5, "{ports:?}");
@@ -319,6 +353,7 @@ mod tests {
                 .to_vec(),
             com0com: Vec::new(),
             modems: vec![modem("A real modem", "COM3")],
+            ..Raw::default()
         };
         let ports = inventory(&raw);
         let kinds: Vec<(&str, PortKind)> =
@@ -344,6 +379,7 @@ mod tests {
             serialcomm: Vec::new(),
             com0com: vec![com0com("CNCB7", "", None)],
             modems: Vec::new(),
+            ..Raw::default()
         };
         let ports = inventory(&raw);
         assert_eq!(ports.len(), 1);
@@ -366,5 +402,39 @@ mod tests {
                 assert_eq!((&port.pair, &port.host_port), (&None, &None));
             }
         }
+    }
+
+    #[test]
+    fn a_rustmodem_port_is_one_name_with_its_modem_and_the_drivers_version() {
+        // Two RustModem ports, one with its modem and one whose modem is
+        // gone, beside a real port.
+        let raw = Raw {
+            serialcomm: ["COM1", "COM10", "COM11"].map(String::from).to_vec(),
+            vcom: ["COM10", "COM11"].map(String::from).to_vec(),
+            com0com: Vec::new(),
+            modems: vec![ModemDevice {
+                name: "RustModem Softmodem".to_string(),
+                attached_to: "com10".to_string(),
+                driver_version: Some("0.2.0.0".to_string()),
+            }],
+        };
+        let ports = inventory(&raw);
+        assert_eq!(ports.len(), 3, "each port once: {ports:?}");
+
+        let first = find(&ports, "COM10");
+        assert_eq!(first.kind, PortKind::Vcom);
+        assert_eq!(first.modem.as_deref(), Some("RustModem Softmodem"));
+        assert_eq!(first.driver_version.as_deref(), Some("0.2.0.0"));
+        assert_eq!((&first.pair, &first.host_port), (&None, &None));
+        // The binding of a line on it is the modem's name: the port's
+        // name is the line's own.
+        assert_eq!(first.binding().as_deref(), Some("RustModem Softmodem"));
+
+        let second = find(&ports, "COM11");
+        assert_eq!(second.kind, PortKind::Vcom);
+        assert_eq!((&second.modem, &second.driver_version), (&None, &None));
+        assert_eq!(second.binding(), None);
+
+        assert_eq!(find(&ports, "COM1").kind, PortKind::Serial);
     }
 }

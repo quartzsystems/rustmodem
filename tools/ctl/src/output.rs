@@ -231,6 +231,7 @@ pub fn ports(ports: &[PortInfo]) -> String {
         left("PAIR"),
         left("HOST PORT"),
         left("MODEM"),
+        left("DRIVER"),
         right("LINE"),
     ];
     let or_dash = |value: &Option<String>| value.clone().unwrap_or_else(|| "-".to_string());
@@ -243,6 +244,7 @@ pub fn ports(ports: &[PortInfo]) -> String {
                 or_dash(&port.pair),
                 or_dash(&port.host_port),
                 or_dash(&port.modem),
+                or_dash(&port.driver_version),
                 port.line
                     .map_or_else(|| "-".to_string(), |id| id.to_string()),
             ]

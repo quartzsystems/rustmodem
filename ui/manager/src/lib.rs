@@ -40,6 +40,8 @@ mod message;
 #[cfg(windows)]
 mod settings;
 #[cfg(windows)]
+pub mod setup;
+#[cfg(windows)]
 mod view;
 #[cfg(windows)]
 mod window;
@@ -59,6 +61,8 @@ pub use dialogs::modem::ids as modem_ids;
 #[cfg(windows)]
 pub use dialogs::peers::ids as peers_ids;
 #[cfg(windows)]
+pub use dialogs::ports::ids as ports_ids;
+#[cfg(windows)]
 pub use dialogs::routes::{editor as route_ids, ids as routes_ids};
 #[cfg(windows)]
 pub use dialogs::selftest::ids as selftest_ids;
@@ -74,8 +78,8 @@ pub use message::{denied_dialog, dialog as message_dialog};
 pub use view::ids;
 #[cfg(windows)]
 pub use window::{
-    DialogHook, FileHook, FolderHook, Hooks, Manager, Opened, Options, PortsHook, TaskHook,
-    TaskWatchHook, has_handler, open,
+    DialogHook, FileHook, FolderHook, Hooks, ID_REMOVE_LINE_ONLY, ID_REMOVE_WITH_PORT, Manager,
+    Opened, Options, PortsHook, SetupHook, TaskHook, TaskWatchHook, has_handler, open,
 };
 
 /// Runs the manager: reads the command line, opens the window, and stays

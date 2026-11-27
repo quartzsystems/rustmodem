@@ -52,6 +52,7 @@ mod shots {
     use std::time::Duration;
 
     use ctlproto::ErrorInfo;
+    use manager::setup::Outcome;
     use manager::{Hooks, groups_ids, ids, line_ids, routes_ids, settings_ids};
     use model::{Command, ConnectionState};
     use win32::controls::Combo;
@@ -286,6 +287,8 @@ mod shots {
     /// The name a task dialog's picture goes by.
     fn task_name(dialog: &TaskDialog) -> &'static str {
         match dialog.title.as_str() {
+            // A line on a RustModem port: the port can go with it.
+            "Remove line" if !dialog.links.is_empty() => "remove-line-port",
             "Remove line" => "remove-line",
             "RMD4011" => "restart-offer",
             "RMD2008" => "access-denied",
@@ -297,6 +300,7 @@ mod shots {
     /// taken: always the one that changes nothing.
     fn task_answer(dialog: &TaskDialog) -> u16 {
         match dialog.title.as_str() {
+            "Remove line" if !dialog.links.is_empty() => id::CANCEL,
             "Remove line" => id::NO,
             // Later.
             "RMD4011" => 902,
@@ -321,7 +325,27 @@ mod shots {
         camera.main.set(None);
     }
 
+    /// Chooses a source of ports in a line dialog, as its first combo
+    /// box would: whether it was already the one chosen. If it was not,
+    /// the dialog says that it is up again once it lists the ports.
+    fn chose_source(dialog: Hwnd, wanted: &str) -> bool {
+        let sources = Combo::of(dialog.item(line_ids::BACKEND));
+        let index = (0..sources.count())
+            .find(|index| sources.entry(*index).starts_with(wanted))
+            .unwrap_or_else(|| panic!("{wanted} is not offered"));
+        if sources.selected() == Some(index) {
+            return true;
+        }
+        sources.select(Some(index));
+        dialog.command_code(line_ids::BACKEND, win32::code::COMBO_SELECTION);
+        false
+    }
+
     /// The window against the frozen demo service, and every dialog.
+    ///
+    /// Something stands in for the setup program, so that the views are
+    /// those of RustModem as it is installed: a port can be made for a
+    /// new line, and ports can be added and removed.
     fn connected(camera: &Rc<Camera>) {
         let _service = DemoService::start(PIPE, "frozen", 8);
         // What a dialog of the manager does once it is up: its picture
@@ -413,6 +437,7 @@ mod shots {
                     "COM13".to_string(),
                 ]
             })),
+            setup: Some(Rc::new(|_: &[String]| Outcome::Done)),
             ..Hooks::default()
         };
         let bench = Bench::open_with(PIPE, hooks);
@@ -516,10 +541,43 @@ mod shots {
         // Remove line asks first.
         bench.choose(Command::RemoveLine);
 
+        // A line on a RustModem port there is, with the ports listed in
+        // its dialog; and what Remove line asks of such a line, which is
+        // whether its port is to go too.
+        *with_dialog.borrow_mut() = Some(Box::new({
+            let camera = Rc::clone(camera);
+            move |_, dialog| {
+                if chose_source(dialog, "RustModem: use") {
+                    let ports = Combo::of(dialog.item(line_ids::PORT));
+                    ports.set_text(&ports.entry(0));
+                    camera.take("new-line-port", dialog);
+                    dialog.command(id::OK);
+                }
+            }
+        }));
+        bench.choose(Command::NewLine);
+        *with_dialog.borrow_mut() = None;
+        assert!(
+            bench.run_until(CONNECT, |bench| {
+                bench
+                    .opened
+                    .manager
+                    .with_model(|model| model.lines.len() == 9)
+            }),
+            "the line on a RustModem port was not added"
+        );
+        list.select(Some(8));
+        bench.pump();
+        bench.choose(Command::RemoveLine);
+        list.select(Some(4));
+        bench.pump();
+
         // A refusal from the service: a new line on a port a line has.
         *with_dialog.borrow_mut() = Some(Box::new(|_, dialog| {
-            Combo::of(dialog.item(line_ids::PORT)).set_text("CNCB0");
-            dialog.command(id::OK);
+            if chose_source(dialog, "com0com") {
+                Combo::of(dialog.item(line_ids::PORT)).set_text("CNCB0");
+                dialog.command(id::OK);
+            }
         }));
         bench.choose(Command::NewLine);
 

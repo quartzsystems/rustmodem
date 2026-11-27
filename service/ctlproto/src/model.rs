@@ -414,6 +414,8 @@ impl ServiceMode {
 pub enum PortKind {
     /// One end of a com0com null-modem pair.
     Com0com,
+    /// A RustModem port: a virtual COM port of RustModem's own driver.
+    Vcom,
     /// A serial port with a `COM` name.
     Serial,
     /// Anything else the system lists as a serial device.
@@ -422,12 +424,18 @@ pub enum PortKind {
 
 impl PortKind {
     /// Every kind.
-    pub const ALL: [PortKind; 3] = [PortKind::Com0com, PortKind::Serial, PortKind::Other];
+    pub const ALL: [PortKind; 4] = [
+        PortKind::Com0com,
+        PortKind::Vcom,
+        PortKind::Serial,
+        PortKind::Other,
+    ];
 
     /// The kind as the control API spells it.
     pub fn as_str(self) -> &'static str {
         match self {
             PortKind::Com0com => "com0com",
+            PortKind::Vcom => "vcom",
             PortKind::Serial => "serial",
             PortKind::Other => "other",
         }
@@ -450,6 +458,10 @@ pub struct PortInfo {
     /// The friendly name of a modem device attached to the host port.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modem: Option<String>,
+    /// For a RustModem port, the version of the driver package its modem
+    /// was installed from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver_version: Option<String>,
     /// The id of the line that uses the port.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u16>,

@@ -54,6 +54,7 @@ pub fn test_ports() -> Vec<PortInfo> {
             pair: pair.map(str::to_string),
             host_port: host.map(str::to_string),
             modem: modem.map(str::to_string),
+            driver_version: None,
             line: None,
         };
     vec![

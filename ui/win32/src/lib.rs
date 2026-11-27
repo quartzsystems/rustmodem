@@ -88,7 +88,7 @@ pub use dialog::{DialogTemplate, ModelessDialog};
 pub mod units {
     pub use crate::dialog::{BUTTON_HEIGHT, BUTTON_WIDTH, FIELD_HEIGHT, GAP, MARGIN, TEXT_HEIGHT};
 }
-pub use elevation::{is_elevated, open_folder, relaunch_elevated};
+pub use elevation::{is_elevated, open_folder, relaunch_elevated, run_elevated};
 pub use filedialog::{FileFilter, open_file, pick_folder, save_file};
 pub use font::Font;
 pub use imagelist::ImageList;

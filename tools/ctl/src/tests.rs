@@ -160,6 +160,7 @@ impl Service {
                     pair: Some("A1".to_string()),
                     host_port: Some("COM11".to_string()),
                     modem: Some("Standard 56000 bps Modem".to_string()),
+                    driver_version: None,
                     line: None,
                 },
                 PortInfo {
@@ -168,6 +169,7 @@ impl Service {
                     pair: None,
                     host_port: None,
                     modem: None,
+                    driver_version: None,
                     line: None,
                 },
             ]),
@@ -687,9 +689,9 @@ fn ports_prints_the_inventory_with_the_lines_that_use_it() {
     assert_eq!((code, errors.as_str()), (0, ""));
     assert_eq!(
         out,
-        "PORT  KIND     PAIR  HOST PORT  MODEM                     LINE\n\
-         COM3  serial   -     -          -                            -\n\
-         P1    com0com  A1    COM11      Standard 56000 bps Modem     1\n"
+        "PORT  KIND     PAIR  HOST PORT  MODEM                     DRIVER  LINE\n\
+         COM3  serial   -     -          -                         -          -\n\
+         P1    com0com  A1    COM11      Standard 56000 bps Modem  -          1\n"
     );
     let (code, out, _) = service.ctl(&["ports", "--json"]);
     assert_eq!(code, 0);

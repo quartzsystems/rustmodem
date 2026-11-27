@@ -955,6 +955,20 @@ text = "The RustModem ports could not be listed: &1"
 cause = "Windows refused to list its devices."
 recovery = "Try again. If it goes on, restart Windows."
 
+[RMD9013]
+severity = "error"
+vars = 2
+text = "The setup program &1 could not be run: &2."
+cause = "Ports are made and removed by the setup program, which is installed beside the manager and rustmodem-ctl. It is not there, or Windows would not start it."
+recovery = "Run rustmodem-setup repair from the setup program RustModem was installed with. If RustModem was copied here and not installed, install it."
+
+[RMD9014]
+severity = "error"
+vars = 0
+text = "A RustModem port was created, but the service does not list it."
+cause = "The setup program made a port and its modem. The service reads the ports from Windows each time it is asked, and the new one was not among them."
+recovery = "Choose Refresh under Ports and drivers. If the port is there, give it to the line as an existing RustModem port. If it is not, see the System event log for the device, and rustmodem-setup port list."
+
 # ---------------------------------------------------------------------------
 # 9500-9999: setup
 # ---------------------------------------------------------------------------

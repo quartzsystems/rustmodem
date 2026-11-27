@@ -8,6 +8,10 @@
 //! existing one it is shown and fixed. The service decides whether what
 //! was typed is a line: when it refuses, its message is shown and the
 //! dialog stays open with everything as it was typed.
+//!
+//! A line's port is a RustModem port or one end of a com0com pair. A new
+//! line can have a RustModem port made for it, which the setup program
+//! does as an administrator when the dialog is closed with OK.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -17,9 +21,10 @@ use ctlproto::{
     PortList, RegisterChange, RegisterSpec, SipMode,
 };
 use win32::controls::{self, Combo, UpDown};
-use win32::{DialogTemplate, Event, Handler, Hwnd, Reply, id};
+use win32::{DialogTemplate, Event, Handler, Hwnd, Reply, code, id};
 
 use super::{modem, must_not_be_empty, number_in, watch, watched};
+use crate::setup::{self, Outcome};
 use crate::window::Manager;
 
 /// The ids of the dialog's controls.
@@ -72,8 +77,63 @@ use ids::{
     PORT as ID_PORT, RINGS as ID_RINGS, RINGS_ARROWS as ID_RINGS_ARROWS,
 };
 
-/// The serial backend of this phase.
-const BACKEND: &str = "com0com";
+/// The serial backends, as the service calls them.
+pub const VCOM: &str = "vcom";
+/// One end of a com0com pair.
+pub const COM0COM: &str = "com0com";
+
+/// Where a line's port comes from: what the first combo box chooses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    /// A RustModem port that is made for the line.
+    Create,
+    /// A RustModem port there is.
+    Vcom,
+    /// One end of a com0com pair.
+    Com0com,
+}
+
+impl Source {
+    /// What the combo box shows.
+    pub fn text(self) -> &'static str {
+        match self {
+            Source::Create => "RustModem: create a new port",
+            Source::Vcom => "RustModem: use an existing port",
+            Source::Com0com => "com0com: use a port of a pair",
+        }
+    }
+
+    /// The serial backend, as the service calls it.
+    pub fn backend(self) -> &'static str {
+        match self {
+            Source::Create | Source::Vcom => VCOM,
+            Source::Com0com => COM0COM,
+        }
+    }
+}
+
+/// The sources a dialog offers, in the order the combo box lists them. A
+/// port is made for a new line, where ports can be made.
+pub fn sources(new: bool, can_create: bool) -> Vec<Source> {
+    let mut sources = Vec::new();
+    if new && can_create {
+        sources.push(Source::Create);
+    }
+    sources.extend([Source::Vcom, Source::Com0com]);
+    sources
+}
+
+/// The source a new line starts with: a new port where one can be made,
+/// or else a RustModem port if one is free, or else a com0com pair.
+pub fn first_source(sources: &[Source], vcom_free: bool) -> Source {
+    if sources.contains(&Source::Create) {
+        Source::Create
+    } else if vcom_free {
+        Source::Vcom
+    } else {
+        Source::Com0com
+    }
+}
 
 /// The line ids the service takes.
 const LINE_IDS: (u32, u32) = (1, 999);
@@ -100,7 +160,7 @@ fn template(title: &str) -> DialogTemplate {
         .label(7, 27, 80, 8, "&Name:")
         .edit(ID_NAME, 90, 25, 153, 14)
         .label(7, 45, 80, 8, "Serial &backend:")
-        .combo(ID_BACKEND, 90, 43, 80, 60)
+        .combo(ID_BACKEND, 90, 43, 153, 60)
         .label(7, 63, 80, 8, "&Port:")
         .combo_editable(ID_PORT, 90, 61, 153, 90)
         .label(7, 81, 80, 8, "&Auto-answer rings:")
@@ -145,8 +205,10 @@ pub struct Form {
     pub number: String,
     /// The name.
     pub name: String,
+    /// The serial backend, as the service calls it.
+    pub backend: String,
     /// The port, as the combo box shows it: the name, and perhaps its
-    /// pair and host port in brackets after it.
+    /// pair and host port, or its modem, in brackets after it.
     pub port: String,
     /// Auto-answer rings.
     pub rings: String,
@@ -180,6 +242,7 @@ impl Form {
         Form {
             number: id.to_string(),
             name: String::new(),
+            backend: COM0COM.to_string(),
             port: String::new(),
             rings: "0".to_string(),
             enabled: true,
@@ -200,6 +263,7 @@ impl Form {
         Form {
             number: line.id.to_string(),
             name: line.name.clone().unwrap_or_default(),
+            backend: line.backend.clone(),
             port: line.port.clone(),
             rings: line.auto_answer_rings.to_string(),
             enabled: line.enabled,
@@ -305,7 +369,7 @@ impl Form {
         Ok(LineSpec {
             id,
             name: (!name.is_empty()).then(|| name.to_string()),
-            backend: Some(BACKEND.to_string()),
+            backend: Some(self.backend.clone()),
             port: self.port_name()?,
             enabled: Some(self.enabled),
             auto_answer_rings: Some(self.rings()?),
@@ -322,18 +386,19 @@ impl Form {
 
     /// What to change of a line: only what is not as the line has it.
     /// Changing a port hangs up, so a port that was not touched is not
-    /// sent.
+    /// sent. A port of another backend is sent with its backend.
     pub fn change(&self, line: &LineInfo) -> Result<LineChange, ErrorInfo> {
         let name = self.name.trim();
         let port = self.port_name()?;
         let rings = self.rings()?;
         let unknown_command = self.unknown_command();
+        let other_backend = self.backend != line.backend;
         Ok(LineChange {
             id: line.id,
             // An empty name removes the name.
             name: (name != line.name.as_deref().unwrap_or_default()).then(|| name.to_string()),
-            backend: None,
-            port: (!port.eq_ignore_ascii_case(&line.port)).then_some(port),
+            backend: other_backend.then(|| self.backend.clone()),
+            port: (other_backend || !port.eq_ignore_ascii_case(&line.port)).then_some(port),
             enabled: (self.enabled != line.enabled).then_some(self.enabled),
             auto_answer_rings: (rings != line.auto_answer_rings).then_some(rings),
             unknown_command: (unknown_command != line.unknown_command).then_some(unknown_command),
@@ -367,10 +432,14 @@ fn com_named(name: &str) -> bool {
 }
 
 /// A port as the combo box shows it: its name, and after it in brackets
-/// the other end of its pair and the port a host opens.
+/// the other end of its pair and the port a host opens, or for a
+/// RustModem port its modem.
 fn port_entry(port: &PortInfo) -> String {
     let mut beside: Vec<&str> = Vec::new();
-    for other in [port.pair.as_deref(), port.host_port.as_deref()]
+    let modem = (port.kind == PortKind::Vcom)
+        .then_some(port.modem.as_deref())
+        .flatten();
+    for other in [port.pair.as_deref(), port.host_port.as_deref(), modem]
         .into_iter()
         .flatten()
     {
@@ -413,6 +482,33 @@ pub fn port_choices(ports: &[PortInfo]) -> Vec<String> {
         .collect()
 }
 
+/// The RustModem ports to offer for a line: those no line uses.
+pub fn vcom_choices(ports: &[PortInfo]) -> Vec<String> {
+    ports
+        .iter()
+        .filter(|port| port.kind == PortKind::Vcom && port.line.is_none())
+        .map(port_entry)
+        .collect()
+}
+
+/// The names of the RustModem ports there are.
+fn vcom_names(ports: &[PortInfo]) -> Vec<String> {
+    ports
+        .iter()
+        .filter(|port| port.kind == PortKind::Vcom)
+        .map(|port| port.name.clone())
+        .collect()
+}
+
+/// The port that is in `after` and was not in `before`: the one that was
+/// made in between.
+pub fn made(before: &[String], after: &[String]) -> Option<String> {
+    after
+        .iter()
+        .find(|name| !before.iter().any(|was| was.eq_ignore_ascii_case(name)))
+        .cloned()
+}
+
 /// Which of the two the dialog is.
 enum Kind {
     New,
@@ -423,6 +519,13 @@ struct LineDialog {
     manager: Rc<Manager>,
     kind: Kind,
     start: Form,
+    /// The sources the first combo box lists, and the one it starts on.
+    sources: Vec<Source>,
+    first: Source,
+    /// The free RustModem ports, as the combo box shows them. One that
+    /// is made here is added.
+    vcom: RefCell<Vec<String>>,
+    /// The free ends of com0com pairs.
     ports: Vec<String>,
     /// The service speaks SIP: a line that does not register is reached
     /// by the trunk. Without SIP it is not reached at all.
@@ -465,6 +568,44 @@ impl LineDialog {
         watch(&self.manager, dialog);
     }
 
+    /// The source the combo box has chosen.
+    fn source(&self, dialog: Hwnd) -> Source {
+        Combo::of(dialog.item(ID_BACKEND))
+            .selected()
+            .and_then(|index| self.sources.get(index).copied())
+            .unwrap_or(self.first)
+    }
+
+    /// Chooses a source, and lists its ports.
+    fn choose(&self, dialog: Hwnd, source: Source, port: &str) {
+        Combo::of(dialog.item(ID_BACKEND))
+            .select(self.sources.iter().position(|offered| *offered == source));
+        self.show_ports(dialog, port);
+    }
+
+    /// The ports of the source that is chosen, with `port` as the one
+    /// typed. A port that is still to be made has no name to type.
+    fn show_ports(&self, dialog: Hwnd, port: &str) {
+        let source = self.source(dialog);
+        let combo = Combo::of(dialog.item(ID_PORT));
+        combo.clear();
+        match source {
+            Source::Create => {}
+            Source::Vcom => {
+                for entry in self.vcom.borrow().iter() {
+                    combo.add(entry);
+                }
+            }
+            Source::Com0com => {
+                for entry in &self.ports {
+                    combo.add(entry);
+                }
+            }
+        }
+        combo.set_text(port);
+        dialog.item(ID_PORT).set_enabled(source != Source::Create);
+    }
+
     /// The fields of the registration are for a line that registers.
     fn show_register(dialog: Hwnd) {
         let register = controls::checked(dialog.item(ids::SIP_REGISTER));
@@ -497,13 +638,10 @@ impl LineDialog {
         }
         dialog.item(ID_NAME).set_text(&self.start.name);
         let backend = Combo::of(dialog.item(ID_BACKEND));
-        backend.add(BACKEND);
-        backend.select(Some(0));
-        let port = Combo::of(dialog.item(ID_PORT));
-        for entry in &self.ports {
-            port.add(entry);
+        for source in &self.sources {
+            backend.add(source.text());
         }
-        port.set_text(&self.start.port);
+        self.choose(dialog, self.first, &self.start.port);
         let rings = dialog.item(ID_RINGS);
         UpDown::of(dialog.item(ID_RINGS_ARROWS)).attach(rings, 0, 255);
         rings.set_text(&self.start.rings);
@@ -549,6 +687,7 @@ impl LineDialog {
             modem: self.modem_change.borrow().clone(),
             number: dialog.item(ID_NUMBER).text(),
             name: dialog.item(ID_NAME).text(),
+            backend: self.source(dialog).backend().to_string(),
             port: Combo::of(dialog.item(ID_PORT)).text(),
             rings: dialog.item(ID_RINGS).text(),
             enabled: controls::checked(dialog.item(ID_ENABLED)),
@@ -563,23 +702,67 @@ impl LineDialog {
         }
     }
 
+    /// Has a RustModem port made, and gives its name: `None` if the
+    /// person did not allow it. The port is the one the service lists
+    /// afterwards and did not list before.
+    ///
+    /// The dialog then has the port as an existing one, chosen: if the
+    /// service refuses the line, the port is not made a second time.
+    fn create_port(&self, dialog: Hwnd) -> Result<Option<String>, ErrorInfo> {
+        let listed = || {
+            self.manager
+                .call::<PortList>(dialog, Call::PortsList)
+                .map(|list| list.ports)
+        };
+        let before = vcom_names(&listed()?);
+        match self.manager.port_command(dialog, setup::add_words()) {
+            Outcome::Done => {}
+            Outcome::Cancelled => return Ok(None),
+            Outcome::Failed(error) => return Err(error),
+        }
+        let after = listed()?;
+        let Some(name) = made(&before, &vcom_names(&after)) else {
+            return Err(msg::message("RMD9014", &[]).into());
+        };
+        *self.vcom.borrow_mut() = vcom_choices(&after);
+        let entry = after
+            .iter()
+            .find(|port| port.name == name)
+            .map_or_else(|| name.clone(), port_entry);
+        self.choose(dialog, Source::Vcom, &entry);
+        Ok(Some(name))
+    }
+
     /// Sends what the dialog holds to the service. `Ok(true)` when the
-    /// service took it.
-    fn send(&self, dialog: Hwnd) -> Result<(), ErrorInfo> {
-        let form = self.read(dialog);
+    /// service took it and the dialog is done with; `Ok(false)` when the
+    /// person stopped it, and the dialog stays.
+    fn send(&self, dialog: Hwnd) -> Result<bool, ErrorInfo> {
+        let mut form = self.read(dialog);
         let call = match &self.kind {
-            Kind::New => Call::LinesAdd(form.spec()?),
+            Kind::New => {
+                if self.source(dialog) == Source::Create {
+                    // Everything else is looked at first: no port is
+                    // made for a line the dialog would refuse.
+                    form.port = "COM0".to_string();
+                    form.spec()?;
+                    let Some(port) = self.create_port(dialog)? else {
+                        return Ok(false);
+                    };
+                    form.port = port;
+                }
+                Call::LinesAdd(form.spec()?)
+            }
             Kind::Edit(line) => {
                 let change = form.change(line)?;
                 if !changes_something(&change) {
-                    return Ok(());
+                    return Ok(true);
                 }
                 Call::LinesEdit(change)
             }
         };
         let line: LineInfo = self.manager.call(dialog, call)?;
         self.manager.line_changed(line);
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -610,6 +793,16 @@ impl Handler for LineDialog {
                 Reply::Handled
             }
             Event::Command {
+                id: ID_BACKEND,
+                code: code::COMBO_SELECTION,
+            } => {
+                // The ports are those of the source: what was typed for
+                // another is not a port of this one.
+                self.show_ports(dialog, "");
+                watch(&self.manager, dialog);
+                Reply::Handled
+            }
+            Event::Command {
                 id: ids::ENGINE, ..
             } => {
                 Self::show_modem(dialog);
@@ -622,7 +815,8 @@ impl Handler for LineDialog {
             }
             Event::Command { id: id::OK, .. } => {
                 match self.send(dialog) {
-                    Ok(()) => dialog.end_dialog(id::OK),
+                    Ok(true) => dialog.end_dialog(id::OK),
+                    Ok(false) => {}
                     // The dialog stays, with what was typed.
                     Err(error) => self.manager.show_error(dialog, &error),
                 }
@@ -642,12 +836,13 @@ fn sip_on(manager: &Manager) -> bool {
     })
 }
 
-/// The ports to offer, as the service lists them now. If the service
-/// cannot say, none are offered and a port can still be typed.
-fn ports(manager: &Manager, owner: Hwnd) -> Vec<String> {
+/// The ports to offer, as the service lists them now: the RustModem
+/// ports and the ends of com0com pairs. If the service cannot say, none
+/// are offered and a port can still be typed.
+fn ports(manager: &Manager, owner: Hwnd) -> (Vec<String>, Vec<String>) {
     manager
         .call::<PortList>(owner, Call::PortsList)
-        .map(|list| port_choices(&list.ports))
+        .map(|list| (vcom_choices(&list.ports), port_choices(&list.ports)))
         .unwrap_or_default()
 }
 
@@ -681,11 +876,16 @@ fn service_modem(manager: &Manager) -> LineModem {
 /// New line, with the lowest free id filled in.
 pub fn new_line(manager: &Rc<Manager>, owner: Hwnd) {
     let id = manager.with_model(|model| model.lines.lowest_free_id());
+    let (vcom, ports) = ports(manager, owner);
+    let sources = sources(true, manager.ports_can_change());
     let handler = Rc::new(LineDialog {
         manager: Rc::clone(manager),
         kind: Kind::New,
         start: Form::new_line(id),
-        ports: ports(manager, owner),
+        first: first_source(&sources, !vcom.is_empty()),
+        sources,
+        vcom: RefCell::new(vcom),
+        ports,
         sip: sip_on(manager),
         modem: RefCell::new(service_modem(manager)),
         modem_change: RefCell::new(None),
@@ -695,13 +895,21 @@ pub fn new_line(manager: &Rc<Manager>, owner: Hwnd) {
 
 /// Edit line, for a line there is.
 pub fn edit_line(manager: &Rc<Manager>, owner: Hwnd, line: LineInfo) {
+    let (vcom, ports) = ports(manager, owner);
     let handler = Rc::new(LineDialog {
         manager: Rc::clone(manager),
         start: Form::of(&line),
         modem: RefCell::new(line.modem.clone()),
         modem_change: RefCell::new(None),
+        sources: sources(false, false),
+        first: if line.backend == VCOM {
+            Source::Vcom
+        } else {
+            Source::Com0com
+        },
         kind: Kind::Edit(Box::new(line)),
-        ports: ports(manager, owner),
+        vcom: RefCell::new(vcom),
+        ports,
         sip: sip_on(manager),
     });
     template("Edit line").show_modal(Some(owner), handler);
@@ -746,8 +954,89 @@ mod tests {
             pair: pair.map(str::to_string),
             host_port: host.map(str::to_string),
             modem: None,
+            driver_version: None,
             line,
         }
+    }
+
+    fn vcom(name: &str, modem: Option<&str>, line: Option<u16>) -> PortInfo {
+        PortInfo {
+            name: name.to_string(),
+            kind: PortKind::Vcom,
+            pair: None,
+            host_port: None,
+            modem: modem.map(str::to_string),
+            driver_version: Some("0.2.0.0".to_string()),
+            line,
+        }
+    }
+
+    #[test]
+    fn a_new_port_is_offered_first_where_one_can_be_made() {
+        let all = sources(true, true);
+        assert_eq!(all, [Source::Create, Source::Vcom, Source::Com0com]);
+        assert_eq!(first_source(&all, true), Source::Create);
+        // Where none can be made: a port there is, or else a pair.
+        let some = sources(true, false);
+        assert_eq!(some, [Source::Vcom, Source::Com0com]);
+        assert_eq!(first_source(&some, true), Source::Vcom);
+        assert_eq!(first_source(&some, false), Source::Com0com);
+        // No port is made for a line there is.
+        assert_eq!(sources(false, true), [Source::Vcom, Source::Com0com]);
+        assert_eq!(Source::Create.backend(), "vcom");
+        assert_eq!(Source::Vcom.backend(), "vcom");
+        assert_eq!(Source::Com0com.backend(), "com0com");
+    }
+
+    #[test]
+    fn the_rustmodem_ports_offered_are_the_free_ones_with_their_modems() {
+        let ports = [
+            port("CNCB1", Some("CNCA1"), Some("COM12"), None),
+            vcom("COM10", Some("RustModem Softmodem"), Some(1)),
+            vcom("COM11", Some("RustModem Softmodem #2"), None),
+            vcom("COM12", None, None),
+        ];
+        assert_eq!(
+            vcom_choices(&ports),
+            ["COM11 (RustModem Softmodem #2)", "COM12"]
+        );
+        // And they are no com0com ports.
+        assert_eq!(port_choices(&ports), ["CNCB1 (CNCA1, COM12)"]);
+        assert_eq!(vcom_names(&ports), ["COM10", "COM11", "COM12"]);
+    }
+
+    #[test]
+    fn the_port_that_was_made_is_the_one_that_was_not_there() {
+        let before = ["COM10".to_string(), "COM11".to_string()];
+        let after = [
+            "COM10".to_string(),
+            "com11".to_string(),
+            "COM12".to_string(),
+        ];
+        assert_eq!(made(&before, &after).as_deref(), Some("COM12"));
+        assert_eq!(made(&before, &before), None);
+    }
+
+    #[test]
+    fn a_line_takes_the_backend_of_its_source() {
+        let mut form = Form::new_line(5);
+        form.backend = VCOM.to_string();
+        form.port = "COM11 (RustModem Softmodem #2)".to_string();
+        let spec = form.spec().unwrap();
+        assert_eq!(spec.backend.as_deref(), Some("vcom"));
+        assert_eq!(spec.port, "COM11");
+
+        // A line that moves to a port of the other backend says both.
+        let mut form = Form::of(&line());
+        assert_eq!(form.backend, "com0com");
+        form.backend = VCOM.to_string();
+        form.port = "COM11".to_string();
+        let change = form.change(&line()).unwrap();
+        assert_eq!(change.backend.as_deref(), Some("vcom"));
+        assert_eq!(change.port.as_deref(), Some("COM11"));
+        // And one that stays says neither.
+        let change = Form::of(&line()).change(&line()).unwrap();
+        assert_eq!((change.backend, change.port), (None, None));
     }
 
     #[test]

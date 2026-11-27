@@ -1324,6 +1324,7 @@ One serial port of the machine the service runs on.
 | `pair` | string | no | For com0com, the name of the other end of the pair. |
 | `host_port` | string | no | The COM name applications see for the host side of the port. |
 | `modem` | string | no | The friendly name of a modem device attached to the host port. |
+| `driver_version` | string | no | For a RustModem port, the version of the driver package its modem was installed from. |
 | `line` | integer | no | The id of the line that uses the port. |
 
 ### Subscription
@@ -1410,6 +1411,7 @@ What kind of serial port a port is. A string, one of:
 | Value | Meaning |
 |---|---|
 | `com0com` | One end of a com0com null-modem pair. |
+| `vcom` | A RustModem port: a virtual COM port of RustModem's own driver. Applications open it by the same name the service does. |
 | `serial` | A serial port with a `COM` name. |
 | `other` | Anything else the system lists as a serial device. |
 

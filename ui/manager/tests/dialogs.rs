@@ -4,7 +4,9 @@
 
 //! The dialogs and the actions, against the demo service: each dialog
 //! opens, the line dialogs add and change lines, a refusal keeps the
-//! dialog open, and the exports write their files.
+//! dialog open, and the exports write their files. Ports are made and
+//! removed by something that stands in for the setup program, which would
+//! ask for an administrator.
 
 #![cfg(windows)]
 
@@ -16,10 +18,14 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use common::{Bench, DemoService, close, frame, pipe_name};
-use manager::{Hooks, has_handler, ids, line_ids, settings_ids};
+use manager::setup::Outcome;
+use manager::{
+    Hooks, ID_REMOVE_LINE_ONLY, ID_REMOVE_WITH_PORT, has_handler, ids, line_ids, ports_ids,
+    settings_ids,
+};
 use model::{Command, ConnectionState, MenuEntry};
 use win32::controls::Combo;
-use win32::{Hwnd, ListView, Menu, TaskDialog, id};
+use win32::{Hwnd, ListView, Menu, TaskDialog, code, id};
 
 const CONNECT: Duration = Duration::from_secs(30);
 
@@ -43,6 +49,10 @@ struct Seen {
     current: Cell<Option<Hwnd>>,
     /// The file the file dialogs answer with.
     file: RefCell<Option<PathBuf>>,
+    /// The port commands the setup program would have been run with.
+    setup: RefCell<Vec<Vec<String>>>,
+    /// How the setup program ends; done, if nothing says otherwise.
+    setup_outcome: RefCell<Option<Outcome>>,
 }
 
 fn hooks(seen: &Rc<Seen>) -> Hooks {
@@ -85,12 +95,32 @@ fn hooks(seen: &Rc<Seen>) -> Hooks {
 }
 
 /// A manager connected to the frozen demo service, with the hooks in.
+/// It has no setup program, as a manager that was not installed has
+/// none.
 fn connected(test: &str, lines: u32) -> (DemoService, Bench, Rc<Seen>) {
+    connected_as(test, lines, false)
+}
+
+/// The same, with something standing in for the setup program: it makes
+/// and removes nothing, and says what it is told to say.
+fn connected_with_setup(test: &str, lines: u32) -> (DemoService, Bench, Rc<Seen>) {
+    connected_as(test, lines, true)
+}
+
+fn connected_as(test: &str, lines: u32, setup: bool) -> (DemoService, Bench, Rc<Seen>) {
     let name = pipe_name(test);
     let service = DemoService::start(&name, "frozen", lines);
     let seen = Rc::new(Seen::default());
     seen.answer.set(id::CLOSE);
-    let bench = Bench::open_with(&name, hooks(&seen));
+    let mut hooks = hooks(&seen);
+    if setup {
+        let seen = Rc::clone(&seen);
+        hooks.setup = Some(Rc::new(move |words: &[String]| {
+            seen.setup.borrow_mut().push(words.to_vec());
+            seen.setup_outcome.borrow().clone().unwrap_or(Outcome::Done)
+        }));
+    }
+    let bench = Bench::open_with(&name, hooks);
     assert!(
         bench.run_until(CONNECT, |bench| {
             bench
@@ -119,6 +149,73 @@ fn select_line(bench: &Bench, id: u16) {
 
 fn line_count(bench: &Bench) -> usize {
     bench.opened.manager.with_model(|model| model.lines.len())
+}
+
+/// What the line dialog's first combo box offers.
+const CREATE: &str = "RustModem: create a new port";
+const EXISTING: &str = "RustModem: use an existing port";
+const PAIRS: &str = "com0com: use a port of a pair";
+
+/// What the line dialog's first combo box has chosen.
+fn source(dialog: Hwnd) -> String {
+    let sources = Combo::of(dialog.item(line_ids::BACKEND));
+    sources
+        .selected()
+        .map(|index| sources.entry(index))
+        .unwrap_or_default()
+}
+
+/// Does `act` with a line dialog once it offers the ports of `wanted`.
+/// The dialog is told of the choice as its combo box would tell it, and
+/// says that it is up again when it has listed the ports.
+fn with_source(wanted: &'static str, act: impl Fn(&str, Hwnd) + 'static) -> WithDialog {
+    Box::new(move |name, dialog| {
+        if source(dialog) != wanted {
+            let sources = Combo::of(dialog.item(line_ids::BACKEND));
+            let index = (0..sources.count())
+                .find(|index| sources.entry(*index) == wanted)
+                .unwrap_or_else(|| panic!("{wanted} is not offered"));
+            sources.select(Some(index));
+            dialog.command_code(line_ids::BACKEND, code::COMBO_SELECTION);
+            return;
+        }
+        act(name, dialog)
+    })
+}
+
+/// The row of a port in the list of Ports and drivers.
+fn port_row(list: ListView, port: &str) -> usize {
+    (0..list.row_count())
+        .find(|row| list.cell_text(*row, 0) == port)
+        .unwrap_or_else(|| panic!("{port} is not listed"))
+}
+
+/// What the list of Ports and drivers shows of a port.
+fn port_cells(list: ListView, port: &str) -> Vec<String> {
+    let row = port_row(list, port);
+    (0..list.column_count())
+        .map(|column| list.cell_text(row, column))
+        .collect()
+}
+
+/// Adds line 5 on the demo machine's first RustModem port.
+fn add_line_on_com40(bench: &Bench, seen: &Seen) {
+    *seen.with_dialog.borrow_mut() = Some(with_source(EXISTING, |_, dialog| {
+        let ports = Combo::of(dialog.item(line_ids::PORT));
+        assert_eq!(ports.entry(0), "COM40 (RustModem Softmodem)");
+        ports.set_text(&ports.entry(0));
+        dialog.command(id::OK);
+    }));
+    bench.choose(Command::NewLine);
+    *seen.with_dialog.borrow_mut() = None;
+    assert!(seen.tasks.borrow().is_empty(), "{:?}", seen.tasks.borrow());
+    bench.opened.manager.with_model(|model| {
+        let line = model.lines.line(5).expect("line 5 was added");
+        assert_eq!(
+            (line.backend.as_str(), line.port.as_str()),
+            ("vcom", "COM40")
+        );
+    });
 }
 
 #[test]
@@ -238,7 +335,7 @@ fn a_line_is_added_changed_and_removed() {
     let (_service, bench, seen) = connected("lines", 4);
 
     // New line: the id is the lowest free one; a port is typed.
-    *seen.with_dialog.borrow_mut() = Some(Box::new(|name, dialog| {
+    *seen.with_dialog.borrow_mut() = Some(with_source(PAIRS, |name, dialog| {
         assert_eq!(name, "new-line");
         assert_eq!(dialog.item(line_ids::NUMBER).text(), "5");
         // The ports offered are the free ends of the spare pairs.
@@ -268,6 +365,9 @@ fn a_line_is_added_changed_and_removed() {
         assert_eq!(dialog.item(line_ids::NUMBER).text(), "5");
         assert!(!dialog.item(line_ids::NUMBER).enabled());
         assert_eq!(dialog.item(line_ids::NAME).text(), "Back office");
+        // The line is on a pair, and no port is made for a line there is.
+        assert_eq!(source(dialog), PAIRS);
+        assert_eq!(Combo::of(dialog.item(line_ids::BACKEND)).count(), 2);
         assert_eq!(Combo::of(dialog.item(line_ids::PORT)).text(), "CNCB4");
         dialog.item(line_ids::NAME).set_text("Front desk");
         dialog.item(line_ids::RINGS).set_text("2");
@@ -284,7 +384,7 @@ fn a_line_is_added_changed_and_removed() {
 
     // A port that a line already has: the service refuses, the message
     // is shown, and the dialog stays open with what was typed.
-    *seen.with_dialog.borrow_mut() = Some(Box::new(|_, dialog| {
+    *seen.with_dialog.borrow_mut() = Some(with_source(PAIRS, |_, dialog| {
         Combo::of(dialog.item(line_ids::PORT)).set_text("CNCB0");
         dialog.item(line_ids::NAME).set_text("Twice");
         dialog.command(id::OK);
@@ -306,7 +406,7 @@ fn a_line_is_added_changed_and_removed() {
     seen.tasks.borrow_mut().clear();
 
     // What is typed is checked before it is sent.
-    *seen.with_dialog.borrow_mut() = Some(Box::new(|_, dialog| {
+    *seen.with_dialog.borrow_mut() = Some(with_source(PAIRS, |_, dialog| {
         dialog.item(line_ids::RINGS).set_text("999");
         Combo::of(dialog.item(line_ids::PORT)).set_text("CNCB6");
         dialog.command(id::OK);
@@ -336,6 +436,8 @@ fn a_line_is_added_changed_and_removed() {
         assert_eq!(tasks[0].instruction, "Remove line 5 (Front desk)?");
         assert!(tasks[0].content.contains("CNCB4"));
         assert_eq!(tasks[0].default, Some(id::NO));
+        // A pair is not the manager's to remove.
+        assert!(tasks[0].links.is_empty());
     }
     bench.run_for(Duration::from_millis(300));
     assert_eq!(line_count(&bench), 5);
@@ -359,6 +461,285 @@ fn a_line_is_added_changed_and_removed() {
     bench.choose(Command::RemoveLine);
     assert!(seen.tasks.borrow().is_empty());
     assert_eq!(line_count(&bench), 4);
+}
+
+#[test]
+fn a_line_takes_a_rustmodem_port_there_is() {
+    let (_service, bench, seen) = connected("vcom-line", 4);
+
+    // With no setup program no port can be made: the ports there are
+    // come first, and then the pairs.
+    *seen.with_dialog.borrow_mut() = Some(Box::new(|name, dialog| {
+        assert_eq!(name, "new-line");
+        let sources = Combo::of(dialog.item(line_ids::BACKEND));
+        assert_eq!(sources.count(), 2);
+        assert_eq!(source(dialog), EXISTING);
+        let ports = Combo::of(dialog.item(line_ids::PORT));
+        assert_eq!(ports.count(), 2);
+        assert_eq!(ports.entry(0), "COM40 (RustModem Softmodem)");
+        assert_eq!(ports.entry(1), "COM41 (RustModem Softmodem #2)");
+        assert!(dialog.item(line_ids::PORT).enabled());
+        ports.set_text(&ports.entry(1));
+        dialog.command(id::OK);
+    }));
+    bench.choose(Command::NewLine);
+    assert!(seen.tasks.borrow().is_empty(), "{:?}", seen.tasks.borrow());
+    bench.opened.manager.with_model(|model| {
+        let line = model.lines.line(5).expect("line 5 was added");
+        assert_eq!(line.backend, "vcom");
+        assert_eq!(line.port, "COM41");
+        // One port with one name: the binding is the modem Windows has
+        // on it.
+        assert_eq!(line.binding.as_deref(), Some("RustModem Softmodem #2"));
+    });
+
+    // Edit line shows it as it is, and changing nothing sends nothing.
+    select_line(&bench, 5);
+    *seen.with_dialog.borrow_mut() = Some(Box::new(|name, dialog| {
+        assert_eq!(name, "edit-line");
+        assert_eq!(source(dialog), EXISTING);
+        assert_eq!(Combo::of(dialog.item(line_ids::PORT)).text(), "COM41");
+        dialog.command(id::OK);
+    }));
+    bench.choose(Command::EditLine);
+    assert!(seen.tasks.borrow().is_empty(), "{:?}", seen.tasks.borrow());
+
+    // Ports and drivers lists the ports with their modems, the driver
+    // and what each is doing. Nothing is made or removed here.
+    *seen.with_dialog.borrow_mut() = Some(Box::new(|name, dialog| {
+        assert_eq!(name, "ports");
+        let list = ListView::of(dialog.item(ports_ids::LIST));
+        assert_eq!(
+            port_cells(list, "COM41"),
+            [
+                "COM41",
+                "RustModem",
+                model::EMPTY,
+                model::EMPTY,
+                "RustModem Softmodem #2",
+                "0.2.0.0",
+                "In use",
+                "5"
+            ]
+        );
+        assert_eq!(port_cells(list, "COM40")[6], "Free");
+        assert_eq!(port_cells(list, "CNCB0")[1], "com0com");
+        list.select(Some(port_row(list, "COM40")));
+        assert!(!dialog.item(ports_ids::ADD).enabled());
+        assert!(!dialog.item(ports_ids::REMOVE).enabled());
+        close(name, dialog);
+    }));
+    bench.choose(Command::PortsAndDrivers);
+    *seen.with_dialog.borrow_mut() = None;
+
+    // Remove line cannot remove the port either, and does not offer to.
+    seen.answer.set(id::YES);
+    bench.choose(Command::RemoveLine);
+    {
+        let tasks = seen.tasks.borrow();
+        assert_eq!(tasks.len(), 1, "{tasks:?}");
+        assert!(tasks[0].content.contains("COM41"));
+        assert!(tasks[0].links.is_empty());
+    }
+    assert!(bench.run_until(CONNECT, |bench| line_count(bench) == 4));
+}
+
+#[test]
+fn ports_are_made_and_removed_by_the_setup_program() {
+    let (_service, bench, seen) = connected_with_setup("ports", 4);
+
+    // Remove port is for a RustModem port that no line uses.
+    let step = Rc::new(Cell::new(0));
+    *seen.with_dialog.borrow_mut() = Some(Box::new({
+        let (seen, step) = (Rc::clone(&seen), Rc::clone(&step));
+        move |name, dialog| {
+            assert_eq!(name, "ports");
+            let list = ListView::of(dialog.item(ports_ids::LIST));
+            step.set(step.get() + 1);
+            match step.get() {
+                1 => {
+                    assert!(dialog.item(ports_ids::ADD).enabled());
+                    assert!(!dialog.item(ports_ids::REMOVE).enabled());
+                    list.select(Some(port_row(list, "CNCB5")));
+                    assert!(!dialog.item(ports_ids::REMOVE).enabled());
+                    list.select(Some(port_row(list, "COM41")));
+                    assert!(dialog.item(ports_ids::REMOVE).enabled());
+                    dialog.command(ports_ids::REMOVE);
+                }
+                2 => {
+                    assert_eq!(*seen.setup.borrow(), [["port", "remove", "COM41"]]);
+                    dialog.command(ports_ids::ADD);
+                }
+                _ => {
+                    assert_eq!(seen.setup.borrow().len(), 2);
+                    assert_eq!(seen.setup.borrow()[1], ["port", "add"]);
+                    close(name, dialog);
+                }
+            }
+        }
+    }));
+    bench.choose(Command::PortsAndDrivers);
+    assert_eq!(step.get(), 3);
+    assert!(seen.tasks.borrow().is_empty(), "{:?}", seen.tasks.borrow());
+
+    // What the setup program says when it fails is what is shown.
+    let refused = ctlproto::ErrorInfo::from(msg::message("RMD9011", &[]));
+    *seen.setup_outcome.borrow_mut() = Some(Outcome::Failed(refused.clone()));
+    seen.setup.borrow_mut().clear();
+    step.set(0);
+    *seen.with_dialog.borrow_mut() = Some(Box::new({
+        let step = Rc::clone(&step);
+        move |name, dialog| {
+            step.set(step.get() + 1);
+            if step.get() == 1 {
+                dialog.command(ports_ids::ADD);
+            } else {
+                close(name, dialog);
+            }
+        }
+    }));
+    bench.choose(Command::PortsAndDrivers);
+    {
+        let tasks = seen.tasks.borrow();
+        assert_eq!(tasks.len(), 1, "{tasks:?}");
+        assert_eq!(tasks[0].title, "RMD9011");
+        assert_eq!(tasks[0].instruction, refused.text);
+    }
+    seen.tasks.borrow_mut().clear();
+
+    // The person says no to Windows: nothing is said.
+    *seen.setup_outcome.borrow_mut() = Some(Outcome::Cancelled);
+    step.set(0);
+    bench.choose(Command::PortsAndDrivers);
+    assert_eq!(seen.setup.borrow().len(), 2);
+    assert!(seen.tasks.borrow().is_empty(), "{:?}", seen.tasks.borrow());
+}
+
+#[test]
+fn a_new_line_has_a_port_made_for_it() {
+    let (_service, bench, seen) = connected_with_setup("create", 4);
+
+    // Where ports can be made, making one is what a new line starts
+    // with, and there is no port to choose.
+    // What is typed is looked at before a port is made for it.
+    *seen.with_dialog.borrow_mut() = Some(Box::new(|name, dialog| {
+        assert_eq!(name, "new-line");
+        let sources = Combo::of(dialog.item(line_ids::BACKEND));
+        assert_eq!(
+            (0..sources.count())
+                .map(|index| sources.entry(index))
+                .collect::<Vec<_>>(),
+            [CREATE, EXISTING, PAIRS]
+        );
+        assert_eq!(source(dialog), CREATE);
+        assert!(!dialog.item(line_ids::PORT).enabled());
+        assert_eq!(Combo::of(dialog.item(line_ids::PORT)).count(), 0);
+        dialog.item(line_ids::RINGS).set_text("999");
+        dialog.command(id::OK);
+    }));
+    bench.choose(Command::NewLine);
+    {
+        let tasks = seen.tasks.borrow();
+        assert_eq!(tasks.len(), 1, "{tasks:?}");
+        assert_eq!(tasks[0].title, "RMD4008");
+    }
+    assert!(seen.setup.borrow().is_empty());
+    seen.tasks.borrow_mut().clear();
+
+    // The person says no to Windows: the dialog stays, and nothing is
+    // said. It is closed here by the Cancel that comes after the OK.
+    *seen.setup_outcome.borrow_mut() = Some(Outcome::Cancelled);
+    *seen.with_dialog.borrow_mut() = Some(Box::new(|_, dialog| {
+        dialog.command(id::OK);
+        dialog.command(id::CANCEL);
+    }));
+    bench.choose(Command::NewLine);
+    assert_eq!(*seen.setup.borrow(), [["port", "add"]]);
+    assert!(seen.tasks.borrow().is_empty(), "{:?}", seen.tasks.borrow());
+    assert_eq!(line_count(&bench), 4);
+
+    // The setup program says it made a port, and the demo service has
+    // none that it did not have: no line is added on a port that is
+    // not there.
+    *seen.setup_outcome.borrow_mut() = None;
+    *seen.with_dialog.borrow_mut() = Some(Box::new(|_, dialog| {
+        dialog.command(id::OK);
+    }));
+    bench.choose(Command::NewLine);
+    assert_eq!(seen.setup.borrow().len(), 2);
+    {
+        let tasks = seen.tasks.borrow();
+        assert_eq!(tasks.len(), 1, "{tasks:?}");
+        assert_eq!(tasks[0].title, "RMD9014");
+    }
+    assert_eq!(line_count(&bench), 4);
+    seen.tasks.borrow_mut().clear();
+
+    // A port there is can be chosen all the same.
+    seen.setup.borrow_mut().clear();
+    add_line_on_com40(&bench, &seen);
+    assert!(seen.setup.borrow().is_empty());
+}
+
+#[test]
+fn removing_a_line_offers_to_remove_its_port() {
+    let (_service, bench, seen) = connected_with_setup("remove-port", 4);
+    add_line_on_com40(&bench, &seen);
+    select_line(&bench, 5);
+
+    // Cancel: nothing happens.
+    seen.answer.set(id::CANCEL);
+    bench.choose(Command::RemoveLine);
+    {
+        let tasks = seen.tasks.borrow();
+        assert_eq!(tasks.len(), 1, "{tasks:?}");
+        assert_eq!(tasks[0].title, "Remove line");
+        assert_eq!(tasks[0].instruction, "Remove line 5?");
+        assert_eq!(tasks[0].default, Some(id::CANCEL));
+        let links: Vec<u16> = tasks[0].links.iter().map(|(id, _)| *id).collect();
+        assert_eq!(links, [ID_REMOVE_WITH_PORT, ID_REMOVE_LINE_ONLY]);
+        assert!(
+            tasks[0]
+                .links
+                .iter()
+                .all(|(_, text)| text.contains("COM40"))
+        );
+    }
+    bench.run_for(Duration::from_millis(300));
+    assert_eq!(line_count(&bench), 5);
+    assert!(seen.setup.borrow().is_empty());
+    seen.tasks.borrow_mut().clear();
+
+    // The line only: the port stays.
+    seen.answer.set(ID_REMOVE_LINE_ONLY);
+    bench.choose(Command::RemoveLine);
+    assert!(bench.run_until(CONNECT, |bench| line_count(bench) == 4));
+    assert!(seen.setup.borrow().is_empty());
+    seen.tasks.borrow_mut().clear();
+
+    // The line and its port: the line goes first, and then the port.
+    add_line_on_com40(&bench, &seen);
+    select_line(&bench, 5);
+    seen.answer.set(ID_REMOVE_WITH_PORT);
+    bench.choose(Command::RemoveLine);
+    assert_eq!(line_count(&bench), 4);
+    assert_eq!(*seen.setup.borrow(), [["port", "remove", "COM40"]]);
+    assert_eq!(seen.tasks.borrow().len(), 1);
+    seen.tasks.borrow_mut().clear();
+
+    // A port that could not be removed is said, and the line is gone
+    // all the same.
+    add_line_on_com40(&bench, &seen);
+    select_line(&bench, 5);
+    let refused = ctlproto::ErrorInfo::from(msg::message("RMD9009", &["COM40", "it is open"]));
+    *seen.setup_outcome.borrow_mut() = Some(Outcome::Failed(refused));
+    bench.choose(Command::RemoveLine);
+    assert_eq!(line_count(&bench), 4);
+    {
+        let tasks = seen.tasks.borrow();
+        assert_eq!(tasks.len(), 2, "{tasks:?}");
+        assert_eq!(tasks[1].title, "RMD9009");
+    }
 }
 
 #[test]

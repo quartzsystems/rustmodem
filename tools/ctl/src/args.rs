@@ -21,6 +21,8 @@ Usage:
   rustmodem-ctl [OPTIONS] reload
   rustmodem-ctl [OPTIONS] stats
   rustmodem-ctl [OPTIONS] ports
+  rustmodem-ctl port add [--com N] [--count K]
+  rustmodem-ctl port remove COMn
   rustmodem-ctl [OPTIONS] log [--last N]
   rustmodem-ctl [OPTIONS] watch          prints events until interrupted
   rustmodem-ctl [OPTIONS] sip            the listener and the registrations
@@ -30,6 +32,11 @@ Usage:
   rustmodem-ctl [OPTIONS] capture on|off <id>
   rustmodem-ctl [--json] capture check <file>
   rustmodem-ctl capture wav <file> <out.wav>
+
+port add makes RustModem ports, each a COM port with its modem, and port
+remove removes one. Both are done by the setup program, rustmodem-setup,
+which asks to run as an administrator if it is not one: they ask nothing
+of the service, and take none of the options below.
 
 selftest joins the modems of two idle lines, the first originating and
 the second answering, with no network between them, and has each send the
@@ -106,6 +113,9 @@ pub enum Command {
     CaptureCheck,
     /// `capture wav <file> <out.wav>`; the files are the paths.
     CaptureWav,
+    /// `port add` and `port remove`; the paths are the words the setup
+    /// program is given.
+    Port,
     /// `--help`
     Help,
     /// `--version`
@@ -123,7 +133,8 @@ pub struct Options {
     pub verbose: bool,
     /// What to ask the service.
     pub command: Command,
-    /// The files a capture command names.
+    /// The files a capture command names, or the words a port command
+    /// gives the setup program.
     pub paths: Vec<String>,
 }
 
@@ -136,6 +147,8 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Options, Message> {
     let mut verbose = false;
     let mut last = None;
     let mut words: Vec<String> = Vec::new();
+    // What port add takes, to pass on: an option and its value.
+    let mut for_setup: Vec<String> = Vec::new();
 
     let mut args = args;
     while let Some(arg) = args.next() {
@@ -146,6 +159,13 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Options, Message> {
             "--last" => {
                 let count = args.next().ok_or_else(|| refuse("--last"))?;
                 last = Some(count.parse::<u32>().map_err(|_| refuse(&count))?);
+            }
+            "--com" | "--count" => {
+                let value = args.next().ok_or_else(|| refuse(&arg))?;
+                if value.trim_start_matches("COM").parse::<u16>().is_err() {
+                    return Err(refuse(&value));
+                }
+                for_setup.extend([arg.clone(), value]);
             }
             "--help" | "-h" | "/?" => words.insert(0, "--help".to_string()),
             "--version" | "-V" => words.insert(0, "--version".to_string()),
@@ -192,6 +212,19 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Options, Message> {
         Some("reload") => alone(&words, Command::Reload)?,
         Some("stats") => alone(&words, Command::Stats)?,
         Some("ports") => alone(&words, Command::Ports)?,
+        Some("port") => match &words[1..] {
+            [add] if add == "add" => {
+                paths.extend(["port".to_string(), "add".to_string()]);
+                paths.append(&mut for_setup);
+                Command::Port
+            }
+            [remove, name] if remove == "remove" => {
+                paths.extend(["port".to_string(), "remove".to_string(), name.clone()]);
+                Command::Port
+            }
+            [] => return Err(refuse("port")),
+            [.., last] => return Err(refuse(last)),
+        },
         Some("log") => alone(&words, Command::Log(last))?,
         Some("watch") => alone(&words, Command::Watch)?,
         Some("sip") => alone(&words, Command::Sip)?,
@@ -222,6 +255,10 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Options, Message> {
         Some(other) => return Err(refuse(other)),
         None => Command::Help,
     };
+    // --com and --count belong to port add and to nothing else.
+    if let Some(option) = for_setup.first() {
+        return Err(refuse(option));
+    }
     // --last belongs to calls and log and to nothing else.
     if last.is_some() && !matches!(command, Command::Calls(_) | Command::Log(_)) {
         return Err(refuse("--last"));
@@ -265,6 +302,8 @@ mod tests {
         assert_eq!(command(&["reload"]), Command::Reload);
         assert_eq!(command(&["stats"]), Command::Stats);
         assert_eq!(command(&["ports"]), Command::Ports);
+        assert_eq!(command(&["port", "add"]), Command::Port);
+        assert_eq!(command(&["port", "remove", "COM12"]), Command::Port);
         assert_eq!(command(&["log"]), Command::Log(None));
         assert_eq!(command(&["log", "--last", "50"]), Command::Log(Some(50)));
         assert_eq!(command(&["watch"]), Command::Watch);
@@ -349,6 +388,43 @@ mod tests {
         ] {
             let problem = parse_words(words).unwrap_err();
             assert_eq!(problem.id, "RMD0009", "{words:?}");
+        }
+    }
+
+    #[test]
+    fn a_port_command_is_passed_to_the_setup_program_as_it_was_given() {
+        let words = |line: &[&str]| {
+            parse(line.iter().map(|w| w.to_string()))
+                .unwrap_or_else(|e| panic!("{line:?}: {e}"))
+                .paths
+        };
+        assert_eq!(words(&["port", "add"]), ["port", "add"]);
+        assert_eq!(
+            words(&["port", "add", "--com", "12", "--count", "4"]),
+            ["port", "add", "--com", "12", "--count", "4"]
+        );
+        assert_eq!(
+            words(&["--com", "COM7", "port", "add"]),
+            ["port", "add", "--com", "COM7"]
+        );
+        assert_eq!(
+            words(&["port", "remove", "COM12"]),
+            ["port", "remove", "COM12"]
+        );
+        for refused in [
+            &["port"][..],
+            &["port", "add", "COM3"],
+            &["port", "remove"],
+            &["port", "list"],
+            &["port", "add", "--com"],
+            &["port", "add", "--com", "twelve"],
+            &["port", "remove", "COM12", "--count", "2"],
+            &["ports", "--com", "3"],
+        ] {
+            assert!(
+                parse(refused.iter().map(|w| w.to_string())).is_err(),
+                "{refused:?} was accepted"
+            );
         }
     }
 }
