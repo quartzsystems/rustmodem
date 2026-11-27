@@ -159,9 +159,11 @@ fn a_hundred_lines_on_memory_ports_are_served_as_the_first_is() {
             .iter()
             .all(|state| *state == LineState::Online)
     });
-    for host in hosts.values() {
-        assert!(host.signals().dcd);
-    }
+    // The carrier signal is raised by each port's own thread, a moment
+    // after the pool has said that the line is online.
+    eventually("every host to see the carrier", || {
+        hosts.values().all(|host| host.signals().dcd)
+    });
     // What was said on the way to the call is read and done with.
     std::thread::sleep(Duration::from_millis(100));
     for host in hosts.values() {

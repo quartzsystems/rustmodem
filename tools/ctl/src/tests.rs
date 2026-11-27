@@ -214,7 +214,9 @@ impl Service {
     fn client(&self) -> TestClient {
         let (mut reader, writer) =
             memory::blocking(self.connector.connect().unwrap(), runtime().handle());
-        reader.set_timeout(Some(Duration::from_secs(10)));
+        // Long enough for the self-test, which is some seconds of work
+        // and on a slow machine more.
+        reader.set_timeout(Some(Duration::from_secs(120)));
         let mut client = Client::new(BufReader::new(reader), writer);
         let hello = client.hello().unwrap();
         assert_eq!(hello.version, "9.9.9-test");

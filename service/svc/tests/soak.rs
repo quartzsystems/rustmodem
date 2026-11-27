@@ -148,6 +148,11 @@ struct Shared {
     /// From the host of each line to its peer, and back, by line.
     up: BTreeMap<u16, Stream>,
     down: BTreeMap<u16, Stream>,
+    /// The line of a call that carries data is online: its engine has
+    /// connected, and takes what the peer sends.
+    line_ready: BTreeMap<u16, AtomicBool>,
+    /// The peer's engine has connected, and takes what the line sends.
+    peer_ready: BTreeMap<u16, AtomicBool>,
     /// No more data is sent: what is on its way arrives.
     quiet: AtomicBool,
     /// The peers hang up.
@@ -225,9 +230,11 @@ fn far_end(service: SocketAddrV4, shared: &Shared) -> Vec<Outcome> {
         line: u16,
         agent: Agent,
         answered: Option<Instant>,
-        /// Since when the call carries data: for a null engine since it
-        /// was answered, for a modem since it connected.
+        /// Since when the peer's engine carries data: for a null engine
+        /// since the call was answered, for a modem since it connected.
         carrying: Option<Instant>,
+        /// Since when the peer sends its data: since both ends carry it.
+        sending: Option<Instant>,
         ended_early: bool,
     }
     let mut callers: Vec<Caller> = (1..=LINES)
@@ -251,6 +258,7 @@ fn far_end(service: SocketAddrV4, shared: &Shared) -> Vec<Outcome> {
                 agent,
                 answered: None,
                 carrying: None,
+                sending: None,
                 ended_early: false,
             }
         })
@@ -288,16 +296,20 @@ fn far_end(service: SocketAddrV4, shared: &Shared) -> Vec<Outcome> {
             if kind(caller.line) == Kind::Null {
                 caller.carrying = Some(answered);
             }
-            let Some(carrying) = caller.carrying else {
+            if caller.carrying.is_none() {
                 continue;
-            };
+            }
+            shared.peer_ready[&caller.line].store(true, Ordering::Relaxed);
+            // An end that sends before the other has connected sends to
+            // a modem that is not listening yet: what it sent is lost, as
+            // it is between any two modems. A host waits for its CONNECT;
+            // the peer waits for the line's.
+            if caller.sending.is_none() && shared.line_ready[&caller.line].load(Ordering::Relaxed) {
+                caller.sending = Some(Instant::now());
+            }
             let (up, down) = (&shared.up[&caller.line], &shared.down[&caller.line]);
-            if !quiet {
-                let due = down.due(
-                    down_seed(caller.line),
-                    carrying.elapsed(),
-                    rate(caller.line),
-                );
+            if !quiet && let Some(sending) = caller.sending {
+                let due = down.due(down_seed(caller.line), sending.elapsed(), rate(caller.line));
                 let taken = engine.dte_write(&due);
                 down.sent.fetch_add(taken as u64, Ordering::Relaxed);
             }
@@ -419,6 +431,8 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
     for line in (1..=LINES).filter(|line| !echoes(*line)) {
         shared.up.insert(line, Stream::default());
         shared.down.insert(line, Stream::default());
+        shared.line_ready.insert(line, AtomicBool::new(false));
+        shared.peer_ready.insert(line, AtomicBool::new(false));
     }
     let shared = Arc::new(shared);
     let far = {
@@ -433,6 +447,7 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
     let mut online: BTreeMap<u16, Instant> = BTreeMap::new();
     let mut all_online = None;
     let mut quiet_at = None;
+    let mut sending: BTreeMap<u16, Instant> = BTreeMap::new();
     let mut worst: BTreeMap<u16, pool::MediaStats> = BTreeMap::new();
     let end = loop {
         // Once every call is up the pool is not asked again until the end.
@@ -440,6 +455,9 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
             for (line, state) in (1..=LINES).zip(states()) {
                 if !online.contains_key(&line) && state == LineState::Online {
                     online.insert(line, Instant::now());
+                    if let Some(ready) = shared.line_ready.get(&line) {
+                        ready.store(true, Ordering::Relaxed);
+                    }
                 }
             }
         }
@@ -455,10 +473,16 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
         // The hosts of the lines that carry data send theirs and check
         // what they are sent.
         for (line, up) in &shared.up {
-            let (Some(since), Some(host)) = (online.get(line), hosts.get(line)) else {
+            let (Some(_), Some(host)) = (online.get(line), hosts.get(line)) else {
                 continue;
             };
-            if quiet_at.is_none() {
+            // The host sends once the peer's modem has connected too.
+            if !sending.contains_key(line) && shared.peer_ready[line].load(Ordering::Relaxed) {
+                sending.insert(*line, Instant::now());
+            }
+            if quiet_at.is_none()
+                && let Some(since) = sending.get(line)
+            {
                 let due = up.due(up_seed(*line), since.elapsed(), rate(*line));
                 host.write(&due);
                 up.sent.fetch_add(due.len() as u64, Ordering::Relaxed);

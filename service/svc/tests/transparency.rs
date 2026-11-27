@@ -407,16 +407,16 @@ fn a_call_whose_media_stops_is_cleared_by_the_timeout() {
 /// they connect at 300 bit/s with the carrier named, and what each host
 /// sends the other gets. `dial` is what a's host types before it dials.
 ///
-/// A character takes a thirtieth of a second, so the data is half a
-/// kibibyte each way, or as many kibibytes as `RM_MODEM_KIB` says: the 64
-/// of the phase's exit criteria is this test with 64, and takes some
-/// minutes. The two ends tick each other, with no clock between them, so
-/// the call runs as fast as the machine carries it.
+/// The data is 64 KiB each way, or as many kibibytes as `RM_MODEM_KIB`
+/// says. A character takes a thirtieth of a second, so that is more than
+/// half an hour of a call; but the two ends tick each other, with no clock
+/// between them, and the call runs as fast as the machine carries it,
+/// which is some seconds.
 fn modems_connect_and_carry_data(line_a: &str, line_b: &str, dial: &str, carrier: &str) {
     let size = std::env::var("RM_MODEM_KIB")
         .ok()
         .and_then(|kib| kib.parse::<usize>().ok())
-        .map_or(512, |kib| kib * 1024);
+        .map_or(64 * 1024, |kib| kib * 1024);
     let mut pair = Pair::new(line_a, line_b);
     pair.a.host().write(format!("ATE0{dial}\r").as_bytes());
     pair.b.host().write(b"ATE0\r");
