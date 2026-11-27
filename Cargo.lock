@@ -836,6 +836,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "v42bis"
+version = "0.0.5"
+dependencies = [
+ "alloccount",
+ "proptest",
+]
+
+[[package]]
 name = "v8"
 version = "0.0.5"
 dependencies = [

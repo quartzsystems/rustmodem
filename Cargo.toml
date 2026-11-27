@@ -19,6 +19,7 @@ members = [
     # Link: error control and compression.
     "link/v14",
     "link/v42",
+    "link/v42bis",
     # DTE: what the host sees on the COM port.
     "dte/at",
     "dte/serial",
@@ -128,7 +129,8 @@ all = { level = "warn", priority = -1 }
 # The signal processing is optimised in debug builds too. Its tests run
 # minutes of signal a sample at a time, and unoptimised they would take as
 # long as the calls they simulate. Overflow checks and debug assertions
-# stay on.
+# stay on. The compression is optimised with it: its tests take megabytes
+# through dictionaries of every size.
 [profile.dev.package.g711]
 opt-level = 3
 
@@ -151,6 +153,9 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.engine]
+opt-level = 3
+
+[profile.dev.package.v42bis]
 opt-level = 3
 
 [profile.release]

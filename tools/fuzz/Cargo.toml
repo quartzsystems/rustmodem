@@ -30,6 +30,7 @@ fsk = { path = "../../modem/fsk" }
 v22 = { path = "../../modem/v22" }
 v8 = { path = "../../modem/v8" }
 v42 = { path = "../../link/v42" }
+v42bis = { path = "../../link/v42bis" }
 alloccount = { path = "../alloccount" }
 
 [[bin]]
@@ -91,6 +92,20 @@ bench = false
 [[bin]]
 name = "lapm_frames"
 path = "fuzz_targets/lapm_frames.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "v42bis_decode"
+path = "fuzz_targets/v42bis_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "v42bis_roundtrip"
+path = "fuzz_targets/v42bis_roundtrip.rs"
 test = false
 doc = false
 bench = false
