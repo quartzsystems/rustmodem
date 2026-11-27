@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "alloccount"
-version = "0.0.4"
+version = "0.0.5"
 
 [[package]]
 name = "arbitrary"
@@ -14,7 +14,7 @@ checksum = "3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed"
 
 [[package]]
 name = "at"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "engine",
 ]
@@ -83,14 +83,21 @@ dependencies = [
 
 [[package]]
 name = "dspkit"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "g711",
 ]
 
 [[package]]
 name = "engine"
-version = "0.0.4"
+version = "0.0.5"
+dependencies = [
+ "dspkit",
+ "fsk",
+ "g711",
+ "tones",
+ "v8",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -100,7 +107,7 @@ checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "fsk"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "dspkit",
  "g711",
@@ -118,12 +125,13 @@ dependencies = [
  "rtp",
  "sdp",
  "sip",
+ "v22",
  "v8",
 ]
 
 [[package]]
 name = "g711"
-version = "0.0.4"
+version = "0.0.5"
 
 [[package]]
 name = "getrandom"
@@ -189,11 +197,11 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rtp"
-version = "0.0.4"
+version = "0.0.5"
 
 [[package]]
 name = "sdp"
-version = "0.0.4"
+version = "0.0.5"
 
 [[package]]
 name = "sha2"
@@ -214,10 +222,18 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sip"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "md-5",
  "sha2",
+]
+
+[[package]]
+name = "tones"
+version = "0.0.5"
+dependencies = [
+ "dspkit",
+ "g711",
 ]
 
 [[package]]
@@ -227,5 +243,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
+name = "v22"
+version = "0.0.5"
+dependencies = [
+ "dspkit",
+ "g711",
+]
+
+[[package]]
 name = "v8"
-version = "0.0.4"
+version = "0.0.5"

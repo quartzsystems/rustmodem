@@ -73,7 +73,7 @@ control the service over a local API; everything is in-house Rust under MIT.
 
     | Place | Why |
     |---|---|
-    | `dsp/*`, `modem/fsk`, `modem/v8`, `dte/at`, `modem/engine`, `service/msg`, `service/config`, `service/ctlproto`, `service/pool`, `voip/sdp`, `voip/rtp`, `voip/sip`, `service/telephony`, `ui/model`, `ui/glyph` | Pure state machines given bytes and a time. They stay that way: it is what makes them testable on Linux with a mock clock |
+    | `dsp/*`, `modem/fsk`, `modem/v22`, `modem/v8`, `dte/at`, `modem/engine`, `service/msg`, `service/config`, `service/ctlproto`, `service/pool`, `voip/sdp`, `voip/rtp`, `voip/sip`, `service/telephony`, `ui/model`, `ui/glyph` | Pure state machines given bytes and a time. They stay that way: it is what makes them testable on Linux with a mock clock |
     | Media threads in `service/media` | Real-time. A dedicated OS thread for each call, with nothing on the tick path that can allocate, lock or yield to a scheduler |
     | Serial port I/O in `dte/serial` | Overlapped I/O on COM handles has no Tokio reactor. Each port keeps a thread and talks to the pool's task through channels |
     | The capture writer | It has its own thread fed by a ring |
@@ -104,6 +104,8 @@ dsp/chansim         a telephone channel with its faults, from a seed, for
                     tests (pure)
 modem/fsk           the V.21 and Bell 103 modulator and demodulator, and
                     start-stop framing (pure)
+modem/v22           V.22, Bell 212A and V.22bis: the modulator and
+                    demodulator at 1200 and 2400 bit/s (pure)
 modem/v8            V.8: the signals and both ends of the procedure (pure,
                     sans-I/O)
 modem/engine        ModemEngine trait, events, the Modem (V.8, V.21 and
@@ -145,7 +147,7 @@ tools/fuzz          cargo-fuzz targets (own lockfile, outside the workspace)
 ```
 
 Pure crates (no OS calls, must pass on Linux): `g711`, `dspkit`, `tones`,
-`chansim`, `fsk`, `v8`, `engine`, `at`, `sdp`, `rtp`,
+`chansim`, `fsk`, `v22`, `v8`, `engine`, `at`, `sdp`, `rtp`,
 `sip`, `msg`, `config`, `ctlproto`, `pool`, `glyph`, `model`, and the trait
 and memory backend of `serial`. `media`, `telephony`, `sippeer` and `replay` use
 sockets and threads and nothing of Windows that has no counterpart: they
@@ -234,8 +236,8 @@ The pure crates on Linux (CI does this; WSL works locally):
 
 ```
 cargo fmt --check
-cargo clippy -p g711 -p dspkit -p tones -p chansim -p fsk -p v8 -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model --all-targets -- -D warnings
-cargo test -p g711 -p dspkit -p tones -p chansim -p fsk -p v8 -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model
+cargo clippy -p g711 -p dspkit -p tones -p chansim -p fsk -p v22 -p v8 -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model --all-targets -- -D warnings
+cargo test -p g711 -p dspkit -p tones -p chansim -p fsk -p v22 -p v8 -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model
 cargo clippy -p ctlsrv --all-targets -- -D warnings
 cargo clippy -p svc --lib --test '*' -- -D warnings
 cargo test -p ctlsrv
@@ -271,7 +273,7 @@ machine at hand as goldens, `RM_SCREENSHOTS=strict` fails on a difference
 anywhere, and `RM_SCREENSHOTS=skip` takes no pictures.
 
 The fuzz targets, `at_input`, `sdp_parse`, `rtp_packet`, `sip_message`,
-`fsk_demod` and `v8_decode`
+`fsk_demod`, `v8_decode` and `v22_demod`
 (nightly toolchain and cargo-fuzz, on Linux or WSL):
 
 ```

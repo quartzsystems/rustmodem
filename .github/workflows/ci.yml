@@ -59,7 +59,7 @@ jobs:
     name: Linux (pure crates)
     runs-on: ubuntu-latest
     env:
-      PURE: -p g711 -p dspkit -p tones -p chansim -p fsk -p v8 -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model
+      PURE: -p g711 -p dspkit -p tones -p chansim -p fsk -p v22 -p v8 -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
@@ -88,7 +88,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [at_input, sdp_parse, rtp_packet, sip_message, fsk_demod, v8_decode]
+        target: [at_input, sdp_parse, rtp_packet, sip_message, fsk_demod, v8_decode, v22_demod]
     steps:
       - uses: actions/checkout@v4
       - name: Nightly toolchain
