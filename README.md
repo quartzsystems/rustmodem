@@ -10,8 +10,23 @@ Everything is written in-house in Rust under the MIT licence.
 
 ## Status
 
-Phase 4 of ten, and the first release, 0.1.0: a modem that dial-up
-networking can use. A line answers a call as a modem does and connects at
+Phase 5 of ten, 0.2.0: a port driver of its own and a setup program. Each
+line has a virtual COM port with a modem attached to it, which Windows
+lists as a modem on a serial port, and com0com is no longer needed. The
+driver is a user-mode driver written in Rust. One program,
+`rustmodem-setup.exe`, installs the driver, the service under an account
+of its own, the firewall rules and the rest, and removes them; the manager
+makes a port when it makes a line. See [docs/PHASE5.md](docs/PHASE5.md),
+[docs/DRIVER.md](docs/DRIVER.md) and [docs/INSTALL.md](docs/INSTALL.md).
+
+**It has been installed on test machines only.** The driver is signed with
+a certificate of our own, which a machine has to be told to trust
+([docs/SIGNING.md](docs/SIGNING.md)); it has not been installed on Windows
+11 or with Secure Boot on, and Routing and Remote Access has not yet
+answered a call through it.
+
+Under that is the modem of phase 4, the first release: a modem that
+dial-up networking can use. A line answers a call as a modem does and connects at
 2400 bit/s by V.22bis, at 1200 by V.22 or Bell 212A, or at 300 by V.21 or
 Bell 103, agreeing which by V.8 where the caller has it and by what the
 caller answers where it has not. At 1200 and 2400 bit/s the call has the
@@ -29,7 +44,7 @@ To install a release, [docs/INSTALL.md](docs/INSTALL.md); to answer
 dial-up calls with Routing and Remote Access,
 [docs/RRAS.md](docs/RRAS.md).
 
-Under it is what the earlier phases built. The service speaks SIP and RTP
+Under that is what the earlier phases built. The service speaks SIP and RTP
 itself: it takes calls from a trunk and routes them through hunt groups,
 registers lines to a PBX as extensions, rings the line's COM port, and
 carries G.711 both ways sample-exactly. The manager,
@@ -51,13 +66,15 @@ where.
 | `dsp/` | G.711, the signal processing blocks, the tones of a call's start, and a simulated telephone channel for tests |
 | `modem/` | The V.21 and Bell 103 modem, the V.22, Bell 212A and V.22bis modem, V.8, and the engine that runs a call with them; the null and echo engines |
 | `link/` | What is between the modem and the host at 1200 and 2400 bit/s: V.14, V.42 with LAPM, and V.42bis |
-| `dte/` | The AT command interpreter and the serial backends |
+| `dte/` | The AT command interpreter and the serial backends: RustModem's own port, com0com, and memory |
+| `driver/` | The virtual COM port: its rules, its control interface, the UMDF driver, and the generator of the modem's INF. A workspace of its own for the driver itself, which needs a Windows Driver Kit |
+| `install/` | The setup program, and the Win32 it needs |
 | `voip/` | SDP, RTP and SIP, written in-house and free of I/O |
 | `service/` | Messages, configuration, control API, the pool, the media threads, the SIP router, and the service with its runner |
 | `ui/` | The manager: its data model, its icons, the Win32 wrappers and the window |
 | `tools/` | `rustmodem-ctl`, the demo service, the test SIP peer, the capture replay tool and the fuzz targets |
-| `docs/` | Architecture, the runtime model, the modem, the AT command set, the control API, telephony, call capture, gateways, com0com set-up, the install from a release, and dial-up networking with RRAS |
-| `ci/` | The licence header and version checks, and the check that Tokio stays out of the pure crates |
+| `docs/` | Architecture, the runtime model, the modem, the AT command set, the control API, telephony, call capture, gateways, the driver, signing, the install, dial-up networking with RRAS, and com0com set-up for lines that use it |
+| `ci/` | The licence header and version checks, the check that Tokio stays out of the pure crates, and the scripts that build, sign and test the setup program |
 
 ## Building
 
@@ -71,13 +88,30 @@ cargo build --release -p svc -p ctl -p manager
 This produces `target/release/rustmodem-svc.exe`,
 `target/release/rustmodem-ctl.exe` and `target/release/rustmodem-manager.exe`.
 The manager looks for `rustmodem-svc.exe` in its own folder when it is asked
-to install or remove the service.
+to install or remove the service, and for `rustmodem-setup.exe` there when
+it is asked to make or remove a port.
+
+None of that needs a Windows Driver Kit. The driver and the setup program
+that carries it do: [docs/DRIVER.md](docs/DRIVER.md) says how to get one,
+and
+
+```
+ci\build.ps1 -Thumbprint <sha1> -LabCertificate <file.cer>
+```
+
+makes a signed `target\setup\rustmodem-setup.exe`. The `driver` workflow
+on GitHub does the same on every push, and installs what it built on its
+runner.
 
 ## Running
 
-Set up com0com as [docs/COM0COM.md](docs/COM0COM.md) describes, write a
-configuration file, and run the service in the foreground from an elevated
-prompt:
+To use RustModem, install it: [docs/INSTALL.md](docs/INSTALL.md).
+
+To run what was just built, without installing: lines need ports, which
+are RustModem's own if a setup program has installed the driver on the
+machine, or com0com pairs set up as [docs/COM0COM.md](docs/COM0COM.md)
+describes. Write a configuration file, and run the service in the
+foreground from an elevated prompt:
 
 ```
 rustmodem-svc --console C:\rustmodem\rustmodem.toml
@@ -156,6 +190,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo deny check
 cargo test --workspace
 ```
+
+The driver's workspace has the same checks of its own, which need a kit
+and are run by the `driver` workflow: `cargo fmt --check`, `cargo clippy`
+and `cargo deny check` in `driver/`, then the build, `InfVerif` on both
+INFs, and `ci\install-test.ps1`, which installs RustModem on the runner
+and looks at what Windows then has.
 
 The tests of the manager open its window on the desktop, against the demo
 service. Its screenshot tests compare each view with a golden picture

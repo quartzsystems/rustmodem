@@ -5,6 +5,15 @@ product. A Windows service terminates SIP/RTP, runs one in-house softmodem per
 call, and presents each line to Windows as a modem on a COM port, so RRAS
 answers dial-up calls as if the modems were hardware. A manager GUI and a CLI
 control the service over a local API; everything is in-house Rust under MIT.
+The COM port is RustModem's own, a user-mode driver, and a setup program
+installs all of it.
+
+The product's name is "RustModem" wherever a person reads it: directories,
+the Start menu, the service's display name, the names of the port and the
+modem, the event source, messages, dialogs and the prose of the
+documentation. Identifiers stay lower case: the service `rustmodem`, the
+pipe, crate names, and the programs, which are `rustmodem-svc.exe`,
+`rustmodem-manager.exe`, `rustmodem-ctl.exe` and `rustmodem-setup.exe`.
 
 ## Ground rules
 
@@ -34,6 +43,9 @@ control the service over a local API; everything is in-house Rust under MIT.
 4. **Dependencies.** Only licences on the allow list in `deny.toml`. No GPL,
    LGPL or AGPL anywhere in the graph. Prefer few, well-known crates. No crate
    that compiles or links C unless there is no alternative; ask first.
+   The driver's workspace, `driver/`, has a `deny.toml` of its own, which
+   allows `bindgen` and `cc`: Microsoft's driver crates need them, Cody
+   allowed them there, and they are allowed nowhere else.
 5. **Platform.** The binaries are `x86_64-pc-windows-msvc` only. The pure
    crates must also build and pass tests on Linux, where CI runs them.
 6. **No scope creep.** Build only the current phase. Where later work will
@@ -42,9 +54,14 @@ control the service over a local API; everything is in-house Rust under MIT.
    `BLOCKED(phaseN): reason` or `NEEDS-CODY: reason`. No bare `TODO`, `FIXME`
    or `unimplemented!()`.
 8. **`unsafe`.** `#![forbid(unsafe_code)]` in every crate except `dte/serial`,
-   `service/svc`, `service/pipe`, `service/media`, `ui/win32` and
-   `tools/alloccount`, where each
-   `unsafe` block carries a `// SAFETY:` comment. In `service/media` it is
+   `service/svc`, `service/pipe`, `service/media`, `ui/win32`,
+   `driver/vcom`, `install/sys` and `tools/alloccount`, where each
+   `unsafe` block carries a `// SAFETY:` comment. `driver/vcom` is the
+   driver, where every call into the framework is `unsafe`; it decides
+   nothing, and the rules of the port are in `driver/vcomcore`, which
+   forbids it. `install/sys` has the Win32 the setup program needs, behind
+   safe wrappers; `install/setup` forbids it. In `dte/serial` it is in the
+   two backends that open Windows ports, `com0com.rs` and `vcom.rs`. In `service/media` it is
    in `os.rs` only, for thread priority (MMCSS) and the socket calls `std`
    cannot make; every other module of the crate forbids it. In
    `service/svc` it is in the program only: the library, which is the
@@ -73,11 +90,12 @@ control the service over a local API; everything is in-house Rust under MIT.
 
     | Place | Why |
     |---|---|
-    | `dsp/*`, `modem/fsk`, `modem/v22`, `modem/v8`, `link/*`, `dte/at`, `modem/engine`, `service/msg`, `service/config`, `service/ctlproto`, `service/pool`, `voip/sdp`, `voip/rtp`, `voip/sip`, `service/telephony`, `ui/model`, `ui/glyph` | Pure state machines given bytes and a time. They stay that way: it is what makes them testable on Linux with a mock clock |
+    | `dsp/*`, `modem/fsk`, `modem/v22`, `modem/v8`, `link/*`, `dte/at`, `modem/engine`, `service/msg`, `service/config`, `service/ctlproto`, `service/pool`, `voip/sdp`, `voip/rtp`, `voip/sip`, `service/telephony`, `ui/model`, `ui/glyph`, `driver/vcomcore`, `driver/vcomapi`, `driver/modeminf` | Pure state machines given bytes and a time. They stay that way: it is what makes them testable on Linux with a mock clock |
     | Media threads in `service/media` | Real-time. A dedicated OS thread for each call, with nothing on the tick path that can allocate, lock or yield to a scheduler |
     | Serial port I/O in `dte/serial` | Overlapped I/O on COM handles has no Tokio reactor. Each port keeps a thread and talks to the pool's task through channels |
     | The capture writer | It has its own thread fed by a ring |
     | `ui/manager`, `ui/win32`, `tools/ctl` | A Win32 message loop and a command-line client. They keep the blocking pipe client |
+| `driver/vcom`, `install/setup`, `install/sys` | The driver is called by the framework and has a thread for each port's time. The setup program does one thing after another |
     | `tools/sippeer`, `tools/replay` | The test peer keeps its own sockets and clock; the replay tool reads a file |
 
 Every user-visible error is an `RMD` message from `service/msg`. No free-text
@@ -118,7 +136,22 @@ link/v42            V.42: the detection phase, HDLC framing and LAPM error
                     control (pure, sans-I/O)
 link/v42bis         V.42bis: data compression (pure)
 dte/at              Hayes interpreter (pure)
-dte/serial          SerialBackend trait, memory backend, com0com backend
+dte/serial          SerialBackend trait, memory backend, the backend of
+                    RustModem's own port (vcom), com0com backend
+driver/vcomcore     the virtual COM port's state machine: timeouts, wait
+                    mask, queues, lines, both sides; its I/O control
+                    codes (pure)
+driver/vcomapi      the control interface between the driver and the
+                    service: codes and layouts (pure)
+driver/modeminf     generates the modem's INF from the AT interpreter's
+                    tables (pure)
+driver/vcom         rmvcom.dll, the UMDF 2 driver. In the workspace of
+                    driver/, not the root's: it needs a Windows Driver Kit
+install/sys         safe wrappers over the Win32 the setup program needs:
+                    SetupAPI devices, the COM port database, the
+                    registry, shortcuts
+install/setup       rustmodem-setup.exe: plans of steps with their undo,
+                    the payload, the port commands
 voip/sdp            session descriptions, offer/answer for G.711 (pure)
 voip/rtp            RTP packets, the tick-on-receive receiver, captures (pure)
 voip/sip            SIP messages, transactions, dialogs, digest, registration
@@ -141,7 +174,8 @@ ui/model            the manager's data model (pure)
 ui/glyph            icons drawn in code; .ico and .res writers (pure)
 ui/win32            safe wrappers over the Win32 controls the manager uses
 ui/manager          rustmodem-manager.exe, "RustModem Manager"
-tools/ctl           rustmodem-ctl.exe
+tools/ctl           rustmodem-ctl.exe; its port commands run the setup
+                    program
 tools/demosvc       rustmodem-demosvc.exe: a pool on memory ports, scripted
 tools/sippeer       rustmodem-sippeer.exe: a scriptable SIP and RTP peer for
                     tests (not shipped)
@@ -154,8 +188,10 @@ tools/fuzz          cargo-fuzz targets (own lockfile, outside the workspace)
 
 Pure crates (no OS calls, must pass on Linux): `g711`, `dspkit`, `tones`,
 `chansim`, `fsk`, `v22`, `v8`, `engine`, `v14`, `v42`, `v42bis`, `at`,
-`sdp`, `rtp`, `sip`, `msg`, `config`, `ctlproto`, `pool`, `glyph`, `model`,
-and the trait and memory backend of `serial`. `media`, `telephony`, `sippeer` and `replay` use
+`vcomcore`, `vcomapi`, `modeminf`, `sdp`, `rtp`, `sip`, `msg`, `config`,
+`ctlproto`, `pool`, `glyph`, `model`, the trait and memory backend of
+`serial`, and the library of `setup`: its plans and port commands, which
+run against fakes of the machine and of its devices. `media`, `telephony`, `sippeer` and `replay` use
 sockets and threads and nothing of Windows that has no counterpart: they
 build and pass on Linux too, and CI runs them there. `ctlsrv` and the
 library of `svc` are not pure, being on Tokio, but need nothing of Windows:
@@ -196,17 +232,54 @@ cannot panic, and `modem/engine/tests/alloc.rs` counts to keep it so.
 | 2 | Telephony (SIP, RTP, hunt groups) |
 | 3 | 300 bit/s (G.711, V.21, V.8) |
 | 4 | V.22bis and V.42 (first release) |
-| 5 | Virtual COM driver and installer |
+| 5 | Driver and installer |
 | 6 to 8 | V.32bis, V.34, V.90 |
 | 9 | Extensions |
 
-The record of each phase is in `docs/`: `docs/PHASE0.md`, `docs/PHASE1.md`,
-`docs/PHASE2.md`, `docs/PHASE3.md`, `docs/PHASE4.md`. Phases 0 to 4 are
-built, and phase 4 is the first release, 0.1.0: `.github/workflows/release.yml`
-makes its zip on a tag, `docs/INSTALL.md` is the install from it, and
-`docs/RRAS.md` is dial-up networking over the lines. After phase 2 the
+The record of each phase is in `docs/`: `docs/PHASE0.md` to
+`docs/PHASE5.md`. Phases 0 to 5 are built. Phase 4 was the first release,
+0.1.0, and phase 5 is 0.2.0: `.github/workflows/release.yml` builds the
+signed setup program on a tag, `docs/INSTALL.md` is the install,
+`docs/DRIVER.md` the driver, `docs/SIGNING.md` how a build is signed and
+what is not yet known about it, and `docs/RRAS.md` dial-up networking
+over the lines. After phase 2 the
 service's control plane was moved onto Tokio (0.0.4); `docs/RUNTIME.md` is
 the runtime model and the record of that.
+
+## The driver's workspace
+
+`driver/` is a Cargo workspace of its own with one member, `driver/vcom`,
+its own lockfile, its own `deny.toml` and its own `target`. The root
+workspace excludes it. `vcomcore`, `vcomapi` and `modeminf` are under
+`driver/` and are members of the root workspace.
+
+**Without a Windows Driver Kit**, which is how the development machine
+is: everything in "Checks" below runs, the three pure crates among it.
+The driver itself is built, linted, packaged, signed, installed and
+tested by the `driver` workflow (`.github/workflows/driver.yml`, on
+`windows-2022`, whose image has a kit) on every push. A change to
+`driver/vcom`, `install/`, `ci/build.ps1` or `ci/install-test.ps1` is
+shown to work by pushing it to a throwaway branch and reading that run,
+and the branch is deleted afterwards. Never install the driver, or run a
+setup command that changes anything, on the development machine: the
+runners and Cody's virtual machines are where that is done.
+
+**With a kit and LLVM** (`docs/DRIVER.md`, "Building"):
+
+```
+cd driver
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo deny check
+cd ..
+ci\lab-certificate.ps1 -Out C:\keys\rustmodem-lab.cer
+ci\build.ps1 -Thumbprint <sha1> -LabCertificate C:\keys\rustmodem-lab.cer
+ci\install-test.ps1
+```
+
+The last installs RustModem on the machine it runs on and removes it
+again: it is for a runner or a virtual machine. No private key is ever
+committed, logged or put in a setup program.
 
 ## Running the manager
 
@@ -245,8 +318,8 @@ The pure crates on Linux (CI does this; WSL works locally):
 
 ```
 cargo fmt --check
-cargo clippy -p g711 -p dspkit -p tones -p chansim -p fsk -p v22 -p v8 -p engine -p v14 -p v42 -p v42bis -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model --all-targets -- -D warnings
-cargo test -p g711 -p dspkit -p tones -p chansim -p fsk -p v22 -p v8 -p engine -p v14 -p v42 -p v42bis -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model
+cargo clippy -p g711 -p dspkit -p tones -p chansim -p fsk -p v22 -p v8 -p engine -p v14 -p v42 -p v42bis -p at -p serial -p vcomapi -p vcomcore -p modeminf -p setup -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model --all-targets -- -D warnings
+cargo test -p g711 -p dspkit -p tones -p chansim -p fsk -p v22 -p v8 -p engine -p v14 -p v42 -p v42bis -p at -p serial -p vcomapi -p vcomcore -p modeminf -p setup -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model
 cargo clippy -p ctlsrv --all-targets -- -D warnings
 cargo clippy -p svc --lib --test '*' -- -D warnings
 cargo test -p ctlsrv
@@ -260,6 +333,17 @@ there: the control server and the runner.
 
 `cargo test --workspace` opens the manager's window many times over: its
 tests run it against the demo service on the desktop of whoever runs them.
+They need `target/debug/rustmodem-demosvc.exe` as it is now: after a
+change to `tools/demosvc`, run `cargo build -p demosvc` before a test of
+the manager alone, which does not build it. Run long tests with their
+output to a file and `--no-fail-fast`.
+
+A few tests have failed once in a while on a busy machine and passed
+alone, and are recorded in `docs/PHASE5.md` under "What needs Cody": the
+LAPM property test `any_loss_below_the_threshold_loses_no_data`, the
+soak, a peer test and one of the manager's. Run one that fails again by
+itself before looking for a cause in the change at hand, and say so when
+it happens: do not change the test to make it pass.
 Two tests take a minute each: the manager's smoke test, and the soak test
 (`service/svc/tests/soak.rs`), which holds 24 calls over SIP and RTP
 on loopback, a third of them between modems, on the service's own runner,

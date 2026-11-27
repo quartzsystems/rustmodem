@@ -1,9 +1,16 @@
 # Setting up com0com for RustModem
 
-Until the virtual COM driver of phase 5, each RustModem line reaches Windows
-through a [com0com](https://com0com.sourceforge.net/) null-modem pair. The
-host (RRAS, a terminal, the Windows modem driver) opens one port of the pair;
-RustModem opens the other.
+**com0com is the alternative backend.** Since 0.2.0 RustModem has a port
+driver of its own, which the setup program installs and which needs none
+of what follows: `docs/INSTALL.md` and `docs/DRIVER.md`. A line can still
+be put on a [com0com](https://com0com.sourceforge.net/) null-modem pair,
+with `backend = "com0com"`, and a machine that ran 0.1.0 goes on working
+as it was. This document is for those lines. The differences between the
+two backends that a host can see are in `docs/DRIVER.md`.
+
+With com0com, each RustModem line reaches Windows through a null-modem
+pair. The host (RRAS, a terminal, the Windows modem driver) opens one port
+of the pair; RustModem opens the other.
 
 com0com is a separate GPL product. RustModem does not include it, link to it
 or copy from it; it only opens a port the driver provides. Install it from

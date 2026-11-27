@@ -5,10 +5,17 @@ behind a modem dials a number, the call arrives over SIP, a RustModem line
 answers it, and Routing and Remote Access (RRAS) on the same machine runs
 PPP over that line's COM port as it would over a hardware modem.
 
-This is for the com0com backend, which is the one there is until the
-virtual COM driver of phase 5. Nothing here is specific to a version of
-Windows Server, but the names of the dialogs differ a little between
-versions.
+This is for lines on RustModem ports, which is what the setup program and
+the manager make. Each such port comes with its modem, so nothing is
+installed by hand: no modem is added in Phone and Modem, and no port is
+wired. Lines on com0com pairs work as before, with one more step, which
+is at the end. Nothing here is specific to a version of Windows Server,
+but the names of the dialogs differ a little between versions.
+
+**Not yet done on a real machine.** RustModem's modem has been installed
+and listed by Windows on a test machine, and has answered every command
+Windows is known to send it. Routing and Remote Access has not yet
+answered a call on one: criteria 10 and 11 of `docs/PHASE5.md`.
 
 > **NEEDS-CODY: confirm wording.** The steps in Windows below were written
 > without the dialogs in front of the writer. Each place where the exact
@@ -17,10 +24,11 @@ versions.
 
 ## Before you start
 
-- [ ] The service is installed and running, with a configuration that has a
-      line for every modem RRAS is to have. `docs/INSTALL.md`.
-- [ ] Every line has its com0com pair, wired as `docs/COM0COM.md` says, and
-      the checklist at the end of that document passes for it.
+- [ ] RustModem is installed and its service running, with a line for
+      every modem RRAS is to have, each on a RustModem port.
+      `docs/INSTALL.md`.
+- [ ] `rustmodem-ctl ports` lists each line's port with its modem, and
+      Device Manager shows each under "Modems" with no warning.
 - [ ] Calls arrive: `[sip]` is set up, the gateway sends the pilot number to
       a hunt group of these lines, and `rustmodem-ctl watch` shows a line
       ring when the number is dialled. `docs/TELEPHONY.md` and
@@ -29,9 +37,8 @@ versions.
       criteria of phase 3 ask. Do not debug RRAS on a path where a plain
       terminal call is unproven.
 
-In this guide line 1 is on the pair `CNCA0` and `CNCB0`: RustModem has
-`CNCB0`, and the host's port `CNCA0` has been given the name `COM8`. Use the
-names of your own pairs.
+In this guide line 1 is on the port `COM10`, which is the first that
+setup makes. Use the names of your own ports.
 
 ## 1. The lines' settings
 
@@ -46,7 +53,7 @@ compression = true
 
 [[line]]
 id = 1
-serial = { backend = "com0com", port = "CNCB0" }
+serial = { backend = "vcom", port = "COM10" }
 auto_answer_rings = 0
 unknown_command = "ok"
 ```
@@ -57,33 +64,29 @@ unknown_command = "ok"
 | `unknown_command` | `ok` | A driver's initialisation has commands for hardware this modem has not got: speaker, pulse dialling, vendor registers. With `ok` they are skipped; with `error` the driver takes the modem for broken |
 | `error_control` | `auto` | The driver sets what it wants with `\N` or `&Q`, and those work. `auto` is what the line does until it has |
 
-## 2. A modem on each host port
+## 2. The modems
 
-Windows must have a modem device on each host-side port, so that RRAS can
-list it.
+They are there already. Each RustModem port was made with a modem,
+"RustModem Softmodem", attached to it, and Windows was told by the
+modem's own INF what to send it and what it answers.
 
 1. Open **Phone and Modem** in Control Panel. If it asks for a location,
    give a country and an area code; they are not used.
-2. On the **Modems** tab choose **Add...**.
-3. Tick **Don't detect my modem; I will select it from a list**, and
-   **Next**.
-4. Under **Manufacturer** choose **(Standard Modem Types)**. Under
-   **Models** choose **Standard 56000 bps Modem**.
-   NEEDS-CODY: confirm wording, and which standard model works best. Any
-   standard model should do: the port has no rate of its own, and the line
-   rate is what the far end and the line's `modulations` make it. The
-   models differ in the initialisation they send.
-5. Choose **Selected ports**, select `COM8`, and **Next**, **Finish**.
-6. Repeat for the host port of every line, or select several ports at
-   step 5.
+2. The **Modems** tab lists a RustModem Softmodem for each port, the
+   second and later ones with a number after the name.
+3. Select one, choose **Properties**, and on the **Diagnostics** tab
+   **Query Modem**. Windows sends the modem its identification commands
+   and lists the answers: the manufacturer is Quartz Systems and the
+   model RustModem Softmodem. NEEDS-CODY: confirm wording.
 
 Leave each modem's properties alone. In particular leave **Extra
 initialization commands** on the **Advanced** tab empty, and leave the
-maximum port speed as it is.
+maximum port speed as it is: the port has no speed, and the rate of a call
+is what the far end and the line's `modulations` make it.
 
-Check: `rustmodem-ctl ports` lists each host port with the modem Windows
-has on it. `rustmodem-ctl lines` shows the lines `not_ready` still: nothing
-has their host ports open yet.
+Check: `rustmodem-ctl ports` lists each port with its modem, and
+`rustmodem-ctl lines` shows each line's binding as its modem's name. The
+lines are `not_ready` still: nothing has their ports open yet.
 
 ## 3. Routing and Remote Access
 
@@ -122,13 +125,14 @@ connections.
 
 1. In **Routing and Remote Access**, right-click **Ports** and choose
    **Properties**.
-2. Select the modem on `COM8` in the list and choose **Configure...**.
+2. Select the RustModem Softmodem on `COM10` in the list and choose
+   **Configure...**.
 3. Tick **Remote access connections (inbound only)**. Leave demand-dial
    routing unticked.
 4. Repeat for each modem, and **OK**.
 
 **Ports** now lists each modem with the status **Inactive**. RRAS has
-opened the host port: `rustmodem-ctl lines` shows the line `idle` where it
+opened the port: `rustmodem-ctl lines` shows the line `idle` where it
 was `not_ready`, and the service's log at `debug` shows the initialisation
 the driver sent.
 
@@ -188,20 +192,54 @@ log's own, and `cargo test -p at --test hostlogs` replays every file in
 the folder: each command must be answered as the log says it was, and
 none with `ERROR`.
 
-`standard-modem.txt` there, and transcripts 02, 03 and 43 in
-`dte/at/tests/transcripts/`, are the strings this was written against,
-from memory of what the standard modem drivers send. Every command in
-them has defined behaviour in `docs/AT.md`, and the log is replayed with
-unknown commands refused, so that none of them passes by being skipped.
+What Windows sends a RustModem Softmodem is no longer a guess: it is in
+the modem's INF, which is generated by `driver/modeminf` from the AT
+interpreter's own tables. It initialises the modem with
+`AT&FE0V1X4&C1&D2S0=0+MR=1;+ER=1;+DR=1`, so that the modem reports the
+modulation, the error control and the compression of each call, and the
+INF's table of responses has the line rates, so that RRAS shows the rate
+the modems agreed on and not a port's. Transcript 61 in
+`dte/at/tests/transcripts/` is what Query Modem sends.
+
+`standard-modem.txt` in the folder of host logs, and transcripts 02, 03
+and 43, are the strings of Windows' standard modem types, which a line on
+a com0com pair still meets. They were written from memory. Every command
+in them has defined behaviour in `docs/AT.md`, and the log is replayed
+with unknown commands refused, so that none of them passes by being
+skipped.
 
 ## When it does not work
 
 | What is seen | Likely cause |
 |---|---|
-| The modem is not in the list of **Ports** | No modem device on the host port: step 2. Or RRAS was configured before the modems were added: restart the Routing and Remote Access service |
-| The line shows `not_ready` | Nothing has the host port open. RRAS opens it when the port is enabled for inbound connections: step 4 |
+| The modem is not in the list of **Ports** | The port has no modem: Ports and drivers in the manager shows it as "No modem"; remove the port and add it again. Or RRAS was configured before the ports were made: restart the Routing and Remote Access service |
+| The line shows `not_ready` | Nothing has the port open. RRAS opens it when the port is enabled for inbound connections: step 4 |
+| RRAS cannot open the port | Something else has it: a terminal left open. A RustModem port has one host at a time. `docs/DRIVER.md`, "Recovering a stuck port" |
+| RRAS shows a rate that is the port's and not the call's | The modem is not a RustModem Softmodem, or its INF's responses were not matched: send the line's log of the call at `debug` |
 | The line rings and nobody answers | The port is not enabled for inbound connections; or the driver's initialisation failed: look for `ERROR` in the log, and set `unknown_command = "ok"` |
 | `NO CARRIER` after some seconds of tones | The modems did not agree. `rustmodem-ctl diag` during the call shows where it stopped; RMD7001 in the log names the state. Try the client capped at 1200 bit/s, and then at 300 |
 | `NO CARRIER` straight after the modems connect | `error_control = "required"`, or the driver's `\N2` or `\N4`, and a client with error control off. RMD8001 in the log says so |
 | `CONNECT`, and then PPP fails | Authentication: step 5. The RRAS log, and the client's error number, say which side refused |
 | The call drops under load | Look at the RTP statistics of the line's call, `rustmodem-ctl line 1`: lost packets, and slips. LAPM rides out lost packets, but a path that loses many of them or changes the audio is the gateway's to fix: `docs/GATEWAYS.md` |
+
+## If the lines are on com0com pairs
+
+A line on a com0com pair has no modem of its own. Windows must be given
+one on the host's port of each pair, by hand, once, and then everything
+above applies with that port's name in place of `COM10`.
+
+1. Wire the pair as `docs/COM0COM.md` says.
+2. Open **Phone and Modem** in Control Panel, and on the **Modems** tab
+   choose **Add...**.
+3. Tick **Don't detect my modem; I will select it from a list**, and
+   **Next**.
+4. Under **Manufacturer** choose **(Standard Modem Types)**. Under
+   **Models** choose **Standard 56000 bps Modem**.
+   NEEDS-CODY: confirm wording, and which standard model works best. The
+   models differ in the initialisation they send.
+5. Choose **Selected ports**, select the host's port of the pair, and
+   **Next**, **Finish**.
+
+`rustmodem-ctl ports` then lists the pair with the modem on its host
+port. With a standard modem type RRAS shows the port's rate for a call,
+not the line's: Windows' standard INFs do not know RustModem's responses.

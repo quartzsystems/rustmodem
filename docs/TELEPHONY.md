@@ -270,7 +270,19 @@ at the packet time so that it can start; those frames are counted as
 `free_run`. From the first packet on, nothing is paced locally.
 
 DSCP marking is not done by the service: on Windows it is set by a QoS
-policy, which the installer creates in phase 5.
+policy, and the setup program makes one, "RustModem RTP", that marks the
+UDP `rustmodem-svc.exe` sends with DSCP 46, expedited forwarding, on
+every network profile. `Get-NetQosPolicy` shows it. The policy marks the
+service's SIP as well as its RTP: both are UDP from the one program, and
+the policy names the program and no ports, so that it holds whatever the
+configuration's ports are.
+
+NEEDS-CODY: a packet capture that shows the mark on the wire, on a
+domain-joined machine and on a standalone one, is criterion 17 of
+`docs/PHASE5.md`. Windows has applied such policies only to domain
+networks on some editions; a value named `Do not use NLA` under
+`HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\QoS` is said to lift that,
+sources disagree on its type, and setup does not write it.
 
 ## Tracing
 
@@ -359,15 +371,21 @@ and a route to a line or a group that does not exist (`RMD0030`).
 
 ## Windows Firewall
 
-NEEDS-CODY: the inbound rules for the SIP port and the RTP range, as the
-exact `netsh` commands used on the test machine, go here (manual exit
-criterion 14 of `docs/PHASE2.md`). The installer of phase 5 creates them
-from this.
+The setup program makes two inbound rules, for the service's program and
+no other, on the SIP port and the RTP range of the configuration as it is
+when setup runs:
 
 ```
-netsh advfirewall firewall add rule name="rustmodem SIP" dir=in action=allow protocol=UDP localport=5060 remoteip=<trusted peers>
-netsh advfirewall firewall add rule name="rustmodem RTP" dir=in action=allow protocol=UDP localport=20000-20999
+netsh advfirewall firewall add rule name="RustModem SIP" dir=in action=allow protocol=UDP localport=5060 program="C:\Program Files\Quartz Systems\RustModem\rustmodem-svc.exe"
+netsh advfirewall firewall add rule name="RustModem RTP" dir=in action=allow protocol=UDP localport=20000-20999 program="C:\Program Files\Quartz Systems\RustModem\rustmodem-svc.exe"
 ```
 
-The two commands above are what is expected to be needed. They have not
-been run.
+These are the commands it runs, with the ports of the default
+configuration. After a change to `[sip] listen` or `[media] rtp_ports`,
+`rustmodem-setup repair` makes the rules again for the new ports.
+Uninstalling removes both.
+
+The rules admit any address. The service itself checks every SIP request
+against its source address, as "Who may talk to it" above describes; to have
+the firewall refuse other addresses too, add `remoteip=` to the two rules
+by hand, and know that `repair` will make them again without it.

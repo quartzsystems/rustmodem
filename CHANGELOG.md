@@ -3,6 +3,74 @@
 All notable changes to RustModem are recorded here. Versions follow the
 `VERSION` file.
 
+## 0.2.0 (phase 5: driver and installer)
+
+A port driver of RustModem's own, and a setup program. The record of the
+phase is [docs/PHASE5.md](docs/PHASE5.md); [docs/INSTALL.md](docs/INSTALL.md)
+is the install, [docs/DRIVER.md](docs/DRIVER.md) the driver and
+[docs/SIGNING.md](docs/SIGNING.md) how it is signed and what that asks of
+a machine. **A build is a lab build: its driver is signed with a
+certificate of our own, which setup asks to trust. It has been installed
+on test machines only, and not with Secure Boot on.**
+
+- **RustModem ports.** A line's port is a virtual COM port of RustModem's
+  own, with a modem, "RustModem Softmodem", attached to it. Windows lists
+  the port as a serial port and the modem as a modem; a host opens the
+  port by its name and the service is the modem behind it. com0com is no
+  longer needed. The driver is a user-mode driver (UMDF 2) written in
+  Rust: `driver/vcom`, with the port's rules in `driver/vcomcore`, where
+  they are tested with no Windows. It implements the timeouts, the wait
+  mask, purges, breaks and the modem lines of a serial port; it has no
+  baud rate and enforces no flow control.
+- **Configuration.** `serial = { backend = "vcom", port = "COM10" }` puts
+  a line on a RustModem port. `backend = "com0com"` works as before, and a
+  configuration of 0.1.0 is taken as it is.
+- **Setup.** `rustmodem-setup.exe` installs the programs to
+  `%ProgramFiles%\Quartz Systems\RustModem`, the driver, the service, two
+  firewall rules for SIP and RTP, a QoS policy that marks the service's
+  RTP with DSCP 46, an event source and the Start menu entry; upgrades;
+  repairs; and uninstalls, with `--purge` for the configuration and logs
+  too. A step that fails undoes those before it. `rustmodem-setup port
+  add`, `port remove` and `port list` make, remove and list ports.
+  `/quiet` installs unattended. **This replaces the zip of 0.1.0.**
+- **The service's account.** The service runs under `NT SERVICE\rustmodem`
+  and not as the system. **Its data directory admits that account, the
+  system and administrators only.** A configuration that sends logs or
+  captures somewhere else must let that account write there.
+- **The modem and Windows.** The modem's INF is generated from the AT
+  interpreter's own tables, so that Windows shows the rate a call
+  connected at and not the port's. New commands, which Windows sends a
+  modem it is getting to know: `+GMI`, `+GMM`, `+GMR`, `+GSN`, `+GCAP`,
+  `+FCLASS`, `#CLS`, `+GCI`, and `I1` to `I7` each with an answer of its
+  own.
+- **Names.** The product is "RustModem" wherever a person reads it: the
+  install and data directories, the service's display name ("RustModem
+  Modem Pool"), the event source, messages and `ATI3`. **The command-line
+  client is `rustmodem-ctl.exe`**, where it was `rustmodemctl.exe`. The
+  service's name, the pipe and the configuration's keys are unchanged.
+- **Manager.** Ports and drivers lists RustModem's ports with each one's
+  modem, driver version and state, and adds and removes them. New line
+  makes a port for the line, or takes a RustModem port there is, or a
+  com0com pair. Remove line offers to remove the line's port. The manager
+  runs the setup program as an administrator for these, and Windows asks.
+- **`rustmodem-ctl`.** `ports` shows RustModem's ports and the driver's
+  version. `port add [--com N] [--count K]` and `port remove COMn` pass
+  on to the setup program.
+- **Control API.** Additive; the protocol is still 1. A port's `kind` may
+  be `vcom`, and a port may have a `driver_version`. A line on a
+  RustModem port has its modem's name as its `binding`.
+- **Messages.** The range 9000 to 9499 is the driver's and the ports', and
+  9500 to 9999 setup's.
+- **Build and release.** `ci/build.ps1` builds and signs everything and
+  packs the setup program; the `driver` workflow does so on every push and
+  installs the result on its runner, with some seventy checks of what
+  Windows then has. A tagged release is the signed setup program. The
+  driver is a workspace of its own, `driver/`, which needs a Windows
+  Driver Kit; the rest builds without one.
+- **Event log.** The service's entries in the Application log have their
+  text: the service is its own message file, under the source
+  "RustModem".
+
 ## 0.1.0 (phase 4: V.22bis and V.42, the first release)
 
 A modem that dial-up networking can use: 2400 and 1200 bit/s, with error
