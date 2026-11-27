@@ -4,7 +4,7 @@
 
 [package]
 name = "dspkit"
-description = "Oscillators, filters, detectors, level and gain (pure)"
+description = "Oscillators, filters, detectors, level and gain, and the blocks of a synchronous modem (pure)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
