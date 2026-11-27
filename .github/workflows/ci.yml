@@ -88,7 +88,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [at_input, sdp_parse, rtp_packet, sip_message, fsk_demod, v8_decode, v22_demod, hdlc_deframe]
+        target: [at_input, sdp_parse, rtp_packet, sip_message, fsk_demod, v8_decode, v22_demod, hdlc_deframe, lapm_frames]
     steps:
       - uses: actions/checkout@v4
       - name: Nightly toolchain

@@ -88,4 +88,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "lapm_frames"
+path = "fuzz_targets/lapm_frames.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

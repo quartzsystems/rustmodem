@@ -113,7 +113,8 @@ modem/engine        ModemEngine trait, events, the Modem (V.8, V.21 and
                     EchoEngine
 link/v14            V.14: start-stop characters over a synchronous line, and
                     the character formats (pure)
-link/v42            V.42: the detection phase and HDLC framing (pure)
+link/v42            V.42: the detection phase, HDLC framing and LAPM error
+                    control (pure, sans-I/O)
 dte/at              Hayes interpreter (pure)
 dte/serial          SerialBackend trait, memory backend, com0com backend
 voip/sdp            session descriptions, offer/answer for G.711 (pure)
@@ -276,7 +277,7 @@ machine at hand as goldens, `RM_SCREENSHOTS=strict` fails on a difference
 anywhere, and `RM_SCREENSHOTS=skip` takes no pictures.
 
 The fuzz targets, `at_input`, `sdp_parse`, `rtp_packet`, `sip_message`,
-`fsk_demod`, `v8_decode`, `v22_demod` and `hdlc_deframe`
+`fsk_demod`, `v8_decode`, `v22_demod`, `hdlc_deframe` and `lapm_frames`
 (nightly toolchain and cargo-fuzz, on Linux or WSL):
 
 ```

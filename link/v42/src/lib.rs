@@ -14,8 +14,11 @@
 //!   control.
 //! - [`hdlc`] is the framing (clause 8.1.1): flags, the 0 put in after
 //!   five 1s, the frame check sequence, the abort.
-//!
-//! The procedure itself, LAPM (clause 8), is built on these.
+//! - [`xid`] is the information field of the XID frames by which the
+//!   parameters are agreed (clause 12.2).
+//! - [`lapm`] is the procedure itself (clause 8): set-up, numbered
+//!   information frames, acknowledgement, retransmission, flow control,
+//!   release.
 //!
 //! Everything here is given bits and the time and gives back bits:
 //! nothing reads a clock, allocates or calls the system, and it runs on
@@ -33,6 +36,8 @@
 
 pub mod detect;
 pub mod hdlc;
+pub mod lapm;
+pub mod xid;
 
 pub use detect::{Detection, Outcome};
 pub use hdlc::{Deframed, Deframer, Fill, Framer, Invalid};
