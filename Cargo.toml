@@ -23,6 +23,9 @@ members = [
     # DTE: what the host sees on the COM port.
     "dte/at",
     "dte/serial",
+    # Driver: the pure part of the virtual COM port. The driver itself is
+    # in the workspace of driver/, which needs a WDK.
+    "driver/vcomcore",
     # VoIP: the telephone side.
     "voip/sdp",
     "voip/rtp",

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8a6cdfdb9ba44ec3aec628dd09301e8b87be16b7ea8f34787a015c503423ead9 # shrinks to ops = [Timeouts(Timeouts { read_interval: 4294967295, read_total_multiplier: 4294967295, read_total_constant: 0, write_total_multiplier: 0, write_total_constant: 0 }), HostRead(1)]
+cc 9eb97a652f205977f968e49d5408acf8c333ff30d64979223b23656057783e7f # shrinks to ops = [Timeouts(Timeouts { read_interval: 4294967295, read_total_multiplier: 4294967295, read_total_constant: 0, write_total_multiplier: 0, write_total_constant: 0 }), HostRead(1)]
