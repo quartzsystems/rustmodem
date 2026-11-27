@@ -439,8 +439,26 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
         assert!(Instant::now() < deadline, "the lines are {:?}", states());
         std::thread::sleep(Duration::from_millis(1));
     }
-    for host in hosts.values() {
-        host.read();
+    // Each modem echoes the command, having had no E0 yet, and with Q1
+    // says nothing after it: a host that has the echo knows its command
+    // was taken, and has been sent all it will be before its call. A line
+    // is idle as soon as its port is open, which can be before its port's
+    // thread has given the modem the command; a host that went on then
+    // would find the echo later, among the first of its data.
+    const QUIET: &[u8] = b"ATE0Q1\r";
+    let mut echoed: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
+    loop {
+        for (line, host) in &hosts {
+            echoed.entry(*line).or_default().extend(host.read());
+        }
+        if echoed.values().all(|echo| echo == QUIET) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the hosts' commands were echoed as {echoed:?}"
+        );
+        std::thread::sleep(Duration::from_millis(1));
     }
 
     let mut shared = Shared::default();

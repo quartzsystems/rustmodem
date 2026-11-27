@@ -30,7 +30,7 @@ of the writer.
 | The zip's manager is `rustmodem-manager.exe` | `.github/workflows/release.yml` | The handoff names `rustmodem-gui.exe`. There is no program of that name: the manager has been `rustmodem-manager.exe` since phase 1 |
 | The release workflow has never run | `.github/workflows/release.yml` | It runs on a tag, and nothing was tagged. Criterion 18 is its first run |
 | The pictures of the manager | `ui/manager/tests/goldens/` | The main window, the modem's two dialogs, the diagnostics, the history and the self-test changed. They were taken by CI on a branch, as in the earlier phases. Look at them |
-| A red commit on `main`, **not understood** | "Where the build differs" below | `feat(v42): LAPM error control` was red on the Linux job: the soak had one wrong octet on a 300 bit/s modem line, on a commit that touched neither the soak, the service nor that modem. It has not happened again, on CI or in any run here, and its cause was not found |
+| Two red commits on `main` | "Where the build differs" below | `feat(v42): LAPM error control` and this record's own commit, both on the Linux job, both the soak with one wrong octet, and both a race in the test that the slower runner lost. It is mended in the `test(svc)` commit that follows this record |
 | Still open from earlier phases | `docs/PHASE0.md` to `docs/PHASE3.md`, `docs/RUNTIME.md` | Their manual checklists and `NEEDS-CODY` items are as they were |
 
 ## What was built
@@ -370,7 +370,7 @@ gone.
 | `NEEDS-CODY` | `docs/RRAS.md` (seven) | The wording of Windows' dialogs, the standard modem model, the authentication methods, the Courier's command for 2400 bit/s, and the log of the first call |
 | `NEEDS-CODY` | `dte/at/tests/hostlogs/README.md`, `dte/at/tests/hostlogs/standard-modem.txt` | The real initialisation strings, in place of the one written from memory |
 | `NEEDS-CODY` | `modem/engine/tests/corpus/README.md` | Captures of calls with real modems, in each of the modes |
-| `NEEDS-CODY` | This record | `fallback_ms` as one setting; a Bell publication for Bell 212A; the soak's wrong octet; the manual checklist |
+| `NEEDS-CODY` | This record | `fallback_ms` as one setting; a Bell publication for Bell 212A; the manual checklist |
 | `NEEDS-CODY` | `docs/GATEWAYS.md`, `docs/TELEPHONY.md`, `docs/RUNTIME.md` | From phase 2 and the retrofit |
 | `NEEDS-CODY` | `service/svc/src/ports.rs`; `dte/serial/src/com0com.rs` (three), `docs/COM0COM.md` | From phases 0 and 1 |
 
@@ -378,6 +378,7 @@ gone.
 
 | Handoff | Built | Why |
 |---|---|---|
+| Each work package is one commit | Ten, and an eleventh, `test(svc)`, after this record | The soak's race, below, was found from the CI run of the record's own commit |
 | The Recommendation wins | The 2002 edition of V.42 is the one in `refs/itu/`, with Corrigendum 1 | It has no state tables and no re-establishment of a connection, both of which the handoff assumes. See "LAPM" |
 | SREJ if time allows | Not built | Go-back-N held the property and the loss test. It is the first thing to add if real lines want it |
 | A band-pass filter and gain control before the demodulator | The matched filter at baseband is the channel filter, and the gain is after it | A gain before the filter would be set by this end's own echo |
@@ -395,7 +396,7 @@ gone.
 | The control API changes are additive | They are, and `ModemInfo.link` is behind a pointer in the Rust type | The event type had grown past what clippy allows in an enum; the wire is the same |
 | `lines.diag` gains the constellation ring | As a flat list of numbers, two for each point | The documentation generator of `service/ctlproto` has no array of arrays |
 | Goldens are re-blessed | The manager's commit went to a branch first; CI took the pictures; the branch was deleted | As in the earlier phases |
-| Every commit on `main` is green | One was red on the Linux job | `feat(v42): LAPM error control`. The soak failed with "line 9, peer to host: an octet arrived that was not the one sent". Line 9 is a modem line at 300 bit/s, and the commit added LAPM to `link/v42`, which nothing in the service used yet. The runner was slow in that run: the modems' ticks had a 99th percentile of 83 us and a longest of 422. Phase 3 had the same message twice, from each end sending before the other had connected, and that was mended then; this is either another race of the test or a fault of the 300 bit/s modem that needs a slow machine to show, and which of the two is not known. The four runs on `main` and the branch since, and every run of the Linux job under WSL, passed. NEEDS-CODY: if it shows again, the run's log has the line; `RM_SOAK_MINUTES=10` under WSL with the machine loaded is where to look for it |
+| Every commit on `main` is green | Two were red on the Linux job | `feat(v42): LAPM error control` and `docs: phase 4 record and release preparation`. The soak failed with "an octet arrived that was not the one sent", from the peer to the host, on a modem line at 300 bit/s the first time and on a null-engine line the second: on commits that touched neither. The hosts of the soak begin by sending `ATE0Q1`, and went on when every line was idle, throwing away what they had been sent, which is the echo of the command. A line is idle as soon as its port is open, and that can be before the port's thread has given the modem the command: a host that went on then was sent the echo afterwards and took it for the first of its call's data. The slow runner lost that race twice in some ten runs; no run here did. The hosts wait for the echo itself now. Phase 3 had the same message from another race, each end sending before the other had connected, which was mended then and is not this |
 | `S9`-style registers `S36`, `S46`, `S48` | Built, with the values hosts send | They are in no Recommendation; `docs/AT.md` has the mapping |
 
 ## Tests whose expectations changed
@@ -525,7 +526,7 @@ passes.
 
 | # | Criterion | How it was shown |
 |---|---|---|
-| 1 | fmt, clippy with `-D warnings`, `cargo deny check`, `ci/headers.sh`, `ci/pure.sh` and all tests pass on Windows; every `dsp/*`, `modem/*` and `link/*` crate passes on Linux | Run locally on Windows and, the whole Linux job, under WSL before every commit: 1,244 tests on Windows at the end and 983 in the Linux job, and the 29 pictures of the manager. One commit on `main` was red on CI: see "Where the build differs" |
+| 1 | fmt, clippy with `-D warnings`, `cargo deny check`, `ci/headers.sh`, `ci/pure.sh` and all tests pass on Windows; every `dsp/*`, `modem/*` and `link/*` crate passes on Linux | Run locally on Windows and, the whole Linux job, under WSL before every commit: 1,244 tests on Windows at the end and 983 in the Linux job, and the 29 pictures of the manager. Two commits on `main` were red on CI: see "Where the build differs" |
 | 2 | V.22 and V.22bis meet their bit-error-rate margins and carry data error-free across the stated ranges | `modem/v22/tests/modem.rs`; "Bit error rate" above |
 | 3 | Every pairing of modulation capabilities reaches the right mode, and every error-control policy against every kind of peer gives the specified outcome | `modem/engine/tests/sync.rs`: 243 calls, every list of modulations at one end against every list at the other, each held to the mode the rules give; and the three policies against a far end with LAPM, with none and with it required, both ways round |
 | 4 | LAPM's data-integrity property holds under arbitrary loss, duplication and corruption below the give-up threshold | The four property tests of `link/v42/tests/lapm.rs`; "LAPM" above |
