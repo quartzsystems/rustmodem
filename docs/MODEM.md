@@ -63,12 +63,12 @@ An answering modem:
 
 1. is silent for 2150 ms (V.25 clause 4.3), after `answer_delay_ms`;
 2. sends answer tone at 2100 Hz with its phase reversed every 450 ms: with
-   V.8, ANSam, which is that tone modulated at 15 Hz, for up to 5 s while
-   it listens for the caller's CM (V.8 clause 8.2); without, ANS for 3.3 s
-   (V.25 clause 4.4);
-3. with V.8, on two identical CMs, sends JM until the caller's CJ, is
-   silent for 75 ms, and sends the carrier of the modulation the two have
-   in common;
+   V.8, ANSam, which is that tone modulated at 15 Hz (V.8 clause 7.2), for
+   up to 5 s while it listens for the caller's CM (clause 8.2.2); without,
+   ANS for 3.3 s (V.25 clause 2.2);
+3. with V.8, on two identical CMs, sends JM until the caller's CJ (clause
+   8.2.3), is silent for 75 ms, and sends the carrier of the modulation the
+   two have in common;
 4. without V.8, or when no CM came, is silent for 75 ms and offers each of
    its modulations in turn, sending its carrier for `fallback_ms` and
    listening for the caller's carrier of any modulation it may use;
@@ -76,7 +76,7 @@ An answering modem:
 
 An originating modem listens. On ANSam, and with V.8, it is silent for 1 s
 (V.8 clause 8.1.1), sends CM until two identical JMs, sends CJ, is silent
-for 75 ms and sends its carrier. On anything else it waits for the answer
+for 75 ms and sends its carrier (clause 8.1.2). On anything else it waits for the answer
 tone to end, tells the answerer's modulation by its carrier, and answers
 with its own; if no carrier it knows comes within a second it sends the
 carrier of the first modulation it may use (V.25 clause 3.10).
@@ -113,7 +113,7 @@ The control API, the manager and RMD7001 name the modem's state:
 
 | Modulation | Caller sends: mark, space | Answerer sends: mark, space |
 |---|---|---|
-| V.21 (clause 3) | 980 Hz, 1180 Hz | 1650 Hz, 1850 Hz |
+| V.21 | 980 Hz, 1180 Hz | 1650 Hz, 1850 Hz |
 | Bell 103 | 1270 Hz, 1070 Hz | 2225 Hz, 2025 Hz |
 
 Mark is binary 1 and the idle line. The line signal detector turns on above
@@ -138,3 +138,24 @@ the pool can read it without waiting.
 
 `rustmodem-replay` gives the frames of a captured call to a new engine and
 prints what it does; `docs/CAPTURE.md` has it.
+
+## Seeing and trying the modem
+
+`rustmodemctl diag <line>` prints the modem of a line's call: its state,
+the levels received and sent, the carrier, its frequency error, the
+quality of the received signal, framing errors and its last changes of
+state. The manager shows the same, live and with a scope of the
+demodulator's output, in View, Line diagnostics.
+
+`rustmodemctl selftest <a> <b>`, and Tools, Loopback self-test in the
+manager, join the modems of two idle lines with nothing between them: the
+first calls the second, and each sends the other 64 KiB. The test says
+whether the modems of this service work with the settings of those two
+lines; the network and the hosts have no part in it. It takes some
+seconds, and the two lines are busy meanwhile.
+
+## What is not here
+
+One character format, 8N1. No error control and no compression: V.42 and
+V.42bis come with V.22bis. No equaliser and no echo canceller, which
+300 bit/s does without. No V.23, no fax, no DTMF.

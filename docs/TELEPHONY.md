@@ -320,7 +320,8 @@ A change to `rtp_ports` takes effect for the next call.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `engine` | `"null"` | The modem engine of the line: `null` or `echo` |
+| `engine` | `"modem"` | The modem engine of the line: `modem`, or for tests of the path `null` or `echo` |
+| `modem` | none | The line's own modem settings, over those of `[modem]`: see `docs/MODEM.md` |
 | `register` | none | A table. With it the line is an extension of a PBX; without it, a trunk line |
 | `register.server` | required | The registrar: `host` or `host:port` |
 | `register.user` | required | The extension |

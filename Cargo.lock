@@ -10,11 +10,11 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "alloccount"
-version = "0.0.4"
+version = "0.0.5"
 
 [[package]]
 name = "at"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "engine",
  "proptest",
@@ -66,7 +66,7 @@ dependencies = [
 
 [[package]]
 name = "chansim"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "dspkit",
  "engine",
@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "config"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "msg",
  "proptest",
@@ -123,7 +123,7 @@ dependencies = [
 
 [[package]]
 name = "ctl"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "config",
  "ctlproto",
@@ -141,7 +141,7 @@ dependencies = [
 
 [[package]]
 name = "ctlproto"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "msg",
  "serde",
@@ -150,7 +150,7 @@ dependencies = [
 
 [[package]]
 name = "ctlsrv"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "config",
  "ctlproto",
@@ -165,7 +165,7 @@ dependencies = [
 
 [[package]]
 name = "demosvc"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "config",
  "ctlproto",
@@ -197,14 +197,14 @@ dependencies = [
 
 [[package]]
 name = "dspkit"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "g711",
 ]
 
 [[package]]
 name = "engine"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "alloccount",
  "chansim",
@@ -244,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "fsk"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "alloccount",
  "chansim",
@@ -254,7 +254,7 @@ dependencies = [
 
 [[package]]
 name = "g711"
-version = "0.0.4"
+version = "0.0.5"
 
 [[package]]
 name = "getrandom"
@@ -270,7 +270,7 @@ dependencies = [
 
 [[package]]
 name = "glyph"
-version = "0.0.4"
+version = "0.0.5"
 
 [[package]]
 name = "hashbrown"
@@ -311,7 +311,7 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "manager"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "ctlproto",
  "glyph",
@@ -336,7 +336,7 @@ dependencies = [
 
 [[package]]
 name = "media"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "engine",
  "pool",
@@ -385,7 +385,7 @@ dependencies = [
 
 [[package]]
 name = "model"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "ctlproto",
  "msg",
@@ -394,7 +394,7 @@ dependencies = [
 
 [[package]]
 name = "msg"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "toml_edit",
 ]
@@ -416,7 +416,7 @@ checksum = "c938015719552d665fd0553b90d96cd7ff58e83e4c061ca99e6bb78865a72752"
 
 [[package]]
 name = "pipe"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "config",
  "ctlproto",
@@ -445,7 +445,7 @@ dependencies = [
 
 [[package]]
 name = "pool"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "at",
  "config",
@@ -530,7 +530,7 @@ checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
 
 [[package]]
 name = "replay"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "engine",
  "rtp",
@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "rtp"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "proptest",
 ]
@@ -551,7 +551,7 @@ checksum = "5974e397833d890f2f74963408e0d4a6cd8eda2f6a445ae06750291b5d7a997e"
 
 [[package]]
 name = "sdp"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "proptest",
 ]
@@ -601,7 +601,7 @@ dependencies = [
 
 [[package]]
 name = "serial"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "at",
  "msg",
@@ -627,7 +627,7 @@ checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
 name = "sip"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "md-5",
  "proptest",
@@ -636,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "sippeer"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "engine",
  "rtp",
@@ -656,7 +656,7 @@ dependencies = [
 
 [[package]]
 name = "svc"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "config",
  "ctlproto",
@@ -703,7 +703,7 @@ dependencies = [
 
 [[package]]
 name = "telephony"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "config",
  "ctlproto",
@@ -782,7 +782,7 @@ checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 
 [[package]]
 name = "tones"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "dspkit",
  "g711",
@@ -808,7 +808,7 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 
 [[package]]
 name = "v8"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "chansim",
  "dspkit",
@@ -831,7 +831,7 @@ checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
 
 [[package]]
 name = "win32"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "glyph",
  "windows",

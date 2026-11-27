@@ -10,16 +10,23 @@ Everything is written in-house in Rust under the MIT licence.
 
 ## Status
 
-Phase 2 of ten: telephony. Real telephone calls reach the lines. The service
-speaks SIP and RTP itself: it takes calls from a trunk and routes them
-through hunt groups, registers lines to a PBX as extensions, rings the
-line's COM port, and carries G.711 both ways sample-exactly. There is no
-DSP yet: nothing demodulates the audio. A stand-in engine echoes it, and
-the "null" modem of phase 0 is carried across real RTP to prove the path
-alters nothing. The manager, `rustmodem-manager.exe`, shows every line live
-and carries the operator's actions, the SIP ones among them. See
-[docs/PHASE0.md](docs/PHASE0.md), [docs/PHASE1.md](docs/PHASE1.md) and
-[docs/PHASE2.md](docs/PHASE2.md).
+Phase 3 of ten: the first modem. A line answers a call as a modem does and
+connects at 300 bit/s, by V.21 or Bell 103, agreeing which by V.8 where the
+caller has it. The modem is written in-house from the ITU-T
+Recommendations, with the G.711 codecs and the signal processing under it,
+and runs on the media thread of each call. It has connected to itself, over
+loopback and through a simulated telephone channel with its faults; it has
+not yet met a modem that is not its own. See
+[docs/PHASE3.md](docs/PHASE3.md) and [docs/MODEM.md](docs/MODEM.md).
+
+Under it is what the earlier phases built. The service speaks SIP and RTP
+itself: it takes calls from a trunk and routes them through hunt groups,
+registers lines to a PBX as extensions, rings the line's COM port, and
+carries G.711 both ways sample-exactly. The manager,
+`rustmodem-manager.exe`, shows every line live and carries the operator's
+actions: the modem's settings, the diagnostics of a line's call and a
+loopback self-test among them. See [docs/PHASE0.md](docs/PHASE0.md),
+[docs/PHASE1.md](docs/PHASE1.md) and [docs/PHASE2.md](docs/PHASE2.md).
 
 The service's control plane runs on Tokio: the pool on one task, the
 control server, the named pipe and the SIP socket beside it. Each serial
@@ -31,13 +38,14 @@ where.
 
 | Folder | Contents |
 |---|---|
-| `modem/` | The modem engine trait, the null engine and the echo engine |
+| `dsp/` | G.711, the signal processing blocks, the tones of a call's start, and a simulated telephone channel for tests |
+| `modem/` | The V.21 and Bell 103 modem, V.8, and the engine that runs a call with them; the null and echo engines |
 | `dte/` | The AT command interpreter and the serial backends |
 | `voip/` | SDP, RTP and SIP, written in-house and free of I/O |
 | `service/` | Messages, configuration, control API, the pool, the media threads, the SIP router, and the service with its runner |
 | `ui/` | The manager: its data model, its icons, the Win32 wrappers and the window |
-| `tools/` | `rustmodemctl`, the demo service, the test SIP peer and the fuzz targets |
-| `docs/` | Architecture, the runtime model, the AT command set, the control API, telephony, call capture, gateways, com0com set-up |
+| `tools/` | `rustmodemctl`, the demo service, the test SIP peer, the capture replay tool and the fuzz targets |
+| `docs/` | Architecture, the runtime model, the modem, the AT command set, the control API, telephony, call capture, gateways, com0com set-up |
 | `ci/` | The licence header and version checks, and the check that Tokio stays out of the pure crates |
 
 ## Building
@@ -110,6 +118,17 @@ rustmodemctl capture on 1
 rustmodemctl capture check <file>
 ```
 
+A line's engine is the modem unless its configuration says otherwise.
+`[modem]` has the modulations it may use, whether it uses V.8 and the level
+it sends at, and a line can have its own; [docs/MODEM.md](docs/MODEM.md)
+is the reference. To see what the modem of a call is doing, and to try the
+modems of two idle lines against each other with no network between them:
+
+```
+rustmodemctl diag 1
+rustmodemctl selftest 1 2
+```
+
 The AT command set is in [docs/AT.md](docs/AT.md) and the control API in
 [docs/CONTROL_API.md](docs/CONTROL_API.md).
 
@@ -128,11 +147,13 @@ The tests of the manager open its window on the desktop, against the demo
 service. Its screenshot tests compare each view with a golden picture
 blessed on the CI runner image; anywhere else they report what differs and
 pass. See [docs/PHASE1.md](docs/PHASE1.md). The soak test holds 24 calls
-over SIP and RTP on loopback for a minute and fails on one packet lost; see
-[docs/PHASE2.md](docs/PHASE2.md).
+over SIP and RTP on loopback for a minute, a third of them between modems,
+and fails on one packet lost; see [docs/PHASE2.md](docs/PHASE2.md) and
+[docs/PHASE3.md](docs/PHASE3.md).
 
-The fuzz targets (`at_input`, `sdp_parse`, `rtp_packet`, `sip_message`) need
-a nightly toolchain and cargo-fuzz, on Linux or WSL:
+The fuzz targets (`at_input`, `sdp_parse`, `rtp_packet`, `sip_message`,
+`fsk_demod`, `v8_decode`) need a nightly toolchain and cargo-fuzz, on Linux
+or WSL:
 
 ```
 cargo +nightly fuzz run --fuzz-dir tools/fuzz sip_message -- -max_total_time=600

@@ -73,12 +73,12 @@ control the service over a local API; everything is in-house Rust under MIT.
 
     | Place | Why |
     |---|---|
-    | `dte/at`, `modem/engine`, `service/msg`, `service/config`, `service/ctlproto`, `service/pool`, `voip/sdp`, `voip/rtp`, `voip/sip`, `service/telephony`, `ui/model`, `ui/glyph` | Pure state machines given bytes and a time. They stay that way: it is what makes them testable on Linux with a mock clock |
+    | `dsp/*`, `modem/fsk`, `modem/v8`, `dte/at`, `modem/engine`, `service/msg`, `service/config`, `service/ctlproto`, `service/pool`, `voip/sdp`, `voip/rtp`, `voip/sip`, `service/telephony`, `ui/model`, `ui/glyph` | Pure state machines given bytes and a time. They stay that way: it is what makes them testable on Linux with a mock clock |
     | Media threads in `service/media` | Real-time. A dedicated OS thread for each call, with nothing on the tick path that can allocate, lock or yield to a scheduler |
     | Serial port I/O in `dte/serial` | Overlapped I/O on COM handles has no Tokio reactor. Each port keeps a thread and talks to the pool's task through channels |
     | The capture writer | It has its own thread fed by a ring |
     | `ui/manager`, `ui/win32`, `tools/ctl` | A Win32 message loop and a command-line client. They keep the blocking pipe client |
-    | `tools/sippeer` | The test peer keeps its own sockets and clock |
+    | `tools/sippeer`, `tools/replay` | The test peer keeps its own sockets and clock; the replay tool reads a file |
 
 Every user-visible error is an `RMD` message from `service/msg`. No free-text
 error strings cross a crate boundary to the user. The manager shows a message
@@ -95,7 +95,20 @@ No `crates/` directory: a folder per category at the root, one crate per
 subfolder, package names equal to folder names.
 
 ```
-modem/engine        ModemEngine trait, events, NullEngine, EchoEngine
+dsp/g711            the G.711 u-law and A-law codecs (pure)
+dsp/dspkit          oscillators, filters, detectors, level control,
+                    resampling; the deterministic maths under them (pure)
+dsp/tones           answer tone, ANSam and calling tone, and their
+                    detectors (pure)
+dsp/chansim         a telephone channel with its faults, from a seed, for
+                    tests (pure)
+modem/fsk           the V.21 and Bell 103 modulator and demodulator, and
+                    start-stop framing (pure)
+modem/v8            V.8: the signals and both ends of the procedure (pure,
+                    sans-I/O)
+modem/engine        ModemEngine trait, events, the Modem (V.8, V.21 and
+                    Bell 103 from answer to carrier lost), NullEngine,
+                    EchoEngine
 dte/at              Hayes interpreter (pure)
 dte/serial          SerialBackend trait, memory backend, com0com backend
 voip/sdp            session descriptions, offer/answer for G.711 (pure)
@@ -126,12 +139,15 @@ tools/sippeer       rustmodem-sippeer.exe: a scriptable SIP and RTP peer for
                     tests (not shipped)
 tools/replay        rustmodem-replay.exe: replays a call capture through the
                     modem engine (not shipped)
+tools/alloccount    the counting allocator of the tests that assert a path
+                    allocates nothing (not shipped)
 tools/fuzz          cargo-fuzz targets (own lockfile, outside the workspace)
 ```
 
-Pure crates (no OS calls, must pass on Linux): `engine`, `at`, `sdp`, `rtp`,
+Pure crates (no OS calls, must pass on Linux): `g711`, `dspkit`, `tones`,
+`chansim`, `fsk`, `v8`, `engine`, `at`, `sdp`, `rtp`,
 `sip`, `msg`, `config`, `ctlproto`, `pool`, `glyph`, `model`, and the trait
-and memory backend of `serial`. `media`, `telephony` and `sippeer` use
+and memory backend of `serial`. `media`, `telephony`, `sippeer` and `replay` use
 sockets and threads and nothing of Windows that has no counterpart: they
 build and pass on Linux too, and CI runs them there. `ctlsrv` and the
 library of `svc` are not pure, being on Tokio, but need nothing of Windows:
@@ -151,6 +167,18 @@ with no jitter buffer and no clock but the far end's. `docs/TELEPHONY.md`
 says how the service behaves on a SIP network, `docs/CAPTURE.md` how a call
 is captured and checked, and `docs/GATEWAYS.md` what to set on a gateway.
 
+The modem is written from the ITU-T Recommendations, which are in the
+git-ignored `refs/itu/`: the clause is cited beside every constant that
+comes from one, and where a handoff and a Recommendation differ the
+Recommendation wins and the phase record says so. All signal processing is
+`f32` at 8000 Hz, with 1.0 the overload point of G.711; levels in dBm0 go
+through `dspkit`. Nothing under `dsp/` or `modem/` reads a clock or a
+random number it was not given, so a call given the same samples does the
+same thing on every machine. `ModemEngine::process` is the tick path: it
+allocates nothing, takes no lock, logs nothing, makes no system call and
+cannot panic, and `modem/engine/tests/alloc.rs` counts to keep it so.
+`docs/MODEM.md` is the modem's reference.
+
 ## Phases
 
 | Phase | Name |
@@ -165,7 +193,7 @@ is captured and checked, and `docs/GATEWAYS.md` what to set on a gateway.
 | 9 | Extensions |
 
 The record of each phase is in `docs/`: `docs/PHASE0.md`, `docs/PHASE1.md`,
-`docs/PHASE2.md`. Phases 0, 1 and 2 are built. After phase 2 the service's
+`docs/PHASE2.md`, `docs/PHASE3.md`. Phases 0 to 3 are built. After phase 2 the service's
 control plane was moved onto Tokio (0.0.4); `docs/RUNTIME.md` is the
 runtime model and the record of that.
 
@@ -223,9 +251,13 @@ there: the control server and the runner.
 tests run it against the demo service on the desktop of whoever runs them.
 Two tests take a minute each: the manager's smoke test, and the soak test
 (`service/svc/tests/soak.rs`), which holds 24 calls over SIP and RTP
-on loopback, on the service's own runner, and fails on one packet lost. `RM_SOAK_MINUTES=10` makes the
+on loopback, a third of them between modems, on the service's own runner,
+and fails on one packet lost. `RM_SOAK_MINUTES=10` makes the
 soak ten minutes, and `RM_CAPTURE_MINUTES=10` does the same for the
-captured calls of `service/svc/tests/peer.rs`.
+captured calls of `service/svc/tests/peer.rs`. `RM_MODEM_KIB=1` makes the
+modem calls of `service/svc/tests/transparency.rs` carry 1 KiB each way
+where they carry 64, and `RM_CORPUS=<dir>` keeps the captures the peer tests make for the corpus
+in `modem/engine/tests/corpus/`.
 
 The screenshot tests (`ui/manager/tests/screenshots.rs`) compare the main
 window and every dialog with the goldens in `ui/manager/tests/goldens/`. The

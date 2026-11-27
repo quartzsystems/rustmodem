@@ -3,6 +3,64 @@
 All notable changes to rustmodem are recorded here. Versions follow the
 `VERSION` file.
 
+## 0.0.5 (phase 3: 300 bit/s)
+
+The first modem. A line whose engine is `modem`, which is now the default,
+answers and originates calls at 300 bit/s. The record of the phase is
+[docs/PHASE3.md](docs/PHASE3.md), and [docs/MODEM.md](docs/MODEM.md) is the
+reference.
+
+- **The modem.** V.21 and Bell 103, with V.8 to choose between them and
+  the automatic fallback of V.25 where the far end has no V.8. Written
+  in-house from the Recommendations: the G.711 codecs (`dsp/g711`), the
+  signal processing blocks (`dsp/dspkit`), answer tone and calling tone and
+  their detectors (`dsp/tones`), the frequency-shift modem with start-stop
+  framing (`modem/fsk`), V.8 (`modem/v8`) and the engine that runs a call
+  (`modem/engine`). Characters are 8N1.
+- **On the media thread.** The modem runs in the tick of each call. A tick
+  allocates nothing, takes no lock and makes no system call; a test counts
+  the allocations of a whole call and finds none.
+- **Settings.** A `[modem]` table: `modulations`, `v8`, `tx_level_dbm0`,
+  `answer_delay_ms` and `fallback_ms`, and a `modem` table on a line for
+  its own. `engine = "modem"` is the default; `null` and `echo` remain for
+  tests of the path. **A configuration file that names no engine now gets
+  the modem** where it got the null engine.
+- **AT commands.** `+MS` selects the modulation and is checked: a value
+  the modem has not got is `ERROR`, where anything was stored before.
+  `B0` and `B1` choose V.21 and Bell 103, where `B` was an unknown command.
+  `S9` is the carrier response time and `S10` the carrier loss time, and
+  both take effect. `I4` begins `SOFT MODEM` on a modem line. `CONNECT 300`
+  is reported with the carrier, `V.21` or `BELL103`.
+- **A simulated channel.** `dsp/chansim` is a telephone channel with its
+  faults, for tests: loss, noise, echo, a sloped loop, a second coding,
+  frequency offset, clock offset, slips and lost packets, all from a seed.
+- **Replay.** `rustmodem-replay` gives the frames of a captured call to a
+  new modem and prints what it does, and a corpus of captures is replayed
+  in the tests. [docs/CAPTURE.md](docs/CAPTURE.md) says what a replay can
+  and cannot show.
+- **Control API.** Additive; the protocol is still 1. `LineInfo.modem`,
+  `CallInfo.modem`, `lines.diag`, the `line.diag` event, `selftest.run`,
+  `[modem]` in `config.get` and `config.set`, and `modem` in `lines.add`
+  and `lines.edit`. `engine` may be `modem`, and is when it is left out of
+  `lines.add`.
+- **`rustmodemctl`.** `diag <id>` and `selftest <a> <b>`; `line` shows the
+  modem's settings and the modem of a call.
+- **Manager.** Modem, Rate cap and modulations; View, Line diagnostics,
+  with a scope of the demodulator's output; Tools, Loopback self-test. The
+  line's dialog has the modem among the engines, first, and the line's own
+  modem settings. The Retr. column and "Softmodem engine" are live.
+- **Messages.** The range 7000 to 7999 is the modem's: RMD7001 to RMD7006.
+  RMD4015 is the manager's for a modem with no modulation.
+- **Tests.** The modem against itself through the simulated channel, 64 KiB
+  each way with no error under each fault and all at once; two services
+  calling each other over SIP and RTP on loopback; a line against the test
+  peer with packets lost and a clock that is off; a third of the soak's
+  calls between modems, with the time a modem's tick takes held under a
+  millisecond. Fuzz targets `fsk_demod` and `v8_decode`.
+
+The modem has connected only to itself. Calls with real modems are the
+manual checklist of [docs/PHASE3.md](docs/PHASE3.md).
+
 ## 0.0.4 (runtime retrofit)
 
 The service's control plane runs on Tokio. Nothing the service does has

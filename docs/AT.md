@@ -101,13 +101,14 @@ reports 1.
 
 | Command | Behaviour | Clause |
 |---|---|---|
+| `B0`, `B1` | The carrier to use: V.21, Bell 103. They set the first subparameter of `+MS` and nothing else. Above 1 is an error. Default `B0` | |
 | `A` | Answer: go off hook and enter handshaking. `ERROR` if already off hook. Ends the line | 6.3.5 |
 | `D<string>` | Dial. See below. `ERROR` if already off hook. Ends the line | 6.3.1 |
 | `E0`, `E1` | Echo off, on. Default `E1` | 6.2.4 |
 | `H`, `H0` | Hang up, if off hook. `H1` returns `OK` and does nothing. Above 1 is an error | 6.3.6 |
 | `I`, `I0` | Print the product code, `rustmodem` | 6.1.3 |
 | `I3` | Print `rustmodem <version>` | |
-| `I4` | Print the capability line, `NULL MODEM,V.250,+MS,+ES,+DS`. It starts with the name of the line's engine: `NULL`, or `ECHO` for a line with `engine = "echo"` | |
+| `I4` | Print the capability line, `SOFT MODEM,V.250,+MS,+ES,+DS`. It starts with the name of the line's engine: `SOFT` for the modem, `NULL` for a line with `engine = "null"` and `ECHO` for one with `engine = "echo"` | |
 | `I1`, `I2`, `I5`..`I9` | Nothing; `OK`. Above 9 is an error | |
 | `L0`..`L3` | Speaker volume. Stored, no effect | 6.3.13 |
 | `M0`..`M3` | Speaker mode. Stored, no effect | 6.3.14 |
@@ -124,7 +125,7 @@ reports 1.
 | `&K0`, `&K3` | Flow control: none, RTS/CTS. Stored, no effect. Default `&K3`. Other values are an error | |
 | `&V` | Print the settings, the registers and the extended parameters of the active profile, and then of the stored profile if there is one | |
 | `&W`, `&W0`, `&W1` | Store the active profile. There is one stored profile; `&W0` and `&W1` write the same one. See "Stored profiles" | |
-| `+MS` | Modulation selection. Stored, no effect | 6.4.1 |
+| `+MS` | Modulation selection. See "Modulation selection" | 6.4.1 |
 | `+ES` | Error control selection. Stored, no effect | 6.5.1 |
 | `+DS` | Data compression. Stored, no effect | 6.6.1 |
 | anything else | `OK` or `ERROR`, as the line's `unknown_command` setting says | |
@@ -169,7 +170,7 @@ is off and the setting is not `&D0`, the modem does not auto-answer.
 
 | Form | Example | Effect |
 |---|---|---|
-| Set | `AT+MS=V34,1,300,33600` | Stores the value. Letters, digits, `,` and `.`, up to 64 characters. An empty value restores the default |
+| Set | `AT+ES=1,0,2` | Stores the value. Letters, digits, `,` and `.`, up to 64 characters. An empty value restores the default. `+MS` is checked: see below |
 | Read | `AT+MS?` | Prints `+MS: <value>` |
 | Test | `AT+MS=?` | Prints `+MS: <ranges>` |
 
@@ -177,13 +178,38 @@ The name alone, with no `=` or `?`, is an error.
 
 | Parameter | Default | Test form reports |
 |---|---|---|
-| `+MS` | `V21,1,0,0,0,0` | `(V21),(0,1),(0),(0),(0),(0)` |
+| `+MS` | `V21,1,0,0,0,0` | `(V21,B103),(0,1),(0,300),(0,300),(0,300),(0,300)` |
 | `+ES` | `3,0,2` | `(0-4),(0-4),(0-6)` |
 | `+DS` | `3,0,2048,6` | `(0-3),(0),(512-2048),(6-250)` |
 
-Phase 0 has no modulation, error control or compression. The values are
-stored and reported and nothing reads them; the defaults and ranges are
-placeholders for the phases that add each one.
+There is no error control or compression yet. The values of `+ES` and
+`+DS` are stored and reported and nothing reads them; their defaults and
+ranges are placeholders for the phase that adds each.
+
+### Modulation selection
+
+`+MS=<carrier>,<automode>,<min rate>,<max rate>,<min rx rate>,<max rx rate>`
+(V.250 clause 6.4.1) says which modulation the line's next call uses.
+
+| Subparameter | Values | Meaning |
+|---|---|---|
+| carrier | `V21`, `B103` | The modulation to try first: V.21, or Bell 103. Letters of either case |
+| automode | `0`, `1` | With 1 the modem may use the line's other modulations too, and V.8; with 0 it uses this carrier and nothing else, and no V.8 |
+| the four rates | `0`, `300` | 0 is no limit. There is one rate, so they change nothing |
+
+A subparameter left out stays as it is: `AT+MS=,0` turns automode off and
+leaves the carrier. The value is reported whole, `+MS: B103,0,0,0,0,0`. A
+carrier, an automode or a rate the modem has not got is `ERROR`, and `+MS`
+stays as it was.
+
+`+MS` chooses within what the line's configuration allows (`modulations` in
+`[modem]` or the line's own, `docs/MODEM.md`). A carrier the configuration
+does not allow is not the host's to choose: the configuration's list is
+used as it is.
+
+Bell 103 is `B103` here because V.250 keeps the names that begin with `V`
+for ITU-T modulations (Table 13); the `CONNECT` report and the control API
+call it `BELL103`.
 
 ### Unknown commands
 
@@ -249,7 +275,8 @@ added later under the same id starts from the factory defaults.
 | S5 | 8 | Command line editing character. 0 to 127 |
 | S6 | 2 | Wait before dialling, seconds. Stored, no effect |
 | S7 | 50 | Seconds to wait for a connection |
-| S10 | 14 | Carrier loss delay, tenths of a second. Stored, no effect |
+| S9 | 6 | Carrier response time, tenths of a second: how long the far end's carrier must be there before the modem connects. It is not in V.250; it is the register Hayes modems have |
+| S10 | 14 | Carrier loss delay, tenths of a second: how long the carrier may be gone before the modem ends the call (V.250 clause 6.3.12). 255 is 25.5 seconds here; the Recommendation has it mean that the carrier is never taken to be lost |
 | S12 | 50 | Escape guard time, units of 20 ms |
 
 S7 runs from the `A` or `D` command. When it expires the modem hangs up and
