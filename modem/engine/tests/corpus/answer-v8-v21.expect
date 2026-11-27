@@ -1,0 +1,15 @@
+# What rustmodem-replay --answer prints for answer-v8-v21.rmcap. Made with:
+#   rustmodem-replay modem/engine/tests/corpus/answer-v8-v21.rmcap
+role answer
+law ulaw
+frames 1054
+10 state answer-silence
+2150 state answer-tone
+4190 state v8-jm
+4790 state gap
+4870 state training
+5490 state data
+5490 connect 300 V.21
+data 60 68549a0fb96d1595
+framing-errors 0
+sent-as-captured 554 of 1054

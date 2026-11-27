@@ -432,14 +432,17 @@ pub fn check<R: Read>(reader: &mut Reader<R>) -> Result<Report, CaptureError> {
     Ok(report)
 }
 
-/// Writes a capture as a two-channel G.711 WAV file: what was received on
-/// the left and what was sent on the right. Gaps are filled, so that the
-/// two channels stay aligned: a frame on the right is the frame sent for
-/// the frame beside it on the left. Returns how many frames were written.
-pub fn write_wav<R: Read, W: Write>(
-    reader: &mut Reader<R>,
-    out: &mut W,
-) -> Result<u64, CaptureError> {
+/// The two channels of a captured call, as G.711 octets: what the call's
+/// engine was given, and what it sent. Gaps are filled, so that the two
+/// stay aligned: a frame of the second is the frame sent for the frame at
+/// the same place in the first, and both are of one length, a whole
+/// number of frames.
+///
+/// The first channel is every frame the media thread gave the engine, in
+/// order: the frames that arrived, silence where packets were lost, and
+/// silence for the frames the thread's own timer made before the far end
+/// began.
+pub fn channels<R: Read>(reader: &mut Reader<R>) -> Result<(Vec<u8>, Vec<u8>), CaptureError> {
     let payload_type = reader.header().payload_type;
     let silence = if payload_type == 8 { 0xD5 } else { 0xFF };
     let mut receiver = RtpReceiver::new(payload_type);
@@ -468,9 +471,22 @@ pub fn write_wav<R: Read, W: Write>(
             Kind::Sent => right.extend_from_slice(record.payload()),
         }
     }
-    let samples = left.len().max(right.len());
+    let samples = left.len().max(right.len()).next_multiple_of(FRAME);
     left.resize(samples, silence);
     right.resize(samples, silence);
+    Ok((left, right))
+}
+
+/// Writes a capture as a two-channel G.711 WAV file: what was received on
+/// the left and what was sent on the right, aligned as [`channels`] gives
+/// them. Returns how many frames were written.
+pub fn write_wav<R: Read, W: Write>(
+    reader: &mut Reader<R>,
+    out: &mut W,
+) -> Result<u64, CaptureError> {
+    let payload_type = reader.header().payload_type;
+    let (left, right) = channels(reader)?;
+    let samples = left.len();
 
     // RIFF/WAVE with the non-PCM format chunk: G.711 has format tag 7
     // (mu-law) or 6 (A-law), one octet a sample.

@@ -1,0 +1,15 @@
+# What rustmodem-replay --answer prints for answer-bell103.rmcap. Made with:
+#   rustmodem-replay modem/engine/tests/corpus/answer-bell103.rmcap
+role answer
+law ulaw
+frames 1404
+10 state answer-silence
+2150 state answer-tone
+7150 state gap
+7230 state fallback
+8420 state training
+9020 state data
+9020 connect 300 BELL103
+data 60 68549a0fb96d1595
+framing-errors 0
+sent-as-captured 906 of 1404

@@ -62,6 +62,9 @@ struct Bench {
     directory: PathBuf,
     /// The capture files the writer says it began.
     captures: Arc<Mutex<Vec<PathBuf>>>,
+    /// The name the call's capture is kept under when `RM_CORPUS` names a
+    /// directory to keep captures in.
+    keep: Option<&'static str>,
 }
 
 impl Bench {
@@ -139,6 +142,7 @@ lines = [1]
             seen: Vec::new(),
             directory,
             captures,
+            keep: None,
         };
         bench.turn();
         bench.host().open();
@@ -224,6 +228,7 @@ lines = [1]
             pool,
             directory,
             captures,
+            keep,
             ..
         } = self;
         // The record of the call has its RTP as it was at the end, and the
@@ -260,6 +265,12 @@ lines = [1]
             58 + frames * 80 * 2,
             "a WAV of two channels"
         );
+        // The captures of the corpus (`modem/engine/tests/corpus`) are
+        // made by running these tests with `RM_CORPUS` set to a directory.
+        if let (Some(name), Some(corpus)) = (keep, std::env::var_os("RM_CORPUS")) {
+            let kept = PathBuf::from(corpus).join(format!("{name}.rmcap"));
+            std::fs::copy(&captures[0], &kept).unwrap();
+        }
         let _ = std::fs::remove_dir_all(&directory);
         (report, frames)
     }
@@ -403,15 +414,11 @@ fn the_peer_carries_data_as_a_null_engine_far_end() {
     assert!(report.is_clean(), "{report:?}");
 }
 
-/// The modem as the peer runs it: both modulations, with V.8.
-fn modem_peer(impairments: Impairments) -> AgentConfig {
-    let modulations = [Some(engine::Standard::V21), Some(engine::Standard::Bell103)];
-    let media = MediaKind::Modem {
-        modulations,
-        v8: true,
-    };
-    peer(media, 20, impairments)
-}
+/// The modem as the peer runs it by default: both modulations, with V.8.
+const BOTH_WITH_V8: MediaKind = MediaKind::Modem {
+    modulations: [Some(engine::Standard::V21), Some(engine::Standard::Bell103)],
+    v8: true,
+};
 
 /// How many octets of `sent` are in `got` in their order: the length of
 /// the longest sequence that is in both.
@@ -444,7 +451,18 @@ struct ModemCall {
 }
 
 fn modem_call(impairments: Impairments, octets: usize) -> ModemCall {
-    let mut bench = Bench::new("modem", 20, modem_peer(impairments));
+    modem_call_of(BOTH_WITH_V8, impairments, octets, "V.21")
+}
+
+/// The same with the peer's modem as `media` says, connecting with
+/// `carrier`.
+fn modem_call_of(
+    media: MediaKind,
+    impairments: Impairments,
+    octets: usize,
+    carrier: &str,
+) -> ModemCall {
+    let mut bench = Bench::new("modem", 20, peer(media, 20, impairments));
     let uri = format!("sip:5551000@{}", bench.sip);
     bench.agent.invite(&uri, bench.sip);
     bench.until("the line rings", |bench| bench.seen.ends_with(b"RING\r\n"));
@@ -460,11 +478,11 @@ fn modem_call(impairments: Impairments, octets: usize) -> ModemCall {
         }
         peer_connected.is_some() && bench.seen.ends_with(b"CONNECT 300\r\n")
     });
-    assert_eq!(peer_connected, Some((300, Some("V.21".to_string()))));
+    assert_eq!(peer_connected, Some((300, Some(carrier.to_string()))));
     let connect = bench.pool.line(1).unwrap().call.unwrap().connect.unwrap();
     assert_eq!(
         (connect.rate, connect.carrier.as_deref()),
-        (300, Some("V.21"))
+        (300, Some(carrier))
     );
     bench.seen.clear();
 
@@ -559,4 +577,46 @@ fn a_modem_line_holds_its_call_when_the_peer_loses_packets() {
     }
     let (report, _) = call.bench.finish();
     assert!(report.lost > 0, "{report:?}");
+}
+
+/// A short call from the peer's modem, as `media` has it, that the line
+/// answers: the data is whole both ways. Its capture is one of the corpus
+/// when `RM_CORPUS` says where to keep it.
+fn corpus_call(name: &'static str, media: MediaKind, carrier: &str) {
+    let mut call = modem_call_of(media, Impairments::default(), 60, carrier);
+    assert!(call.up.0 == call.up.1, "what the host wrote the peer read");
+    assert!(
+        call.down.0 == call.down.1,
+        "what the peer wrote the host read"
+    );
+    call.bench.keep = Some(name);
+    let (report, _) = call.bench.finish();
+    assert!(report.is_clean(), "{report:?}");
+}
+
+/// Both modems have V.8, and it chooses V.21.
+#[test]
+fn a_modem_line_answers_a_caller_with_v8() {
+    corpus_call("answer-v8-v21", BOTH_WITH_V8, "V.21");
+}
+
+/// The caller has V.21 and no V.8: the line's V.8 comes to nothing and it
+/// offers V.21, which the caller takes.
+#[test]
+fn a_modem_line_answers_a_v21_caller_without_v8() {
+    let media = MediaKind::Modem {
+        modulations: [Some(engine::Standard::V21), None],
+        v8: false,
+    };
+    corpus_call("answer-v21", media, "V.21");
+}
+
+/// The caller has Bell 103 and nothing else: the line falls back to it.
+#[test]
+fn a_modem_line_answers_a_bell_103_caller() {
+    let media = MediaKind::Modem {
+        modulations: [Some(engine::Standard::Bell103), None],
+        v8: false,
+    };
+    corpus_call("answer-bell103", media, "BELL103");
 }

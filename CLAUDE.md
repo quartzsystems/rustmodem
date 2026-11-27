@@ -124,6 +124,8 @@ tools/ctl           rustmodemctl.exe
 tools/demosvc       rustmodem-demosvc.exe: a pool on memory ports, scripted
 tools/sippeer       rustmodem-sippeer.exe: a scriptable SIP and RTP peer for
                     tests (not shipped)
+tools/replay        rustmodem-replay.exe: replays a call capture through the
+                    modem engine (not shipped)
 tools/fuzz          cargo-fuzz targets (own lockfile, outside the workspace)
 ```
 
@@ -204,8 +206,8 @@ The pure crates on Linux (CI does this; WSL works locally):
 
 ```
 cargo fmt --check
-cargo clippy -p g711 -p dspkit -p tones -p chansim -p fsk -p v8 -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p glyph -p model --all-targets -- -D warnings
-cargo test -p g711 -p dspkit -p tones -p chansim -p fsk -p v8 -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p glyph -p model
+cargo clippy -p g711 -p dspkit -p tones -p chansim -p fsk -p v8 -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model --all-targets -- -D warnings
+cargo test -p g711 -p dspkit -p tones -p chansim -p fsk -p v8 -p engine -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model
 cargo clippy -p ctlsrv --all-targets -- -D warnings
 cargo clippy -p svc --lib --test '*' -- -D warnings
 cargo test -p ctlsrv

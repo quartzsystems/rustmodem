@@ -158,6 +158,11 @@ impl Agent {
         self.rtp_at
     }
 
+    /// What the calls answered or made from now on send.
+    pub fn set_media(&mut self, media: MediaKind) {
+        self.config.media = media;
+    }
+
     /// The call there is, if there is one.
     pub fn call(&self) -> Option<Call> {
         self.call

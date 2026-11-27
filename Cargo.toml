@@ -43,6 +43,7 @@ members = [
     "tools/sippeer",
     # A counting allocator for the tests that assert no allocation.
     "tools/alloccount",
+    "tools/replay",
 ]
 # The fuzz targets build with cargo-fuzz on a nightly toolchain and keep
 # their own lockfile.

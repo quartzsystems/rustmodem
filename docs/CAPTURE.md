@@ -122,6 +122,78 @@ filled with silence, so the two channels stay aligned: a frame on the right
 is the frame that was sent for the frame beside it on the left. Any audio
 editor that reads G.711 WAV files opens it.
 
+## Replaying a capture
+
+A capture has every frame the call's modem was given. `rustmodem-replay`
+gives them to a new modem engine, one at a time as the call's media thread
+did, and prints what the engine does:
+
+```
+rustmodem-replay line03-1800000000123.rmcap
+```
+
+```
+role answer
+law ulaw
+frames 1054
+10 state answer-silence
+2150 state answer-tone
+4190 state v8-jm
+4790 state gap
+4870 state training
+5490 state data
+5490 connect 300 V.21
+data 60 68549a0fb96d1595
+framing-errors 0
+sent-as-captured 554 of 1054
+```
+
+Each line with a time is something the engine did, at that many
+milliseconds of the call's own samples: a state it entered
+(`docs/MODEM.md` lists them), or `connect` with the rate and the carrier,
+`carrier-lost` or `retrain`. `data` is how many characters the engine
+received and a hash of them, which is the same when the same characters
+were received.
+
+| Option | What it does |
+|---|---|
+| `--answer` | The engine answered the call. This is the default |
+| `--originate` | The engine made the call |
+| `--law ulaw` or `alaw` | The law of the call, when it is not the capture's |
+| `--modulations <list>` | The modulations the modem may use, the first by choice: `v21`, `bell103`, or both with a comma |
+| `--no-v8` | The modem does not use V.8 |
+| `--expect <file>` | Compares what the engine does with the file, which has what the program prints. Lines that begin with `#` are skipped. The program exits with 1 if they differ, and says where |
+| `--tx-out <file.wav>` | Writes what the engine sends in the replay as sound |
+
+A capture does not say which end the line was, or what its modem's settings
+were: say them as they were in the call.
+
+### What a replay is not
+
+**A replay is exact only until the engine's transmission changes.** The far
+end of the captured call answered what the engine of that day sent. Once
+the engine of today sends something else, a different signal or the same
+signal at another time, the frames that follow in the capture are the far
+end's answer to a call that is no longer being made. The replay goes on,
+and what it shows from there is how the engine takes those frames, which is
+worth seeing and is not what a call would be.
+
+`sent-as-captured` says where that point is: for how many frames from the
+start the engine sent exactly what the capture says was sent. The data the
+line's host sent is not in a capture, so a replayed engine sends none, and
+in a capture of a call that carried data from the host the count stops
+where that data began. What was received does not depend on it.
+
+The program is a developer's tool, built with `cargo build -p replay`, and
+is not installed with the service.
+
+### The corpus
+
+`modem/engine/tests/corpus/` has captures the engine is replayed against in
+the tests, each with the file of what is expected of it and a note of
+where it came from. A capture of a call that went wrong, once the fault is
+understood, belongs there.
+
 ## The file format
 
 The extension is `.rmcap`. All numbers are little-endian. The file is a

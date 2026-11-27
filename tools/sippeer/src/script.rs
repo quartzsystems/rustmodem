@@ -34,6 +34,11 @@ Settings, before listen:
   media pattern                    a pattern checked against its echo,
   media file <path>                the G.711 octets of a file, or
   media null                       the null engine, for a data call
+  media modem [v21] [bell103] [no-v8]
+                                   the modem, for a data call with a line
+                                   that has the modem engine: with the
+                                   modulations named, the first by choice,
+                                   or both; with V.8 unless no-v8
   impair [loss=<n>] [duplicate=<n>] [reorder=<n>] [jitter=<ms>] [ppm=<n>]
                                    faults in what is sent: packets in a
                                    thousand lost, sent twice and held back,
@@ -47,8 +52,13 @@ Then:
   registrar reject <status>
   registrar silent
   call <uri> <address>:<port>      sends an INVITE with an offer
+  call <uri> <address>:<port> as modem originate [v21] [bell103] [no-v8]
+                                   the same, and the call's media is the
+                                   modem, as `media modem` has it
   ring                             180 to their INVITE
   answer                           200 with an answer; the media begins
+  answer as modem answer [v21] [bell103] [no-v8]
+                                   the same, with the modem as its media
   reject <status>                  refuses their INVITE
   cancel                           cancels our INVITE
   hangup                           BYE
@@ -56,8 +66,11 @@ Then:
                                    incoming, ringing, answer, refused,
                                    cancelled, ack, hangup, register
   talk <seconds>                   lets the call run
-  send <text>                      data to the null engine; \\r \\n \\\\ \\xNN
-  receive <text> [<seconds>]       waits for that data from the null engine
+  send <text>                      data to the engine; \\r \\n \\\\ \\xNN
+  receive <text> [<seconds>]       waits for that data from the engine
+  expect connect [<seconds>]       waits for the modem to connect, 30 s
+                                   unless said, and prints its rate and
+                                   carrier
   check echo                       the pattern came back and nothing else did
   check clean                      nothing was lost or resynchronised coming in
   report                           prints what the media did and saw
@@ -104,16 +117,29 @@ pub enum Step {
     Impair(Impairments),
     Listen(SocketAddrV4),
     Registrar(RegistrarPolicy),
-    Call { uri: String, to: SocketAddrV4 },
+    Call {
+        uri: String,
+        to: SocketAddrV4,
+        /// The media of this call and those after it, when it is said.
+        media: Option<MediaKind>,
+    },
     Ring,
-    Answer,
+    Answer(Option<MediaKind>),
     Reject(u16),
     Cancel,
     HangUp,
-    Expect { event: Expected, within: Duration },
+    Expect {
+        event: Expected,
+        within: Duration,
+    },
+    /// Waits for the call's modem to connect.
+    ExpectConnect(Duration),
     Talk(Duration),
     Send(Vec<u8>),
-    Receive { data: Vec<u8>, within: Duration },
+    Receive {
+        data: Vec<u8>,
+        within: Duration,
+    },
     CheckEcho,
     CheckClean,
     Report,
@@ -189,6 +215,7 @@ fn step(line: &str) -> Result<Step, String> {
         ("media", ["silence"]) => Step::Media(MediaKind::Silence),
         ("media", ["pattern"]) => Step::Media(MediaKind::Pattern),
         ("media", ["null"]) => Step::Media(MediaKind::Null),
+        ("media", ["modem", modem @ ..]) => Step::Media(modem_media(modem)?),
         ("media", ["file", ..]) => {
             // A path may have spaces in it.
             let path = rest["file".len()..].trim();
@@ -244,12 +271,25 @@ fn step(line: &str) -> Result<Step, String> {
         ("call", [uri, to]) => Step::Call {
             uri: (*uri).to_owned(),
             to: address(to)?,
+            media: None,
+        },
+        ("call", [uri, to, "as", "modem", "originate", modem @ ..]) => Step::Call {
+            uri: (*uri).to_owned(),
+            to: address(to)?,
+            media: Some(modem_media(modem)?),
         },
         ("ring", []) => Step::Ring,
-        ("answer", []) => Step::Answer,
+        ("answer", []) => Step::Answer(None),
+        ("answer", ["as", "modem", "answer", modem @ ..]) => {
+            Step::Answer(Some(modem_media(modem)?))
+        }
         ("reject", [status]) => Step::Reject(number(status)?),
         ("cancel", []) => Step::Cancel,
         ("hangup", []) => Step::HangUp,
+        ("expect", ["connect", time @ ..]) if time.len() <= 1 => Step::ExpectConnect(
+            time.first()
+                .map_or(Ok(Duration::from_secs(30)), |time| seconds(time))?,
+        ),
         ("expect", [event, time @ ..]) if time.len() <= 1 => Step::Expect {
             event: match *event {
                 "incoming" => Expected::Incoming,
@@ -275,6 +315,34 @@ fn step(line: &str) -> Result<Step, String> {
         ("report", []) => Step::Report,
         _ => return Err(format!("not a step: {line}")),
     })
+}
+
+/// The modem a `media modem` or an `as modem` asks for: the modulations
+/// named, the first by choice, or both; with V.8 unless `no-v8`.
+fn modem_media(words: &[&str]) -> Result<MediaKind, String> {
+    let mut modulations = [None; 2];
+    let mut count = 0;
+    let mut v8 = true;
+    for word in words {
+        let standard = match *word {
+            "v21" => engine::Standard::V21,
+            "bell103" => engine::Standard::Bell103,
+            "no-v8" => {
+                v8 = false;
+                continue;
+            }
+            other => return Err(format!("{other} is not v21, bell103 or no-v8")),
+        };
+        if count == modulations.len() || modulations.contains(&Some(standard)) {
+            return Err(format!("{word} is there twice"));
+        }
+        modulations[count] = Some(standard);
+        count += 1;
+    }
+    if count == 0 {
+        modulations = [Some(engine::Standard::V21), Some(engine::Standard::Bell103)];
+    }
+    Ok(MediaKind::Modem { modulations, v8 })
 }
 
 /// Reads a script: its steps, each with the number of its line.
@@ -388,12 +456,20 @@ impl Run {
                 self.agent = Some(agent);
             }
             Step::Registrar(policy) => self.agent()?.peer.registrar = policy,
-            Step::Call { uri, to } => {
-                self.agent()?.invite(&uri, to);
+            Step::Call { uri, to, media } => {
+                let agent = self.agent()?;
+                if let Some(media) = media {
+                    agent.set_media(media);
+                }
+                agent.invite(&uri, to);
             }
             Step::Ring => self.agent()?.ring(),
-            Step::Answer => {
-                if !self.agent()?.answer() {
+            Step::Answer(media) => {
+                let agent = self.agent()?;
+                if let Some(media) = media {
+                    agent.set_media(media);
+                }
+                if !agent.answer() {
                     return Err("there is no INVITE with an offer that can be answered".to_owned());
                 }
             }
@@ -433,6 +509,28 @@ impl Run {
                     _ => {}
                 }
             }
+            Step::ExpectConnect(within) => {
+                let mut connected = None;
+                self.agent()?
+                    .until(within, |agent| {
+                        while let Some(event) = agent.engine().and_then(|e| e.poll_event()) {
+                            if let engine::ModemEvent::Connect(info) = event {
+                                connected = Some(info);
+                            }
+                        }
+                        connected.is_some()
+                    })
+                    .map_err(io)?;
+                let Some(info) = connected else {
+                    return Err("the modem did not connect in time".to_owned());
+                };
+                let _ = writeln!(
+                    out,
+                    "connected at {} bit/s with {}",
+                    info.rate,
+                    info.carrier.as_deref().unwrap_or("no carrier named")
+                );
+            }
             Step::Talk(time) => self.agent()?.run(time).map_err(io)?,
             Step::Send(data) => {
                 let mut at = 0;
@@ -446,7 +544,7 @@ impl Run {
                     })
                     .map_err(io)?;
                 if !sent {
-                    return Err("the null engine did not take the data".to_owned());
+                    return Err("the engine did not take the data".to_owned());
                 }
             }
             Step::Receive { data, within } => {
