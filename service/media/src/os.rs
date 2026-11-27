@@ -24,9 +24,10 @@
 //! [`receive_within`] waits with `WSAPoll`, which only looks, and then
 //! receives without waiting.
 //!
-//! BLOCKED(phase5): the packets are not marked with a DSCP. On Windows an
-//! application cannot set one on its own sockets; it is set by a QoS
-//! policy, which the installer creates.
+//! The packets are marked with a DSCP by Windows, not here: on Windows an
+//! application cannot set one on its own sockets. The setup program makes
+//! a QoS policy that marks what the service sends by UDP as expedited
+//! forwarding, 46. `docs/INSTALL.md` says when Windows applies it.
 
 use std::io;
 use std::net::{SocketAddr, UdpSocket};

@@ -13,7 +13,7 @@ cd "$(dirname "$0")/.."
 
 # The pure crates, and `media`, `telephony` and `sippeer`, which use
 # sockets and threads but no runtime. Their tests are looked at too.
-pure="g711 dspkit tones chansim fsk v22 v8 engine v14 v42 v42bis at serial vcomapi vcomcore modeminf sdp rtp sip msg config ctlproto pool media telephony sippeer alloccount replay glyph model"
+pure="g711 dspkit tones chansim fsk v22 v8 engine v14 v42 v42bis at serial vcomapi vcomcore modeminf setup sdp rtp sip msg config ctlproto pool media telephony sippeer alloccount replay glyph model"
 # The manager and its wrappers over Win32.
 clients="win32 manager"
 # rustmodem-ctl itself. Its tests run the commands against the real control

@@ -638,11 +638,11 @@ extern "C" fn device_cleanup(object: WDFOBJECT) {
 
 /// Runs as the caller of a create that asks for the control side.
 extern "C" fn check_caller(_request: WDFREQUEST, context: PVOID) {
-    let allowed = win::caller_may_control();
-    // SAFETY: the context is the `bool` of `file_create`, which waits for
+    // SAFETY: the context is the gate of `file_create`, which waits for
     // this callback to return.
     unsafe {
-        *context.cast::<bool>() = allowed;
+        let gate = &mut *context.cast::<(win::Allowed, bool)>();
+        gate.1 = win::caller_is_allowed(&gate.0);
     }
 }
 
@@ -676,19 +676,20 @@ extern "C" fn file_create(device: WDFDEVICE, request: WDFREQUEST, file: WDFFILEO
         })
     } else if name.eq_ignore_ascii_case(vcomapi::CONTROL_NAME) {
         // The service. Who is asking?
-        let mut allowed = false;
+        // Who may is found out first, and who is asking then.
+        let mut gate = (win::allowed(), false);
         // SAFETY: the callback runs before this call returns, and writes
-        // the bool it is given.
+        // the gate it is given.
         let impersonated = unsafe {
             wdf!(
                 WdfRequestImpersonate,
                 request,
                 wdk_sys::_SECURITY_IMPERSONATION_LEVEL::SecurityIdentification,
                 Some(check_caller),
-                (&raw mut allowed).cast::<c_void>(),
+                (&raw mut gate).cast::<c_void>(),
             )
         };
-        if impersonated < 0 || !allowed {
+        if impersonated < 0 || !gate.1 {
             status::ACCESS_DENIED
         } else {
             turn(&state, None, true, |inner, now, _| {

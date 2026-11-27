@@ -1,0 +1,28 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+# The RustModem configuration a new install starts with: a service with
+# no lines and no telephony, which starts and does nothing until it is
+# given some.
+#
+# Add lines in RustModem Manager (Start menu), which makes each line's
+# port, or by hand: make a port with
+#
+#     rustmodem-setup port add
+#
+# and give its name to a line:
+#
+#     [[line]]
+#     id = 1
+#     serial = { backend = "vcom", port = "COM10" }
+#
+# docs\rustmodem.sample.toml in the install directory has every setting
+# with its default, and docs\TELEPHONY.md has [sip] and what follows it.
+# The service reads this file when it starts.
+
+[service]
+log_level = "info"
+
+[sip]
+enabled = false

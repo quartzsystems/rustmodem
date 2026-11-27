@@ -5,10 +5,14 @@
 //! The Windows Event Log: where the service reports that it started, that
 //! it stopped, and anything that stopped it.
 //!
-//! Events are written to the Application log under the source `rustmodem`.
-//! BLOCKED(phase5): the installer registers a message file for the source.
-//! Until then the Event Viewer shows each event's text after a note that
-//! the description for the event id cannot be found.
+//! Events are written to the Application log under the source
+//! `RustModem`. The setup program registers the source, with this
+//! program as its message file: the build script gives the program a
+//! message table in which every message id says `%1`, and an event's
+//! first string is its whole text. On a machine where the service was
+//! registered by hand with `--install` and the source is not registered,
+//! the Event Viewer shows each event's text after a note that the
+//! description for the event id cannot be found.
 
 use msg::{Message, Severity};
 use windows::Win32::System::EventLog::{
@@ -17,7 +21,8 @@ use windows::Win32::System::EventLog::{
 };
 use windows::core::{HSTRING, PCWSTR};
 
-use crate::SERVICE_NAME;
+/// The name of the event source.
+const EVENT_SOURCE: &str = "RustModem";
 
 /// Writes an `RMD` message to the Application event log. The event id is
 /// the number of the message id. Failure to write is ignored: there is
@@ -33,7 +38,7 @@ pub fn report(message: &Message) {
         .trim_start_matches(|c: char| !c.is_ascii_digit())
         .parse()
         .unwrap_or(0);
-    let source = HSTRING::from(SERVICE_NAME);
+    let source = HSTRING::from(EVENT_SOURCE);
     let text = HSTRING::from(format!(
         "{message}\r\n\r\nCause: {}\r\nRecovery: {}",
         message.cause, message.recovery

@@ -2,11 +2,15 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! Gives rustmodem-svc.exe its icon, its version information and its manifest. The
+//! Gives rustmodem-svc.exe its icon, its version information, its manifest and
+//! the message table the Event Viewer reads its events through. The
 //! resource file is written by `glyph` and handed to the linker; no
 //! resource compiler is used.
 
-use glyph::{Glyph, LinkInto, Manifest, VersionInfo, link_windows_res, windows_res};
+use glyph::{
+    Glyph, LinkInto, Manifest, VersionInfo, link_windows_res, message_table,
+    windows_res_with_messages,
+};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -22,6 +26,14 @@ fn main() {
         version: info.version,
         gui: false,
     };
-    let res = windows_res(Some(Glyph::App), Some(&info), &manifest);
+    // The program is its own event message file: the setup program
+    // registers it as the event source's. An event's id is its message's
+    // number and its first string is its whole text, so every id the
+    // catalogue has says "%1".
+    let ids: Vec<u32> = msg::entries()
+        .filter_map(|entry| entry.id.trim_start_matches("RMD").parse().ok())
+        .collect();
+    let messages = message_table(&ids, "%1\r\n");
+    let res = windows_res_with_messages(Some(Glyph::App), Some(&info), &manifest, Some(&messages));
     link_windows_res("resources.res", &res, &[LinkInto::Bins]);
 }

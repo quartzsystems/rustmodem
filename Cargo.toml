@@ -47,6 +47,9 @@ members = [
     "ui/glyph",
     "ui/win32",
     "ui/manager",
+    # Install: the setup program, and what it needs of Win32.
+    "install/sys",
+    "install/setup",
     # Tools: the command-line client, the demo service and the test peer.
     "tools/ctl",
     "tools/demosvc",
@@ -112,6 +115,8 @@ v42bis = { path = "link/v42bis" }
 at = { path = "dte/at" }
 serial = { path = "dte/serial" }
 vcomapi = { path = "driver/vcomapi" }
+modeminf = { path = "driver/modeminf" }
+sys = { path = "install/sys" }
 sdp = { path = "voip/sdp" }
 rtp = { path = "voip/rtp" }
 sip = { path = "voip/sip" }

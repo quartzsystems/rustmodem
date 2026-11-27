@@ -60,52 +60,65 @@ const SERVICE_ACCOUNT: &str = "NT SERVICE\\rustmodem";
 /// A SID in a buffer long enough for any.
 type SidBuffer = [u64; 9];
 
-/// Whether the thread, which is impersonating a caller, is acting for
-/// someone who may have the control side of a port: the system, an
-/// administrator, or the RustModem service's own account.
+/// Those who may have the control side of a port: the system, an
+/// administrator, and the RustModem service's own account.
+pub struct Allowed(Vec<SidBuffer>);
+
+/// Finds out who may have the control side of a port.
 ///
-/// Call it only from the callback of `WdfRequestImpersonate`.
-pub fn caller_may_control() -> bool {
-    let mut token: Handle = core::ptr::null_mut();
-    // SAFETY: plain calls on this thread's own token with local buffers,
-    // each given its true size.
+/// Call it before impersonating a caller, not while: the service's
+/// account is looked up by name, and a thread that is impersonating a
+/// caller only to identify it may not ask Windows that.
+pub fn allowed() -> Allowed {
+    let mut sids = Vec::new();
+    // SAFETY: plain calls with local buffers, each given its true size.
     unsafe {
-        if OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut token) == 0 {
-            return false;
-        }
-        let mut allowed = false;
         for kind in [LOCAL_SYSTEM, ADMINISTRATORS] {
             let mut sid: SidBuffer = [0; 9];
             let mut size = size_of::<SidBuffer>() as u32;
             if CreateWellKnownSid(kind, core::ptr::null(), sid.as_mut_ptr().cast(), &mut size) != 0
             {
-                allowed |= is_member(token, &sid);
+                sids.push(sid);
             }
         }
-        if !allowed {
-            let account: Vec<u16> = SERVICE_ACCOUNT.encode_utf16().chain([0]).collect();
-            let mut sid: SidBuffer = [0; 9];
-            let mut size = size_of::<SidBuffer>() as u32;
-            let mut domain = [0u16; 256];
-            let mut domain_size = domain.len() as u32;
-            let mut kind = 0i32;
-            // With no such service there is no such account, and nobody
-            // is it.
-            if LookupAccountNameW(
-                core::ptr::null(),
-                account.as_ptr(),
-                sid.as_mut_ptr().cast(),
-                &mut size,
-                domain.as_mut_ptr(),
-                &mut domain_size,
-                &mut kind,
-            ) != 0
-            {
-                allowed = is_member(token, &sid);
-            }
+        let account: Vec<u16> = SERVICE_ACCOUNT.encode_utf16().chain([0]).collect();
+        let mut sid: SidBuffer = [0; 9];
+        let mut size = size_of::<SidBuffer>() as u32;
+        let mut domain = [0u16; 256];
+        let mut domain_size = domain.len() as u32;
+        let mut kind = 0i32;
+        // With no such service there is no such account, and nobody is
+        // it.
+        if LookupAccountNameW(
+            core::ptr::null(),
+            account.as_ptr(),
+            sid.as_mut_ptr().cast(),
+            &mut size,
+            domain.as_mut_ptr(),
+            &mut domain_size,
+            &mut kind,
+        ) != 0
+        {
+            sids.push(sid);
         }
+    }
+    Allowed(sids)
+}
+
+/// Whether the thread, which is impersonating a caller, is acting for
+/// one of those allowed.
+///
+/// Call it only from the callback of `WdfRequestImpersonate`.
+pub fn caller_is_allowed(allowed: &Allowed) -> bool {
+    let mut token: Handle = core::ptr::null_mut();
+    // SAFETY: plain calls on this thread's own token.
+    unsafe {
+        if OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut token) == 0 {
+            return false;
+        }
+        let is_one = allowed.0.iter().any(|sid| is_member(token, sid));
         CloseHandle(token);
-        allowed
+        is_one
     }
 }
 

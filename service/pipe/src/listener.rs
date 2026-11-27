@@ -123,13 +123,18 @@ impl PipeListener {
             PipeSecurity::Creator => options.create(&self.path),
             PipeSecurity::AdministratorsOnly => {
                 let mut descriptor = PSECURITY_DESCRIPTOR::default();
-                // A protected DACL with two entries: generic all for SYSTEM
-                // (SY) and for the built-in Administrators group (BA).
+                // A protected DACL with three entries: generic all for
+                // SYSTEM (SY), for the built-in Administrators group (BA)
+                // and for the pipe's owner (OW), which is the account the
+                // service runs under. The owner's is needed because the
+                // list also says who may make the pipe's next instance:
+                // the service's own account is neither of the other two,
+                // and without it a second client could not be served.
                 // SAFETY: the string is a NUL-terminated wide literal and
                 // `descriptor` is valid for the call to fill.
                 unsafe {
                     ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                        w!("D:P(A;;GA;;;SY)(A;;GA;;;BA)"),
+                        w!("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)"),
                         SDDL_REVISION_1,
                         &mut descriptor,
                         None,

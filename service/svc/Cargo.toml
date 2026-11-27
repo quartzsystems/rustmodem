@@ -27,6 +27,7 @@ toml_edit.workspace = true
 
 [build-dependencies]
 glyph.workspace = true
+msg.workspace = true
 
 [target."cfg(windows)".dependencies]
 windows-service.workspace = true

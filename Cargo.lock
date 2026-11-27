@@ -624,6 +624,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "setup"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "glyph",
+ "modeminf",
+ "msg",
+ "sha2",
+ "sys",
+ "win32",
+ "windows-service",
+]
+
+[[package]]
 name = "sha2"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -714,6 +728,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "sys"
+version = "0.1.0"
+dependencies = [
+ "windows",
 ]
 
 [[package]]

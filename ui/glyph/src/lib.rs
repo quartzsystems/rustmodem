@@ -30,7 +30,10 @@ pub mod png;
 mod res;
 
 pub use ico::{ICON_SIZES, ico, image};
-pub use res::{LinkInto, Manifest, VersionInfo, link_windows_res, version_resource, windows_res};
+pub use res::{
+    LinkInto, Manifest, VersionInfo, link_windows_res, message_table, version_resource,
+    windows_res, windows_res_with_messages,
+};
 
 /// The sizes the glyphs are made for, in pixels: 16 at 100 percent
 /// scaling, 20 at 125, 24 at 150, 32 at 200, and 48 and 256 for the

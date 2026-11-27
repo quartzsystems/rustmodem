@@ -898,3 +898,169 @@ vars = 3
 text = "The driver of RustModem port &1 speaks version &2 of the control interface, and this service speaks version &3."
 cause = "The driver and the service are from different versions of RustModem, as after an upgrade that replaced one and not the other."
 recovery = "Run rustmodem-setup repair, which installs the driver and the service of one version."
+
+[RMD9004]
+severity = "info"
+vars = 1
+text = "RustModem port &1 was created, with its modem."
+cause = "A COM port and the modem attached to it were made for a line."
+recovery = "Give the port's name to a line: serial = { backend = \"vcom\", port = \"&1\" } in the configuration, or New line in RustModem Manager."
+
+[RMD9005]
+severity = "info"
+vars = 1
+text = "RustModem port &1 was removed, with its modem."
+cause = "The port's two devices were removed."
+recovery = "A line that named the port has no port now: remove the line or give it another."
+
+[RMD9006]
+severity = "error"
+vars = 1
+text = "&1 cannot be the port's name: the number is taken, or is not a COM number."
+cause = "Another port has the name, or Windows has the number set aside for a device that is not connected now. COM numbers are 1 to 256."
+recovery = "Give another number, or leave --com out and the next free number from COM10 is used. rustmodem-setup port list shows the RustModem ports."
+
+[RMD9008]
+severity = "error"
+vars = 2
+text = "RustModem port &1 could not be created: &2"
+cause = "Windows refused the port's device or its modem's. Nothing of the port was left behind, and no port made by the same command was kept."
+recovery = "Run rustmodem-setup repair, which puts the driver package back, and try again. If it fails again, the log of this run and of C:\\Windows\\INF\\setupapi.dev.log say why."
+
+[RMD9009]
+severity = "error"
+vars = 2
+text = "RustModem port &1 could not be removed: &2"
+cause = "Windows refused to remove the port's device or its modem's, as it does while a program has the port open."
+recovery = "Stop the service and close whatever has the port open, and try again."
+
+[RMD9010]
+severity = "error"
+vars = 0
+text = "The RustModem driver is not installed."
+cause = "A port needs the driver package in Windows' driver store, where the setup program puts it. It is not there."
+recovery = "Run rustmodem-setup, or rustmodem-setup repair if RustModem is installed."
+
+[RMD9011]
+severity = "error"
+vars = 0
+text = "There are not enough free COM numbers for the ports asked for."
+cause = "COM numbers end at 256, and those from the first one tried to the last are taken."
+recovery = "Ask for fewer ports, or start at a lower number with --com."
+
+[RMD9012]
+severity = "error"
+vars = 1
+text = "The RustModem ports could not be listed: &1"
+cause = "Windows refused to list its devices."
+recovery = "Try again. If it goes on, restart Windows."
+
+# ---------------------------------------------------------------------------
+# 9500-9999: setup
+# ---------------------------------------------------------------------------
+
+[RMD9500]
+severity = "info"
+vars = 1
+text = "RustModem &1 is installed."
+cause = "The setup program finished, and the service is running."
+recovery = "Start RustModem Manager from the Start menu to add lines."
+
+[RMD9501]
+severity = "info"
+vars = 2
+text = "RustModem was upgraded from &1 to &2."
+cause = "The programs and the driver were replaced. The configuration, the logs, the lines and their ports are as they were."
+recovery = "No action is needed."
+
+[RMD9502]
+severity = "info"
+vars = 1
+text = "RustModem &1 was repaired."
+cause = "Every file, the driver package, the service and what Windows has registered for RustModem were put back as an install makes them."
+recovery = "No action is needed."
+
+[RMD9503]
+severity = "info"
+vars = 0
+text = "RustModem was removed."
+cause = "The ports, the driver, the service, the firewall rules, the QoS policy and the programs are gone. The configuration and the logs are kept unless --purge was given."
+recovery = "No action is needed."
+
+[RMD9504]
+severity = "error"
+vars = 0
+text = "Setup needs an administrator."
+cause = "Installing a driver, a service and devices is not something an ordinary user may do, and the request to run as an administrator was refused or could not be made."
+recovery = "Run the setup program again and answer Yes when Windows asks, or run it from a prompt started as an administrator."
+
+[RMD9505]
+severity = "error"
+vars = 1
+text = "RustModem does not run on this Windows: build &1."
+cause = "RustModem needs 64-bit Windows 10 version 1803, build 17134, or later: Windows 11, Windows Server 2022 or Windows Server 2025."
+recovery = "Install it on one of those."
+
+[RMD9506]
+severity = "error"
+vars = 1
+text = "This setup program cannot install: &1."
+cause = "The files it carries are missing or do not match their checksum. The copy kept in the install directory has them; a copy of the bare program does not, and a download that was cut short has them damaged."
+recovery = "Get the setup program again."
+
+[RMD9507]
+severity = "error"
+vars = 2
+text = "Setup failed at &1: &2"
+cause = "A step of the install could not be done. Everything done before it has been undone: the machine is as it was."
+recovery = "Correct what the step ran into and run the setup program again. The log of this run has every step."
+
+[RMD9508]
+severity = "error"
+vars = 0
+text = "RustModem is not installed."
+cause = "There is no install on this machine to repair or remove."
+recovery = "Run the setup program with no command to install."
+
+[RMD9509]
+severity = "error"
+vars = 0
+text = "The lab certificate was not accepted, and nothing was installed."
+cause = "This is a lab build: its driver is signed by a certificate made for testing, which Windows installs a driver from only once the machine trusts it. Trusting it was declined, or the install was silent and was not told to."
+recovery = "Run the setup program again and accept, or add --trust-lab-certificate to a silent install. On a machine that should not trust a lab certificate, use a build signed for distribution."
+
+[RMD9510]
+severity = "error"
+vars = 2
+text = "RustModem &1 is installed, which is newer than this setup program's &2."
+cause = "The setup program does not replace an install with an older one."
+recovery = "Use the newer setup program, or remove RustModem first."
+
+[RMD9511]
+severity = "warning"
+vars = 2
+text = "&1 could not be undone: &2"
+cause = "While a failed install was being undone, one step could not be taken back. The rest were."
+recovery = "Run rustmodem-setup uninstall to remove what is left, then install again."
+
+[RMD9512]
+severity = "error"
+vars = 1
+text = "The arguments were not understood: &1."
+cause = "The command line of the setup program is not one it has."
+recovery = "rustmodem-setup --help lists the commands and their options."
+
+[RMD9513]
+severity = "warning"
+vars = 2
+text = "&1 could not be done: &2"
+cause = "A step of removing RustModem failed. The steps after it were done all the same."
+recovery = "Close whatever is using RustModem's files or ports and run rustmodem-setup uninstall again."
+
+[RMD9514]
+severity = "info"
+vars = 0
+text = "Setup was cancelled, and nothing was changed."
+cause = "The answer to setup's question was No."
+recovery = "No action is needed."
+

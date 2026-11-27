@@ -15,6 +15,7 @@ use crate::Glyph;
 use crate::ico::{ICON_SIZES, entry, image};
 
 const RT_ICON: u16 = 3;
+const RT_MESSAGETABLE: u16 = 11;
 const RT_GROUP_ICON: u16 = 14;
 const RT_VERSION: u16 = 16;
 const RT_MANIFEST: u16 = 24;
@@ -282,6 +283,54 @@ pub fn version_resource(info: &VersionInfo) -> Vec<u8> {
     )
 }
 
+/// A message table: what the Event Viewer shows for an event, by the
+/// event's id. Every id in `ids` has the same text, which is
+/// `text`: the service's events carry their whole text as their first
+/// string, so `%1` and a line end is the text of each.
+///
+/// The layout is that of `MESSAGE_RESOURCE_DATA`: the number of blocks;
+/// for each block the lowest id, the highest id and where its entries
+/// start; then the entries, each its length, a flag that says Unicode,
+/// and its text, padded to four octets. A block is a run of ids with no
+/// gap in it.
+pub fn message_table(ids: &[u32], text: &str) -> Vec<u8> {
+    let mut ids = ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut blocks: Vec<(u32, u32)> = Vec::new();
+    for id in ids {
+        match blocks.last_mut() {
+            Some((_, high)) if *high + 1 == id => *high = id,
+            _ => blocks.push((id, id)),
+        }
+    }
+    let mut entry = Vec::new();
+    let units: Vec<u16> = text.encode_utf16().chain([0]).collect();
+    let length = (4 + units.len() * 2).next_multiple_of(4);
+    put16(&mut entry, length as u16);
+    put16(&mut entry, 1);
+    for unit in units {
+        put16(&mut entry, unit);
+    }
+    entry.resize(length, 0);
+
+    let mut out = Vec::new();
+    put32(&mut out, blocks.len() as u32);
+    let mut offset = 4 + blocks.len() * 12;
+    for (low, high) in &blocks {
+        put32(&mut out, *low);
+        put32(&mut out, *high);
+        put32(&mut out, offset as u32);
+        offset += (high - low + 1) as usize * entry.len();
+    }
+    for (low, high) in &blocks {
+        for _ in *low..=*high {
+            out.extend_from_slice(&entry);
+        }
+    }
+    out
+}
+
 /// A `.res` file. With an icon it is icon group 1, the group Explorer
 /// shows for the file and the one a window class loads; the manifest is
 /// resource 1, the one Windows reads when it starts the program.
@@ -289,6 +338,18 @@ pub fn windows_res(
     icon: Option<Glyph>,
     version: Option<&VersionInfo>,
     manifest: &Manifest,
+) -> Vec<u8> {
+    windows_res_with_messages(icon, version, manifest, None)
+}
+
+/// As [`windows_res`], with a message table, from [`message_table`], as
+/// resource 1 of its kind: the one the Event Viewer reads from a file
+/// registered as an event source's message file.
+pub fn windows_res_with_messages(
+    icon: Option<Glyph>,
+    version: Option<&VersionInfo>,
+    manifest: &Manifest,
+    messages: Option<&[u8]>,
 ) -> Vec<u8> {
     let mut out = Vec::new();
     // The empty resource every .res file starts with.
@@ -318,6 +379,9 @@ pub fn windows_res(
             LANGUAGE,
             &version_resource(version),
         );
+    }
+    if let Some(messages) = messages {
+        resource(&mut out, RT_MESSAGETABLE, 1, 0x0030, LANGUAGE, messages);
     }
     resource(
         &mut out,

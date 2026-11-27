@@ -117,7 +117,10 @@ fn serve() -> windows_service::Result<()> {
     }
 }
 
-/// Registers the service: automatic start, running as LocalSystem.
+/// The account the service runs under.
+const SERVICE_ACCOUNT: &str = "NT SERVICE\\rustmodem";
+
+/// Registers the service: automatic start, running under its own account.
 pub fn install(config: Option<PathBuf>) -> Result<(), Vec<Message>> {
     let refused = |detail: String| vec![message("RMD0006", &[SERVICE_NAME, &detail])];
     let executable = std::env::current_exe().map_err(|e| refused(e.to_string()))?;
@@ -139,9 +142,11 @@ pub fn install(config: Option<PathBuf>) -> Result<(), Vec<Message>> {
         executable_path: executable,
         launch_arguments,
         dependencies: Vec::new(),
-        // BLOCKED(phase5): a dedicated service account. In phase 0 the
-        // service runs as LocalSystem, which is what no account name means.
-        account_name: None,
+        // The service's own account, which Windows makes for a service
+        // of this name and keeps the password of. The setup program
+        // registers the service the same way, and gives the account the
+        // data directory.
+        account_name: Some(OsString::from(SERVICE_ACCOUNT)),
         account_password: None,
     };
     let manager = ServiceManager::local_computer(
