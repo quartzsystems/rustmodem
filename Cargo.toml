@@ -25,6 +25,7 @@ members = [
     "dte/serial",
     # Driver: the pure part of the virtual COM port. The driver itself is
     # in the workspace of driver/, which needs a WDK.
+    "driver/vcomapi",
     "driver/vcomcore",
     # VoIP: the telephone side.
     "voip/sdp",
@@ -109,6 +110,7 @@ v42 = { path = "link/v42" }
 v42bis = { path = "link/v42bis" }
 at = { path = "dte/at" }
 serial = { path = "dte/serial" }
+vcomapi = { path = "driver/vcomapi" }
 sdp = { path = "voip/sdp" }
 rtp = { path = "voip/rtp" }
 sip = { path = "voip/sip" }

@@ -16,6 +16,7 @@ publish.workspace = true
 workspace = "../.."
 
 [dependencies]
+vcomapi.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

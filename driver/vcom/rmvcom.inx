@@ -1,0 +1,82 @@
+; Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+; licensed under the terms of the MIT license which can be found in the
+; root directory of this project.
+;
+; The RustModem virtual COM port: a device of class Ports whose function
+; driver is the user-mode driver framework's reflector, with rmvcom.dll
+; in its host process. Setup makes one such device for each line.
+;
+; stampinf puts in the architecture, the framework's version and the
+; driver's version; driver/package.ps1 runs it.
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = Ports
+ClassGuid   = {4D36E978-E325-11CE-BFC1-08002BE10318}
+Provider    = %Provider%
+CatalogFile = rmvcom.cat
+DriverVer   = 01/01/2026,0.0.0.0
+PnpLockdown = 1
+
+[Manufacturer]
+%Provider% = Models,NT$ARCH$.10.0...17134
+
+; The driver's files go in the driver store (directory 13), which needs
+; Windows 10 1803, build 17134.
+[Models.NT$ARCH$.10.0...17134]
+%Port% = Port, RUSTMODEM\VCOM
+
+[SourceDisksNames]
+1 = %Disk%
+
+[SourceDisksFiles]
+rmvcom.dll = 1
+
+[DestinationDirs]
+DriverFiles = 13
+
+[DriverFiles]
+rmvcom.dll
+
+[Port.NT]
+CopyFiles = DriverFiles
+
+[Port.NT.HW]
+AddReg = Port.Device
+
+[Port.Device]
+; FILE_DEVICE_SERIAL_PORT.
+HKR,,DeviceType,0x10001,0x0000001b
+
+; The reflector is named here by its file, and not by including Windows'
+; own wudfrd.inf, because that file came with build 22000 and Windows
+; Server 2022 is build 20348.
+[Port.NT.Services]
+AddService = WUDFRd,0x000001fa,Reflector.Service
+
+[Reflector.Service]
+DisplayName   = %Reflector%
+ServiceType   = 1
+StartType     = 3
+ErrorControl  = 1
+ServiceBinary = %12%\WUDFRd.sys
+
+[Port.NT.Wdf]
+UmdfService      = rmvcom,Driver.Install
+UmdfServiceOrder = rmvcom
+; Windows' modem driver is in the kernel and opens the port from there.
+UmdfKernelModeClientPolicy = AllowKernelModeClients
+UmdfFileObjectPolicy       = AllowNullAndUnknownFileObjects
+UmdfFsContextUsePolicy     = CannotUseFsContexts
+; The driver asks who is opening the control side of a port.
+UmdfImpersonationLevel     = Impersonation
+
+[Driver.Install]
+UmdfLibraryVersion = $UMDFVERSION$
+ServiceBinary      = %13%\rmvcom.dll
+
+[Strings]
+Provider  = "Quartz Systems"
+Disk      = "RustModem"
+Port      = "RustModem Port"
+Reflector = "Windows Driver Foundation - User-mode Driver Framework Reflector"

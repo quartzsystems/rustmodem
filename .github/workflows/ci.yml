@@ -59,7 +59,7 @@ jobs:
     name: Linux (pure crates)
     runs-on: ubuntu-latest
     env:
-      PURE: -p g711 -p dspkit -p tones -p chansim -p fsk -p v22 -p v8 -p engine -p v14 -p v42 -p v42bis -p at -p serial -p vcomcore -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model
+      PURE: -p g711 -p dspkit -p tones -p chansim -p fsk -p v22 -p v8 -p engine -p v14 -p v42 -p v42bis -p at -p serial -p vcomapi -p vcomcore -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain

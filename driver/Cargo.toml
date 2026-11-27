@@ -1,0 +1,29 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+# The workspace of the driver. It is apart from the rustmodem workspace
+# because building it needs a Windows Driver Kit and LLVM, which an
+# ordinary build of rustmodem must not: docs/DRIVER.md says how to get
+# them. `vcomcore` and `vcomapi`, in this directory, need neither and are
+# members of the rustmodem workspace, where their tests run; the driver
+# uses them from here by path.
+
+[workspace]
+resolver = "3"
+members = ["vcom"]
+exclude = ["vcomcore", "vcomapi"]
+
+[workspace.package]
+# Kept equal to the VERSION file; ci/version.sh checks it.
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Quartz Systems"]
+publish = false
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

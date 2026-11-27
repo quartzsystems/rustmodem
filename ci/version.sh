@@ -3,11 +3,15 @@
 # licensed under the terms of the MIT license which can be found in the
 # root directory of this project.
 
-# With no arguments: checks that the workspace version in Cargo.toml equals
-# the VERSION file. With `prepare <version>`: writes that version to both.
+# With no arguments: checks that the workspace version in Cargo.toml, and
+# in the driver's workspace, driver/Cargo.toml, equals the VERSION file.
+# With `prepare <version>`: writes that version to all three.
 
 set -eu
 cd "$(dirname "$0")/.."
+
+# The manifests that carry the version.
+manifests="Cargo.toml driver/Cargo.toml"
 
 cargo_version() {
     # The first version line after the [workspace.package] header.
@@ -19,17 +23,19 @@ cargo_version() {
             print
             exit
         }
-    ' Cargo.toml
+    ' "$1"
 }
 
 case "${1:-check}" in
 check)
     want=$(tr -d ' \r\n' < VERSION)
-    got=$(cargo_version)
-    if [ "$want" != "$got" ]; then
-        echo "version mismatch: VERSION has $want, Cargo.toml has $got"
-        exit 1
-    fi
+    for manifest in $manifests; do
+        got=$(cargo_version "$manifest")
+        if [ "$want" != "$got" ]; then
+            echo "version mismatch: VERSION has $want, $manifest has $got"
+            exit 1
+        fi
+    done
     echo "version $want"
     ;;
 prepare)
@@ -39,18 +45,20 @@ prepare)
         exit 2
     fi
     printf '%s\n' "$new" > VERSION
-    awk -v new="$new" '
-        /^\[workspace\.package\]/ { inside = 1; print; next }
-        /^\[/ { inside = 0 }
-        inside && /^version[ \t]*=/ && !done {
-            print "version = \"" new "\""
-            done = 1
-            next
-        }
-        { print }
-    ' Cargo.toml > Cargo.toml.new
-    mv Cargo.toml.new Cargo.toml
-    echo "version set to $new; run cargo check to refresh Cargo.lock"
+    for manifest in $manifests; do
+        awk -v new="$new" '
+            /^\[workspace\.package\]/ { inside = 1; done = 0; print; next }
+            /^\[/ { inside = 0 }
+            inside && /^version[ \t]*=/ && !done {
+                print "version = \"" new "\""
+                done = 1
+                next
+            }
+            { print }
+        ' "$manifest" > "$manifest.new"
+        mv "$manifest.new" "$manifest"
+    done
+    echo "version set to $new; run cargo check here and in driver/ to refresh the lockfiles"
     ;;
 *)
     echo "usage: ci/version.sh [check | prepare <version>]"

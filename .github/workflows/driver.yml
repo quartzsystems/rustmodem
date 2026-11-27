@@ -1,0 +1,50 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+# The driver's workspace, which needs a Windows Driver Kit and so is not
+# part of the ci workflow's jobs. docs/DRIVER_SPIKE.md says why this image.
+
+name: driver
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  driver:
+    name: Driver (build, package, InfVerif)
+    # This image has the kit, 10.0.26100, and an LLVM that the bindings
+    # are generated with. windows-latest has no kit.
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show
+      - name: Format
+        working-directory: driver
+        run: cargo fmt --check
+      - name: Clippy
+        working-directory: driver
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      # The driver's graph has bindgen and cc, which rustmodem's own may
+      # not: driver/deny.toml allows them here.
+      - name: Deny
+        working-directory: driver
+        run: cargo deny check
+      # Builds, stamps the INF, makes the catalog and runs InfVerif.
+      - name: Package
+        run: ./driver/package.ps1
+      - name: Upload the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: driver-package
+          path: driver/target/package/

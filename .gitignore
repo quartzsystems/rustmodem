@@ -1,4 +1,5 @@
 /target/
+/driver/target/
 /tools/fuzz/target/
 /tools/fuzz/corpus/
 /tools/fuzz/artifacts/

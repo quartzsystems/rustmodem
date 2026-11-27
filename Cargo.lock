@@ -859,10 +859,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcomapi"
+version = "0.1.0"
+
+[[package]]
 name = "vcomcore"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "vcomapi",
 ]
 
 [[package]]

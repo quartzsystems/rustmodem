@@ -1,0 +1,61 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+# cargo-deny configuration for the driver's workspace. It is rustmodem's
+# own with one difference: `bindgen` and `cc` are allowed here, and here
+# only. Microsoft's `wdk-sys` generates its bindings from the Windows
+# Driver Kit's headers when it is built, and compiles one C file that is
+# those headers and nothing else. There is no driver in Rust without it.
+# Cody allowed it on 27 November 2026: docs/DRIVER_SPIKE.md.
+
+[graph]
+targets = [
+    "x86_64-pc-windows-msvc",
+]
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    # `paste` is no longer maintained. It is a build-time macro crate that
+    # Microsoft's driver crates use, and the driver cannot be without them.
+    { id = "RUSTSEC-2024-0436", reason = "a dependency of wdk-sys, which there is no alternative to" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "0BSD",
+    "CC0-1.0",
+    "Unlicense",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# The workspace's own crates are path dependencies with no version.
+allow-wildcard-paths = true
+highlight = "all"
+deny = [
+    # Build helpers that exist only to compile or bind C.
+    { crate = "cmake", reason = "no C code is compiled into rustmodem" },
+    { crate = "pkg-config", reason = "no system C libraries are linked into rustmodem" },
+    { crate = "vcpkg", reason = "no system C libraries are linked into rustmodem" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

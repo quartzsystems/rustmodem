@@ -207,7 +207,7 @@ INF. Removal is `SetupDiCallClassInstaller` with `DIF_REMOVE`.
 | | Root-enumerated, SetupAPI | Enumerated by software |
 |---|---|---|
 | Survives a restart | Yes, as Microsoft documents it. Not tested: a runner cannot restart. `NEEDS-CODY`, criterion 15 | Not unless made again by an administrator's program |
-| Removed cleanly | Yes: the device, its link and its `SERIALCOMM` entry were gone, and the driver package then left the store with `pnputil /delete-driver /uninstall` | Yes |
+| Removed cleanly | Yes: the device and its link were gone, and the driver package then left the store with `pnputil /delete-driver /uninstall`. **The `SERIALCOMM` value stayed**, since the spike's driver never took it out: the driver must remove its value when its device goes | Yes, with the same value left |
 | Choosing the COM number | Yes | The class installer chooses |
 | Needs a tool of the WDK | No | No |
 

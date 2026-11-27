@@ -24,6 +24,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod ioctl;
 mod port;
 mod settings;
 
