@@ -2,8 +2,9 @@
 # licensed under the terms of the MIT license which can be found in the
 # root directory of this project.
 
-# The driver's workspace, which needs a Windows Driver Kit and so is not
-# part of the ci workflow's jobs. docs/DRIVER_SPIKE.md says why this image.
+# The driver's workspace and the setup program, which need a Windows
+# Driver Kit and a machine to install on, and so are not among the ci
+# workflow's jobs. docs/DRIVER_SPIKE.md says why this image.
 
 name: driver
 
@@ -16,10 +17,11 @@ env:
 
 jobs:
   driver:
-    name: Driver (build, package, InfVerif)
+    name: Driver and setup (build, sign, install, conformance, uninstall)
     # This image has the kit, 10.0.26100, and an LLVM that the bindings
     # are generated with. windows-latest has no kit.
     runs-on: windows-2022
+    timeout-minutes: 60
     defaults:
       run:
         shell: pwsh
@@ -40,11 +42,35 @@ jobs:
       - name: Deny
         working-directory: driver
         run: cargo deny check
-      # Builds, stamps the INF, makes the catalog and runs InfVerif.
-      - name: Package
-        run: ./driver/package.ps1
-      - name: Upload the package
+      # A certificate made for this run, on a machine that is thrown away
+      # after it. Its private key never leaves the runner.
+      - name: Lab certificate
+        run: |
+          New-Item -ItemType Directory C:\lab | Out-Null
+          $made = ./ci/lab-certificate.ps1 -Out C:\lab\rustmodem-lab.cer -Years 1
+          $thumbprint = ($made | Where-Object { $_ -match '^thumbprint:\s+(\S+)' } | ForEach-Object { $Matches[1] })
+          "LAB_THUMBPRINT=$thumbprint" >> $env:GITHUB_ENV
+      # The programs, the driver package (with InfVerif on both INFs), the
+      # catalog, everything signed, and the setup program.
+      - name: Build
+        run: ./ci/build.ps1 -Thumbprint $env:LAB_THUMBPRINT -LabCertificate C:\lab\rustmodem-lab.cer
+      - name: Upload the setup program
         uses: actions/upload-artifact@v4
         with:
-          name: driver-package
-          path: driver/target/package/
+          name: setup-lab-build
+          path: target/setup/rustmodem-setup.exe
+      # Installs with the setup program, runs the conformance suite on a
+      # port, puts a line through the service, repairs, upgrades and
+      # uninstalls, and checks that nothing is left. The runner has
+      # test-signing on, which a real machine has not: what that leaves
+      # unproven is in docs/SIGNING.md.
+      - name: Install, use and remove
+        timeout-minutes: 30
+        run: ./ci/install-test.ps1 -Setup target\setup\rustmodem-setup.exe
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-logs
+          path: C:\setup-*.log
+          if-no-files-found: ignore

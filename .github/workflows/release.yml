@@ -2,10 +2,19 @@
 # licensed under the terms of the MIT license which can be found in the
 # root directory of this project.
 
-# A release: on a tag v<version>, the whole test suite, the release
-# binaries, and a zip of them with the sample configuration and the
-# documentation, attached to a GitHub release of that tag.
-# docs/INSTALL.md is the install from the zip.
+# A release: on a tag v<version>, the whole test suite, then the setup
+# program, signed, with the programs, the driver package, the sample
+# configuration and the documentation inside it, attached to a GitHub
+# release of that tag. docs/INSTALL.md is the install from it, and
+# docs/SIGNING.md says what it is signed with.
+#
+# The certificate is the repository's secret SIGNING_PFX, a PFX file in
+# base64, with its password in SIGNING_PFX_PASSWORD. If the repository's
+# variable SIGNING_IS_LAB is "true" the certificate is a lab one, and the
+# setup program carries it and asks to trust it. With no secret, a lab
+# certificate is made for the run and its key is gone when the run ends:
+# the setup program is then a lab build that nobody can sign another
+# file for.
 
 name: release
 
@@ -22,8 +31,9 @@ permissions:
 
 jobs:
   release:
-    name: Release zip
-    runs-on: windows-latest
+    name: Release
+    # The image with a Windows Driver Kit: docs/DRIVER_SPIKE.md.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
@@ -53,6 +63,9 @@ jobs:
         run: cargo install cargo-deny --locked
       - name: Deny
         run: cargo deny check
+      - name: Deny (driver)
+        working-directory: driver
+        run: cargo deny check
       - name: Test
         run: cargo test --workspace
       - name: Upload screenshots
@@ -62,35 +75,62 @@ jobs:
           name: screenshots
           path: target/screenshots/
           if-no-files-found: warn
-      - name: Release build
-        run: cargo build --release -p svc -p ctl -p manager
-      # The three programs, the sample configuration, the licence, the
-      # read-me and the documentation, in a folder named for the version.
-      - name: Zip
-        shell: bash
+      # The certificate goes into the runner's certificate store and its
+      # thumbprint into the environment. The key and the password are
+      # never written to a file that is kept, to the log or to an
+      # artifact.
+      - name: Certificate
+        shell: pwsh
+        env:
+          SIGNING_PFX: ${{ secrets.SIGNING_PFX }}
+          SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+          SIGNING_IS_LAB: ${{ vars.SIGNING_IS_LAB }}
         run: |
-          name="rustmodem-$VERSION-x86_64-windows"
-          mkdir -p "dist/$name"
-          cp target/release/rustmodem-svc.exe "dist/$name/"
-          cp target/release/rustmodem-manager.exe "dist/$name/"
-          cp target/release/rustmodem-ctl.exe "dist/$name/"
-          cp docs/rustmodem.sample.toml "dist/$name/"
-          cp LICENSE README.md CHANGELOG.md "dist/$name/"
-          cp -r docs "dist/$name/docs"
-          cd dist
-          7z a -tzip "$name.zip" "$name"
-          echo "ZIP=dist/$name.zip" >> "$GITHUB_ENV"
-      - name: Upload the zip
+          New-Item -ItemType Directory C:\signing | Out-Null
+          if ($env:SIGNING_PFX) {
+            $file = 'C:\signing\certificate.pfx'
+            [IO.File]::WriteAllBytes($file, [Convert]::FromBase64String($env:SIGNING_PFX))
+            $password = ConvertTo-SecureString $env:SIGNING_PFX_PASSWORD -AsPlainText -Force
+            $certificate = Import-PfxCertificate -FilePath $file -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            Remove-Item $file
+            "SIGNING_THUMBPRINT=$($certificate.Thumbprint)" >> $env:GITHUB_ENV
+            if ($env:SIGNING_IS_LAB -eq 'true') {
+              Export-Certificate -Cert $certificate -FilePath C:\signing\lab.cer | Out-Null
+              "LAB_CERTIFICATE=C:\signing\lab.cer" >> $env:GITHUB_ENV
+            }
+          } else {
+            $made = ./ci/lab-certificate.ps1 -Out C:\signing\lab.cer -Years 3
+            $thumbprint = ($made | Where-Object { $_ -match '^thumbprint:\s+(\S+)' } | ForEach-Object { $Matches[1] })
+            "SIGNING_THUMBPRINT=$thumbprint" >> $env:GITHUB_ENV
+            "LAB_CERTIFICATE=C:\signing\lab.cer" >> $env:GITHUB_ENV
+          }
+      - name: Build and sign
+        shell: pwsh
+        run: |
+          $arguments = @{ Thumbprint = $env:SIGNING_THUMBPRINT }
+          if ($env:LAB_CERTIFICATE) { $arguments.LabCertificate = $env:LAB_CERTIFICATE }
+          ./ci/build.ps1 @arguments
+          $name = "rustmodem-setup-$env:VERSION-x86_64.exe"
+          Copy-Item target\setup\rustmodem-setup.exe "target\setup\$name"
+          "SETUP=target/setup/$name" >> $env:GITHUB_ENV
+      # What is released is what was installed, used and removed on this
+      # machine first.
+      - name: Install, use and remove
+        if: env.LAB_CERTIFICATE != ''
+        timeout-minutes: 30
+        shell: pwsh
+        run: ./ci/install-test.ps1 -Setup target\setup\rustmodem-setup.exe
+      - name: Upload the setup program
         uses: actions/upload-artifact@v4
         with:
-          name: release-zip
-          path: ${{ env.ZIP }}
+          name: setup
+          path: ${{ env.SETUP }}
           if-no-files-found: error
       - name: GitHub release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "$ZIP" \
-            --title "rustmodem $VERSION" \
-            --notes "See CHANGELOG.md for what this version changes, and docs/INSTALL.md in the zip for how to install it."
+          gh release create "$GITHUB_REF_NAME" "$SETUP" \
+            --title "RustModem $VERSION" \
+            --notes "See CHANGELOG.md for what this version changes, and docs/INSTALL.md for how to install it. docs/SIGNING.md says what the setup program is signed with."
