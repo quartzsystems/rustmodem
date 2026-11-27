@@ -5,7 +5,7 @@
 //! The interpreter: modes, command line assembly, the escape sequence,
 //! ringing, timers, signals and result codes.
 
-use crate::profile::Profile;
+use crate::profile::{Carrier, Profile};
 use crate::{
     Action, AtConfig, ConnectInfo, HangupCause, Input, LineEvent, MAX_COMMAND_LINE, MAX_HELD_DATA,
     Mode, ModemSignals, Output, RING_COUNT_RESET_MS, ResultCode, Trace, connect_number,
@@ -97,9 +97,7 @@ impl AtInterpreter {
             .map(storable);
         let mut interpreter = AtInterpreter {
             config,
-            profile: stored
-                .clone()
-                .unwrap_or_else(|| Profile::factory(config.auto_answer_rings)),
+            profile: stored.clone().unwrap_or_else(|| Profile::for_line(&config)),
             stored,
             state: State::OnHook,
             phase: Phase::Idle,
@@ -176,12 +174,27 @@ impl AtInterpreter {
     /// Replaces the per-line settings. The unknown-command setting applies
     /// from the next command; the S0 value applies from the next return to
     /// the factory settings.
+    ///
+    /// The line's policy for error control and compression is the
+    /// factory value of `+ES` and `+DS`. Where the active profile still
+    /// has the old policy's value, which is where the host has not set
+    /// its own, it takes the new policy's: an operator who changes a
+    /// line's policy changes its next call, with no `&F` from the host.
     pub fn set_config(&mut self, config: AtConfig) {
+        let old = Profile::for_line(&self.config);
+        let new = Profile::for_line(&config);
+        if self.profile.es == old.es {
+            self.profile.es = new.es;
+        }
+        if self.profile.ds == old.ds {
+            self.profile.ds = new.ds;
+        }
         self.config = config;
     }
 
     /// Flow control back-pressure: while held, and with `&K3` in effect,
-    /// CTS is off. This is the hook for later phases; phase 0 never holds.
+    /// CTS is off. The line holds while it has data of the host's that
+    /// the far end has not taken.
     pub fn set_flow_hold(&mut self, hold: bool, out: &mut Vec<Output>) {
         self.flow_hold = hold;
         self.update_signals(out);
@@ -521,6 +534,7 @@ impl AtInterpreter {
                 State::Handshaking { .. } => {
                     self.connect = Some(info);
                     self.enter_online();
+                    self.connection_reports(out);
                     self.result(ResultCode::Connect, out);
                 }
                 State::Dialled => {
@@ -599,7 +613,7 @@ impl AtInterpreter {
     /// `&F`: every setting returns to its factory value. The stored
     /// profile is left as it is.
     pub(crate) fn factory_profile(&mut self) {
-        self.profile = Profile::factory(self.config.auto_answer_rings);
+        self.profile = Profile::for_line(&self.config);
         self.ring_idle_ms = 0;
     }
 
@@ -680,6 +694,67 @@ impl AtInterpreter {
             push_dte(out, &bytes);
         }
         out.push(Output::Trace(Trace::Result(text)));
+    }
+
+    /// The intermediate result codes of a connection, before its
+    /// `CONNECT`: the modulation if `+MR` asks for it (V.250 clause
+    /// 6.4.3), the error control if `+ER` does (clause 6.5.5), the data
+    /// compression if `+DR` does (clause 6.6.2), and the rate if `+ILRR`
+    /// does (clause 6.2.13), in that order. They are result codes, and
+    /// `Q1` suppresses them with the rest.
+    ///
+    /// The rate `+ILRR` reports is the line's: the port has no rate of
+    /// its own, being no wire, and gives and takes data as fast as the
+    /// line carries it.
+    fn connection_reports(&mut self, out: &mut Vec<Output>) {
+        let Some(info) = self.connect.clone() else {
+            return;
+        };
+        let mut lines: Vec<String> = Vec::new();
+        if self.profile.mr {
+            let carrier = engine::Modulation::ALL
+                .into_iter()
+                .find(|modulation| Some(modulation.carrier_name()) == info.carrier.as_deref());
+            if let Some(modulation) = carrier {
+                lines.push(format!("+MCR: {}", Carrier::of(modulation).as_str()));
+            }
+            if info.rate != 0 {
+                lines.push(format!("+MRR: {}", info.rate));
+            }
+        }
+        if self.profile.er {
+            let protocol = match info.protocol.as_deref() {
+                Some(engine::PROTOCOL_LAPM) => "LAPM",
+                _ => "NONE",
+            };
+            lines.push(format!("+ER: {protocol}"));
+        }
+        if self.profile.dr {
+            let compression = match info.compression.as_deref() {
+                Some(engine::COMPRESSION_V42BIS) => "V42B",
+                Some(engine::COMPRESSION_V42BIS_TRANSMIT) => "V42B TD",
+                Some(engine::COMPRESSION_V42BIS_RECEIVE) => "V42B RD",
+                _ => "NONE",
+            };
+            lines.push(format!("+DR: {compression}"));
+        }
+        if self.profile.ilrr && info.rate != 0 {
+            lines.push(format!("+ILRR: {}", info.rate));
+        }
+        if self.profile.quiet {
+            return;
+        }
+        let (s3, s4) = (self.profile.s3(), self.profile.s4());
+        for line in lines {
+            let mut bytes = Vec::with_capacity(line.len() + 4);
+            if self.profile.verbose {
+                bytes.extend_from_slice(&[s3, s4]);
+            }
+            bytes.extend_from_slice(line.as_bytes());
+            bytes.extend_from_slice(&[s3, s4]);
+            push_dte(out, &bytes);
+            out.push(Output::Trace(Trace::Result(line)));
+        }
     }
 
     /// Issues information text: one or more lines (V.250 clause 5.7.1).

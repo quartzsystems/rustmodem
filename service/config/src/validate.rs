@@ -9,10 +9,10 @@ use msg::{Message, message};
 use toml_edit::{Document, DocumentMut, Item, TableLike};
 
 use crate::schema::{
-    Backend, Cidr, CodecName, Config, ControlConfig, EngineKind, HuntGroup, LineConfig, LineModem,
-    LogLevel, MAX_LINE_ID, MediaConfig, ModemConfig, ModulationName, PortRange, RegisterConfig,
-    Route, SerialConfig, ServiceConfig, SipConfig, Strategy, Target, UnknownCommand,
-    pattern_covers,
+    Backend, Cidr, CodecName, Config, ControlConfig, EngineKind, ErrorControlName, GuardToneName,
+    HuntGroup, LineConfig, LineModem, LogLevel, MAX_LINE_ID, MediaConfig, ModemConfig,
+    ModulationName, PortRange, RegisterConfig, Route, SerialConfig, ServiceConfig, SipConfig,
+    Strategy, Target, UnknownCommand, pattern_covers,
 };
 
 /// The longest pipe or port name accepted.
@@ -373,16 +373,38 @@ impl Reader<'_> {
                 }
                 _ => {
                     valid = false;
-                    self.not_allowed_at(path, *line, value, "v21 and bell103, each once");
+                    let allowed = format!("{}, each once", ModulationName::LIST);
+                    self.not_allowed_at(path, *line, value, &allowed);
                 }
             }
         }
         if modulations.is_empty() && valid {
             let line = table.get("modulations").map_or(0, |item| self.line(item));
-            self.not_allowed_at(path, line, "[]", "at least one of v21 and bell103");
+            let allowed = format!("at least one of {}", ModulationName::LIST);
+            self.not_allowed_at(path, line, "[]", &allowed);
             return None;
         }
         valid.then_some(modulations)
+    }
+
+    /// The policy of an `error_control` key.
+    fn error_control(&mut self, table: &dyn TableLike, path: &str) -> Option<ErrorControlName> {
+        let (value, item) = self.string(table, "error_control", path)?;
+        let policy = ErrorControlName::parse(value);
+        if policy.is_none() {
+            self.not_allowed(path, item, value, ErrorControlName::LIST);
+        }
+        policy
+    }
+
+    /// The guard tone of a `guard_tone` key.
+    fn guard_tone(&mut self, table: &dyn TableLike, path: &str) -> Option<GuardToneName> {
+        let (value, item) = self.string(table, "guard_tone", path)?;
+        let tone = GuardToneName::parse(value);
+        if tone.is_none() {
+            self.not_allowed(path, item, value, GuardToneName::LIST);
+        }
+        tone
     }
 
     /// The transmit level of a `tx_level_dbm0` key.
@@ -432,6 +454,15 @@ impl Reader<'_> {
                 );
             }
         }
+        if let Some(policy) = self.error_control(table, "modem.error_control") {
+            modem.error_control = policy;
+        }
+        if let Some(value) = self.boolean(table, "compression", "modem.compression") {
+            modem.compression = value;
+        }
+        if let Some(tone) = self.guard_tone(table, "modem.guard_tone") {
+            modem.guard_tone = tone;
+        }
         modem
     }
 
@@ -441,6 +472,9 @@ impl Reader<'_> {
             modulations: self.modulations(table, "line.modem.modulations"),
             v8: self.boolean(table, "v8", "line.modem.v8"),
             tx_level_dbm0: self.tx_level(table, "line.modem.tx_level_dbm0"),
+            error_control: self.error_control(table, "line.modem.error_control"),
+            compression: self.boolean(table, "compression", "line.modem.compression"),
+            guard_tone: self.guard_tone(table, "line.modem.guard_tone"),
         }
     }
 

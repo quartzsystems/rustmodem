@@ -11,7 +11,9 @@
 //! implements [`ModemEngine`].
 //!
 //! There are three implementations. [`Modem`] is the softmodem: it
-//! answers and originates at 300 bit/s, V.21 or Bell 103, with V.8.
+//! answers and originates at 2400 bit/s (V.22bis), 1200 bit/s (V.22 and
+//! Bell 212A) and 300 bit/s (V.21 and Bell 103), with V.8, and above 300
+//! bit/s with the error control of V.42 and the compression of V.42bis.
 //! [`NullEngine`] is not a modem: it frames the data bytes straight into
 //! the octet stream, so that two of them joined by a path that alters no
 //! octet carry data, and one altered octet shows as wrong data or a lost
@@ -23,17 +25,29 @@
 mod diag;
 mod echo;
 mod info;
+mod link;
 mod modem;
+mod modulation;
 mod null;
 
-pub use diag::{Diagnostics, EngineState, SCOPE_SAMPLES, STATE_HISTORY, ScopeKind, StateChange};
+pub use diag::{
+    CONSTELLATION_POINTS, CONSTELLATION_UNIT, Diagnostics, EngineState, SCOPE_SAMPLES,
+    STATE_HISTORY, ScopeKind, StateChange,
+};
 pub use echo::{ECHO_CARRIER, EchoEngine};
-pub use fsk::Standard;
 pub use g711::Law;
 pub use info::ConnectInfo;
-pub use modem::{CallSettings, Modem, ModemConfig};
+pub use link::{
+    CODEWORDS, Compression, ErrorControl, LinkEnd, LinkStage, LinkStats, STRING_LENGTH,
+};
+pub use modem::{
+    COMPRESSION_V42BIS, COMPRESSION_V42BIS_RECEIVE, COMPRESSION_V42BIS_TRANSMIT, CallSettings,
+    Modem, ModemConfig, PROTOCOL_LAPM,
+};
+pub use modulation::{MODULATIONS, Modulation, modulations};
 pub use null::{IDLE_OCTET, NullConfig, NullEngine, SILENCE_OCTET};
 pub use v14::Format;
+pub use v22::GuardTone;
 
 /// The octets in a 20 ms tick at 8000 octets a second.
 pub const FRAME_20MS: usize = 160;

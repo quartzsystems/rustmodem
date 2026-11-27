@@ -358,7 +358,10 @@ fn a_line_is_given_modem_settings_of_its_own_and_gives_them_up() {
     bench.opened.manager.with_model(|model| {
         let modem = &model.lines.line(5).unwrap().modem;
         assert!(modem.own.is_empty());
-        assert_eq!(modem.modulations, ["v21", "bell103"]);
+        assert_eq!(
+            modem.modulations,
+            ["v22bis", "v22", "bell212a", "v21", "bell103"]
+        );
         assert!(modem.v8);
     });
 
@@ -500,7 +503,7 @@ fn the_self_test_passes_between_two_idle_lines() {
                 let text = |control: u16| dialog.item(control).text();
                 assert_eq!(text(selftest_ids::RESULT), "Passed");
                 assert!(
-                    text(selftest_ids::CONNECT).starts_with("300 bit/s, V.21, after "),
+                    text(selftest_ids::CONNECT).starts_with("2400 bit/s, V.22bis, after "),
                     "{}",
                     text(selftest_ids::CONNECT)
                 );
@@ -512,7 +515,11 @@ fn the_self_test_passes_between_two_idle_lines() {
                     text(selftest_ids::BACK),
                     "65536 of 65536 octets arrived whole"
                 );
-                assert!(text(selftest_ids::TIME).starts_with("36 min of call in "));
+                assert!(
+                    text(selftest_ids::TIME).starts_with("4 min of call in "),
+                    "{}",
+                    text(selftest_ids::TIME)
+                );
                 close(name, dialog);
             }
             other => panic!("unexpected {other}"),

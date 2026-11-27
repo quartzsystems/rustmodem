@@ -5,7 +5,7 @@
 //! The modem as a script's media: the steps that ask for it, and two
 //! scripts whose modems call each other.
 
-use engine::Standard;
+use engine::{ErrorControl, Modulation, modulations};
 use sippeer::MediaKind;
 use sippeer::script::{Step, parse, run};
 
@@ -17,13 +17,23 @@ fn free_port() -> u16 {
 
 #[test]
 fn the_steps_that_ask_for_the_modem_are_read() {
-    let both = MediaKind::Modem {
-        modulations: [Some(Standard::V21), Some(Standard::Bell103)],
+    let all = MediaKind::Modem {
+        modulations: Modulation::ALL.map(Some),
         v8: true,
+        error_control: ErrorControl::Auto,
+        compression: true,
     };
     let bell_only = MediaKind::Modem {
-        modulations: [Some(Standard::Bell103), None],
+        modulations: modulations(&[Modulation::Bell103]),
         v8: false,
+        error_control: ErrorControl::Auto,
+        compression: true,
+    };
+    let strict = MediaKind::Modem {
+        modulations: modulations(&[Modulation::V22bis, Modulation::Bell212A]),
+        v8: true,
+        error_control: ErrorControl::Required,
+        compression: false,
     };
     let steps = parse(
         "media modem
@@ -35,29 +45,32 @@ answer as modem answer
 answer
 expect connect
 expect connect 12.5
+media modem v22bis bell212a ec=required no-compression
 ",
     )
     .unwrap();
-    assert!(matches!(&steps[0].1, Step::Media(media) if *media == both));
+    assert!(matches!(&steps[0].1, Step::Media(media) if *media == all));
     assert!(matches!(&steps[1].1, Step::Media(media) if *media == bell_only));
     assert!(matches!(
         &steps[2].1,
-        Step::Call { media: Some(MediaKind::Modem { modulations, v8: true }), .. }
-            if *modulations == [Some(Standard::V21), None]
+        Step::Call { media: Some(MediaKind::Modem { modulations: list, v8: true, .. }), .. }
+            if *list == modulations(&[Modulation::V21])
     ));
     assert!(matches!(
         &steps[3].1,
-        Step::Call { media: Some(MediaKind::Modem { modulations, v8: false }), .. }
-            if *modulations == [Some(Standard::Bell103), Some(Standard::V21)]
+        Step::Call { media: Some(MediaKind::Modem { modulations: list, v8: false, .. }), .. }
+            if *list == modulations(&[Modulation::Bell103, Modulation::V21])
     ));
     assert!(matches!(&steps[4].1, Step::Call { media: None, .. }));
-    assert!(matches!(&steps[5].1, Step::Answer(Some(media)) if *media == both));
+    assert!(matches!(&steps[5].1, Step::Answer(Some(media)) if *media == all));
+    assert!(matches!(&steps[9].1, Step::Media(media) if *media == strict));
     assert!(matches!(&steps[6].1, Step::Answer(None)));
     assert!(matches!(&steps[7].1, Step::ExpectConnect(time) if time.as_secs() == 30));
     assert!(matches!(&steps[8].1, Step::ExpectConnect(time) if time.as_millis() == 12_500));
 
     for refused in [
-        "media modem v22",
+        "media modem v32",
+        "media modem ec=maybe",
         "media modem v21 v21",
         "media modem v21 bell103 v21",
         "call sip:a@10.0.0.1 10.0.0.1:5060 as modem",

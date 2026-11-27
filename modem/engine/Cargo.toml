@@ -18,6 +18,9 @@ v14.workspace = true
 g711.workspace = true
 tones.workspace = true
 v8.workspace = true
+v22.workspace = true
+v42.workspace = true
+v42bis.workspace = true
 
 [dev-dependencies]
 alloccount.workspace = true

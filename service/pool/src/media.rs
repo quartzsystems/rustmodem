@@ -35,8 +35,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use engine::{
-    Diagnostics, EngineState, FRAME_20MS, ModemEngine, ModemEvent, SCOPE_SAMPLES, SILENCE_OCTET,
-    STATE_HISTORY, ScopeKind, StateChange,
+    CONSTELLATION_POINTS, Diagnostics, EngineState, FRAME_20MS, LinkEnd, LinkStage, LinkStats,
+    ModemEngine, ModemEvent, SCOPE_SAMPLES, SILENCE_OCTET, STATE_HISTORY, ScopeKind, StateChange,
 };
 use rtrb::{Consumer, Producer, RingBuffer};
 
@@ -172,7 +172,7 @@ impl MediaStats {
 }
 
 /// What the pool and a runner share about a call, all of it atomic.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MediaShared {
     /// The pool wants the call's packets captured.
     capture: AtomicBool,
@@ -184,10 +184,30 @@ pub struct MediaShared {
     diagnostics: [AtomicU64; DIAGNOSTIC_WORDS],
 }
 
-/// The words a snapshot is carried in: four of numbers, one for each
-/// change of state it remembers, and one for every eight samples of its
-/// scope.
-const DIAGNOSTIC_WORDS: usize = 4 + STATE_HISTORY + SCOPE_SAMPLES / 8;
+/// Where the words of a snapshot's later parts begin: after four of
+/// numbers, one for each change of state it remembers, and one for every
+/// eight samples of its scope.
+const LINK_WORDS_AT: usize = 4 + STATE_HISTORY + SCOPE_SAMPLES / 8;
+
+/// The words of what a modem at 1200 and 2400 bit/s adds: two of the
+/// receiver's figures and six of the data link's.
+const LINK_WORDS: usize = 8;
+
+/// The words a snapshot is carried in: those, and one for every four
+/// points of its constellation.
+const DIAGNOSTIC_WORDS: usize = LINK_WORDS_AT + LINK_WORDS + CONSTELLATION_POINTS / 4;
+
+impl Default for MediaShared {
+    fn default() -> Self {
+        MediaShared {
+            capture: AtomicBool::new(false),
+            has_stats: AtomicBool::new(false),
+            stats: Default::default(),
+            has_diagnostics: AtomicBool::new(false),
+            diagnostics: std::array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
+}
 
 impl MediaShared {
     /// Whether the pool wants the call's packets captured.
@@ -255,6 +275,37 @@ impl MediaShared {
                 *word |= u64::from(*sample as u8) << (8 * n);
             }
         }
+        let link = &snapshot.link;
+        let flags = u64::from(link.peer_busy)
+            | (u64::from(link.own_busy) << 1)
+            | (u64::from(link.recovering) << 2)
+            | (u64::from(link.compression.0) << 3)
+            | (u64::from(link.compression.1) << 4)
+            | (u64::from(link.compressed_mode.0) << 5)
+            | (u64::from(link.compressed_mode.1) << 6);
+        let pair = |low: u32, high: u32| u64::from(low) | (u64::from(high) << 32);
+        let later = &mut words[LINK_WORDS_AT..];
+        later[0] = pair(snapshot.snr_db.to_bits(), snapshot.equalizer_mse.to_bits());
+        later[1] = u64::from(snapshot.timing_offset_ppm.to_bits())
+            | (u64::from(snapshot.constellation_bits) << 32)
+            | (u64::from(snapshot.constellation_len) << 40);
+        later[2] = u64::from(link.stage as u8)
+            | (u64::from(link.end as u8) << 8)
+            | (flags << 16)
+            | (u64::from(link.window) << 24)
+            | (u64::from(link.window_size) << 32);
+        later[3] = pair(link.frames_sent, link.frames_received);
+        later[4] = pair(link.frame_errors, link.retransmissions);
+        later[5] = pair(link.compress_in, link.compress_out);
+        later[6] = pair(link.decompress_in, link.decompress_out);
+        later[7] = pair(link.character_errors, link.breaks);
+        let points = &mut later[LINK_WORDS..];
+        for (word, four) in points.iter_mut().zip(snapshot.constellation.chunks(4)) {
+            for (n, point) in four.iter().enumerate() {
+                *word |= u64::from(point[0] as u8) << (16 * n);
+                *word |= u64::from(point[1] as u8) << (16 * n + 8);
+            }
+        }
         for (slot, word) in self.diagnostics.iter().zip(words) {
             slot.store(word, Ordering::Relaxed);
         }
@@ -295,6 +346,40 @@ impl MediaShared {
         for (n, sample) in snapshot.scope.iter_mut().enumerate() {
             let word = get(4 + STATE_HISTORY + n / 8);
             *sample = (word >> (8 * (n % 8))) as u8 as i8;
+        }
+        let later = |index: usize| get(LINK_WORDS_AT + index);
+        let (low, high) = (|word: u64| word as u32, |word: u64| (word >> 32) as u32);
+        snapshot.snr_db = f32::from_bits(low(later(0)));
+        snapshot.equalizer_mse = f32::from_bits(high(later(0)));
+        snapshot.timing_offset_ppm = f32::from_bits(low(later(1)));
+        snapshot.constellation_bits = (later(1) >> 32) as u8;
+        snapshot.constellation_len = ((later(1) >> 40) as u8).min(CONSTELLATION_POINTS as u8);
+        let flags = later(2) >> 16;
+        snapshot.link = LinkStats {
+            stage: LinkStage::from_number(later(2) as u8),
+            end: LinkEnd::from_number((later(2) >> 8) as u8),
+            peer_busy: flags & 1 != 0,
+            own_busy: flags & 2 != 0,
+            recovering: flags & 4 != 0,
+            compression: (flags & 8 != 0, flags & 16 != 0),
+            compressed_mode: (flags & 32 != 0, flags & 64 != 0),
+            window: (later(2) >> 24) as u8,
+            window_size: (later(2) >> 32) as u8,
+            frames_sent: low(later(3)),
+            frames_received: high(later(3)),
+            frame_errors: low(later(4)),
+            retransmissions: high(later(4)),
+            compress_in: low(later(5)),
+            compress_out: high(later(5)),
+            decompress_in: low(later(6)),
+            decompress_out: high(later(6)),
+            character_errors: low(later(7)),
+            breaks: high(later(7)),
+        };
+        for (n, point) in snapshot.constellation.iter_mut().enumerate() {
+            let word = later(LINK_WORDS + n / 4);
+            let at = 16 * (n % 4);
+            *point = [(word >> at) as u8 as i8, (word >> (at + 8)) as u8 as i8];
         }
         Some(snapshot)
     }
@@ -384,6 +469,11 @@ impl MediaCall {
             }
         }
         room
+    }
+
+    /// How much of the host's data the engine has not taken yet.
+    pub fn waiting(&self) -> usize {
+        RING_BYTES - self.to_line.slots()
     }
 
     /// Takes data from the far end for the host. Returns how many bytes

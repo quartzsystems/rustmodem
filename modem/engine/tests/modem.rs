@@ -9,7 +9,7 @@ mod common;
 
 use chansim::ChannelConfig;
 use common::{Call, config, connection, default_config, random_bytes};
-use engine::{CallSettings, EngineState, Law, Modem, ModemEngine, ModemEvent, Standard};
+use engine::{CallSettings, EngineState, Law, Modem, ModemEngine, ModemEvent, Modulation};
 
 /// 64 KiB each way, as the phase's exit criteria ask.
 const KIB_64: usize = 64 * 1024;
@@ -24,7 +24,7 @@ fn connect_and_carry(
     originator: engine::ModemConfig,
     answerer: engine::ModemConfig,
     channel: &ChannelConfig,
-    standard: Standard,
+    standard: Modulation,
 ) -> Call {
     let mut call = Call::place(originator, answerer, channel, CallSettings::default());
     assert!(call.connect(40), "{name}: did not connect");
@@ -68,7 +68,7 @@ fn v8_to_v21() {
             default_config(),
             default_config(),
             &channel,
-            Standard::V21,
+            Modulation::V21,
         );
         // The answering side went through the V.8 exchange: silence,
         // ANSam, JM, the gap, its carrier, data.
@@ -131,10 +131,10 @@ fn a_v8_answerer_and_a_v21_caller_without_v8() {
     // caller what it is.
     let call = connect_and_carry(
         "V.21 without V.8",
-        config(&[Standard::V21], false),
+        config(&[Modulation::V21], false),
         default_config(),
         &clean(),
-        Standard::V21,
+        Modulation::V21,
     );
     let history: Vec<EngineState> = call
         .duplex
@@ -170,10 +170,10 @@ fn bell_103() {
     // carrier, which it does.
     let call = connect_and_carry(
         "Bell 103 by fallback",
-        config(&[Standard::Bell103], false),
+        config(&[Modulation::Bell103], false),
         default_config(),
         &clean(),
-        Standard::Bell103,
+        Modulation::Bell103,
     );
     let (_, b_at) = call.connected_at_ms();
     assert!((7500..13_000).contains(&b_at), "{b_at}");
@@ -182,10 +182,10 @@ fn bell_103() {
     // one carrier.
     connect_and_carry(
         "Bell 103 alone",
-        config(&[Standard::Bell103], true),
-        config(&[Standard::Bell103], true),
+        config(&[Modulation::Bell103], true),
+        config(&[Modulation::Bell103], true),
         &clean(),
-        Standard::Bell103,
+        Modulation::Bell103,
     );
 }
 
@@ -193,10 +193,10 @@ fn bell_103() {
 fn without_v8_at_either_end_it_is_answer_tone_and_carriers() {
     let call = connect_and_carry(
         "no V.8",
-        config(&[Standard::V21, Standard::Bell103], false),
-        config(&[Standard::V21, Standard::Bell103], false),
+        config(&[Modulation::V21, Modulation::Bell103], false),
+        config(&[Modulation::V21, Modulation::Bell103], false),
         &clean(),
-        Standard::V21,
+        Modulation::V21,
     );
     // 2.15 s of silence, 3.3 s of ANS, 75 ms, and the carriers.
     let (_, b_at) = call.connected_at_ms();
@@ -210,10 +210,10 @@ fn the_fallback_order_is_the_lines() {
     // Bell's and the caller goes by the carrier it hears.
     connect_and_carry(
         "Bell first",
-        config(&[Standard::V21, Standard::Bell103], false),
-        config(&[Standard::Bell103, Standard::V21], false),
+        config(&[Modulation::V21, Modulation::Bell103], false),
+        config(&[Modulation::Bell103, Modulation::V21], false),
         &clean(),
-        Standard::Bell103,
+        Modulation::Bell103,
     );
 }
 
@@ -221,8 +221,8 @@ fn the_fallback_order_is_the_lines() {
 fn modems_with_nothing_in_common_do_not_connect() {
     // A V.21 answerer and a Bell 103 caller.
     let mut call = Call::place(
-        config(&[Standard::Bell103], false),
-        config(&[Standard::V21], true),
+        config(&[Modulation::Bell103], false),
+        config(&[Modulation::V21], true),
         &clean(),
         CallSettings::default(),
     );
@@ -244,12 +244,12 @@ fn the_host_settings_of_the_call_override_the_lines() {
     // The line allows both and V.8; the host, with ATB1 or +MS, says
     // Bell 103 for this call.
     let settings = CallSettings {
-        modulations: Some([Some(Standard::Bell103), None]),
+        modulations: Some(engine::modulations(&[Modulation::Bell103])),
         ..CallSettings::default()
     };
     let mut call = Call::place(default_config(), default_config(), &clean(), settings);
     assert!(call.connect(40));
-    assert_eq!(call.connections().0, Some(connection(Standard::Bell103)));
+    assert_eq!(call.connections().0, Some(connection(Modulation::Bell103)));
 
     // S9 of 20 tenths: the connection is reported 1.4 s later than with
     // the factory 6.

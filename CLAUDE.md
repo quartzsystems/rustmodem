@@ -105,12 +105,13 @@ dsp/chansim         a telephone channel with its faults, from a seed, for
 modem/fsk           the V.21 and Bell 103 modulator and demodulator, and
                     start-stop framing (pure)
 modem/v22           V.22, Bell 212A and V.22bis: the modulator and
-                    demodulator at 1200 and 2400 bit/s (pure)
+                    demodulator at 1200 and 2400 bit/s, the handshake and
+                    the retrain (pure)
 modem/v8            V.8: the signals and both ends of the procedure (pure,
                     sans-I/O)
-modem/engine        ModemEngine trait, events, the Modem (V.8, V.21 and
-                    Bell 103 from answer to carrier lost), NullEngine,
-                    EchoEngine
+modem/engine        ModemEngine trait, events, the Modem (V.8, the five
+                    modulations and the data link of V.42 and V.42bis,
+                    from answer to carrier lost), NullEngine, EchoEngine
 link/v14            V.14: start-stop characters over a synchronous line, and
                     the character formats (pure)
 link/v42            V.42: the detection phase, HDLC framing and LAPM error

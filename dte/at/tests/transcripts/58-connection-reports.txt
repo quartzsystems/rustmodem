@@ -1,0 +1,66 @@
+# +MR, +ER, +DR and +ILRR say what is reported before CONNECT when a call
+# connects (V.250 clauses 6.4.3, 6.5.5, 6.6.2 and 6.2.13): the carrier and
+# the rate, the error control, the compression and the rate again, in
+# that order. Each is 0 or 1, and 0 from the factory.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> AT+MR?;+ER?;+DR?;+ILRR?\r
+< \r\n+MR: 0\r\n\r\n+ER: 0\r\n\r\n+DR: 0\r\n\r\n+ILRR: 0\r\n\r\nOK\r\n
+> AT+MR=?;+ER=?;+DR=?;+ILRR=?\r
+< \r\n+MR: (0,1)\r\n\r\n+ER: (0,1)\r\n\r\n+DR: (0,1)\r\n\r\n+ILRR: (0,1)\r\n\r\nOK\r\n
+> ATD5\r
+! dial 5
+@ connected 2400 V.22bis LAPM V.42bis
+< \r\nCONNECT 2400\r\n
+@ carrierlost
+< \r\nNO CARRIER\r\n
+> AT+MR=1;+ER=1;+DR=1;+ILRR=1\r
+< \r\nOK\r\n
+> ATD5\r
+! dial 5
+@ connected 2400 V.22bis LAPM V.42bis
+< \r\n+MCR: V22B\r\n\r\n+MRR: 2400\r\n\r\n+ER: LAPM\r\n\r\n+DR: V42B\r\n\r\n+ILRR: 2400\r\n\r\nCONNECT 2400\r\n
+@ carrierlost
+< \r\nNO CARRIER\r\n
+# A call with no error control, at 1200 bit/s.
+> ATD5\r
+! dial 5
+@ connected 1200 BELL212A
+< \r\n+MCR: B212A\r\n\r\n+MRR: 1200\r\n\r\n+ER: NONE\r\n\r\n+DR: NONE\r\n\r\n+ILRR: 1200\r\n\r\nCONNECT 1200\r\n
+@ carrierlost
+< \r\nNO CARRIER\r\n
+# Each by itself.
+> AT+MR=0;+DR=0;+ILRR=0\r
+< \r\nOK\r\n
+> ATD5\r
+! dial 5
+@ connected 300 V.21
+< \r\n+ER: NONE\r\n\r\nCONNECT 300\r\n
+@ carrierlost
+< \r\nNO CARRIER\r\n
+# With V0 the reports have no header, as information text has none, and
+# with Q1 there are none, as there are no result codes.
+> AT+MR=1;+ER=0;V0\r
+< 0\r
+> ATD5\r
+! dial 5
+@ connected 2400 V.22bis LAPM V.42bis
+< +MCR: V22B\r\n+MRR: 2400\r\n10\r
+@ carrierlost
+< 3\r
+> ATV1Q1\r
+> ATD5\r
+! dial 5
+@ connected 2400 V.22bis LAPM V.42bis
+@ carrierlost
+> ATQ0\r
+< \r\nOK\r\n
+# A value that is neither 0 nor 1 is an error. Set to nothing, it is 0.
+> AT+MR=2\r
+< \r\nERROR\r\n
+> AT+MR=;+MR?\r
+< \r\n+MR: 0\r\n\r\nOK\r\n
+> AT+ER\r
+< \r\nERROR\r\n
+> AT+ER=1;&F+ER?\r
+< \r\n+ER: 0\r\n\r\nOK\r\n

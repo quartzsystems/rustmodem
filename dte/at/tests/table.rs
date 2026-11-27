@@ -161,8 +161,8 @@ $ONLINE_COMMAND
 < \\r\\nOK\\r\\n
 > AT&V\\r
 < \\r\\nACTIVE PROFILE:\\r\\nE0 Q0 V1 X4 L3 M2 &C1 &D2 &K3\\r\\n
-< S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S09:006 S10:014 S12:050\\r\\n
-< +MS: V21,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,6\\r\\n+ICF: 3,3\\r\\n\\r\\nOK\\r\\n
+< S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S09:006 S10:014 S12:050 S36:007 S46:138 S48:007\\r\\n
+< +MS: V22B,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,32\\r\\n+ICF: 3,3\\r\\n+MR: 0 +ER: 0 +DR: 0 +ILRR: 0\\r\\n\\r\\nOK\\r\\n
 > ATL4\\r
 < \\r\\nERROR\\r\\n
 > ATM4\\r
@@ -495,8 +495,8 @@ $ONLINE_COMMAND
 < \\r\\nOK\\r\\n
 > AT&V\\r
 < \\r\\nACTIVE PROFILE:\\r\\nE0 Q0 V1 X4 L0 M0 &C1 &D2 &K0\\r\\n
-< S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S09:006 S10:014 S12:050\\r\\n
-< +MS: V21,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,6\\r\\n+ICF: 3,3\\r\\n\\r\\nOK\\r\\n
+< S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S09:006 S10:014 S12:050 S36:007 S46:138 S48:007\\r\\n
+< +MS: V22B,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,32\\r\\n+ICF: 3,3\\r\\n+MR: 0 +ER: 0 +DR: 0 +ILRR: 0\\r\\n\\r\\nOK\\r\\n
 > AT&K3\\r
 < \\r\\nOK\\r\\n
 > AT&K\\r
@@ -516,8 +516,8 @@ $ONLINE_COMMAND
 < \\r\\nOK\\r\\n
 > AT&V\\r
 < \\r\\nACTIVE PROFILE:\\r\\nE0 Q0 V1 X3 L0 M0 &C0 &D1 &K3\\r\\n
-< S00:002 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:045 S09:006 S10:014 S12:050\\r\\n
-< +MS: B103,0,300,300,0,0\\r\\n+ES: 1,0,2\\r\\n+DS: 0,0,512,6\\r\\n+ICF: 3,3\\r\\n\\r\\nOK\\r\\n
+< S00:002 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:045 S09:006 S10:014 S12:050 S36:007 S46:138 S48:007\\r\\n
+< +MS: B103,0,300,300,0,0\\r\\n+ES: 1,0,2\\r\\n+DS: 0,0,512,6\\r\\n+ICF: 3,3\\r\\n+MR: 0 +ER: 0 +DR: 0 +ILRR: 0\\r\\n\\r\\nOK\\r\\n
 > AT&V1\\r
 < \\r\\nERROR\\r\\n
 ",
@@ -546,23 +546,23 @@ $ONLINE_COMMAND
         row: "+MS +ES +DS: set, read and test",
         script: "\
 > AT+MS?\\r
-< \\r\\n+MS: V21,1,0,0,0,0\\r\\n\\r\\nOK\\r\\n
+< \\r\\n+MS: V22B,1,0,0,0,0\\r\\n\\r\\nOK\\r\\n
 > AT+MS=b103,0,300,300\\r
 < \\r\\nOK\\r\\n
 > AT+MS?\\r
 < \\r\\n+MS: B103,0,300,300,0,0\\r\\n\\r\\nOK\\r\\n
 > AT+MS=?\\r
-< \\r\\n+MS: (V21,B103),(0,1),(0,300),(0,300),(0,300),(0,300)\\r\\n\\r\\nOK\\r\\n
+< \\r\\n+MS: (V21,V22,V22B,B103,B212A),(0,1),(0,300,1200,2400),(0,300,1200,2400),(0,300,1200,2400),(0,300,1200,2400)\\r\\n\\r\\nOK\\r\\n
 > AT+ES?;+ES=?\\r
-< \\r\\n+ES: 3,0,2\\r\\n\\r\\n+ES: (0-4),(0-4),(0-6)\\r\\n\\r\\nOK\\r\\n
+< \\r\\n+ES: 3,0,2\\r\\n\\r\\n+ES: (0-3),(0-3),(0-5)\\r\\n\\r\\nOK\\r\\n
 > AT+ES=1,0,2;+DS=0,0,512,6;+ES?;+DS?;E0\\r
 < \\r\\n+ES: 1,0,2\\r\\n\\r\\n+DS: 0,0,512,6\\r\\n\\r\\nOK\\r\\n
 > AT+DS=?\\r
-< \\r\\n+DS: (0-3),(0),(512-2048),(6-250)\\r\\n\\r\\nOK\\r\\n
+< \\r\\n+DS: (0-3),(0),(512-4096),(6-250)\\r\\n\\r\\nOK\\r\\n
 > AT+DS=\\r
 < \\r\\nOK\\r\\n
 > AT+DS?\\r
-< \\r\\n+DS: 3,0,2048,6\\r\\n\\r\\nOK\\r\\n
+< \\r\\n+DS: 3,0,2048,32\\r\\n\\r\\nOK\\r\\n
 > AT+MS\\r
 < \\r\\nERROR\\r\\n
 > AT+MS=(1)\\r
@@ -624,11 +624,11 @@ const UNKNOWN_IS_ERROR: &[Row] = &[Row {
 < \\r\\nERROR\\r\\n
 > AT&V\\r
 < \\r\\nACTIVE PROFILE:\\r\\nE0 Q0 V1 X1 L0 M0 &C1 &D2 &K3\\r\\n
-< S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S09:006 S10:014 S12:050\\r\\n
-< +MS: V21,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,6\\r\\n+ICF: 3,3\\r\\n\\r\\nOK\\r\\n
-> AT\\\\N3\\r
+< S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S09:006 S10:014 S12:050 S36:007 S46:138 S48:007\\r\\n
+< +MS: V22B,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,32\\r\\n+ICF: 3,3\\r\\n+MR: 0 +ER: 0 +DR: 0 +ILRR: 0\\r\\n\\r\\nOK\\r\\n
+> AT\\\\Q3\\r
 < \\r\\nERROR\\r\\n
-> AT&Q5\\r
+> AT&S0\\r
 < \\r\\nERROR\\r\\n
 > AT+FCLASS=0\\r
 < \\r\\nERROR\\r\\n
@@ -636,8 +636,8 @@ const UNKNOWN_IS_ERROR: &[Row] = &[Row {
 < \\r\\nERROR\\r\\n
 > ATS30?\\r
 < \\r\\nERROR\\r\\n
-> ATE0S0=1&K3+MS?\\r
-< \\r\\n+MS: V21,1,0,0,0,0\\r\\n\\r\\nOK\\r\\n
+> ATE0S0=1&K3\\\\N3%C3&Q5+MS?\\r
+< \\r\\n+MS: V22B,1,0,0,0,0\\r\\n\\r\\nOK\\r\\n
 ",
 }];
 

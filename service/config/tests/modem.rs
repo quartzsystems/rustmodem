@@ -4,7 +4,10 @@
 
 //! The `[modem]` table, a line's `modem` table, and the `modem` engine.
 
-use config::{Config, ConfigFile, EngineKind, LineConfig, LineModem, ModemConfig, ModulationName};
+use config::{
+    Config, ConfigFile, EngineKind, ErrorControlName, GuardToneName, LineConfig, LineModem,
+    ModemConfig, ModulationName,
+};
 use proptest::prelude::*;
 
 const LINE: &str = r#"
@@ -36,11 +39,20 @@ fn a_file_with_no_modem_table_has_the_defaults() {
     assert_eq!(
         config.modem,
         ModemConfig {
-            modulations: vec![ModulationName::V21, ModulationName::Bell103],
+            modulations: vec![
+                ModulationName::V22bis,
+                ModulationName::V22,
+                ModulationName::Bell212A,
+                ModulationName::V21,
+                ModulationName::Bell103,
+            ],
             v8: true,
             tx_level_dbm0: -12,
             answer_delay_ms: 0,
             fallback_ms: 3000,
+            error_control: ErrorControlName::Auto,
+            compression: true,
+            guard_tone: GuardToneName::Off,
         }
     );
     // A line that names no engine has the modem, and no settings of its
@@ -62,22 +74,32 @@ fn the_modem_table_is_read() {
     let text = format!(
         r#"
 [modem]
-modulations = ["bell103", "v21"]
+modulations = ["bell103", "v22", "v21"]
 v8 = false
 tx_level_dbm0 = -15
 answer_delay_ms = 1800
 fallback_ms = 2500
+error_control = "required"
+compression = false
+guard_tone = "1800"
 {LINE}"#
     );
     let config = parse(&text);
     assert_eq!(
         config.modem,
         ModemConfig {
-            modulations: vec![ModulationName::Bell103, ModulationName::V21],
+            modulations: vec![
+                ModulationName::Bell103,
+                ModulationName::V22,
+                ModulationName::V21
+            ],
             v8: false,
             tx_level_dbm0: -15,
             answer_delay_ms: 1800,
             fallback_ms: 2500,
+            error_control: ErrorControlName::Required,
+            compression: false,
+            guard_tone: GuardToneName::Hz1800,
         }
     );
 }
@@ -89,6 +111,7 @@ fn a_line_has_its_own_settings_over_the_tables() {
 modulations = ["v21"]
 tx_level_dbm0 = -10
 answer_delay_ms = 2000
+error_control = "off"
 
 [[line]]
 id = 1
@@ -99,7 +122,7 @@ modem = { modulations = ["bell103"], v8 = false }
 id = 2
 serial = { backend = "com0com", port = "CNCB1" }
 engine = "modem"
-modem = { tx_level_dbm0 = -20 }
+modem = { tx_level_dbm0 = -20, error_control = "required", compression = false, guard_tone = "550" }
 
 [[line]]
 id = 3
@@ -116,11 +139,17 @@ engine = "null"
             tx_level_dbm0: -10,
             answer_delay_ms: 2000,
             fallback_ms: 3000,
+            error_control: ErrorControlName::Off,
+            compression: true,
+            guard_tone: GuardToneName::Off,
         }
     );
     assert_eq!(of(1).modulations, [ModulationName::V21]);
     assert!(of(1).v8);
     assert_eq!(of(1).tx_level_dbm0, -20);
+    assert_eq!(of(1).error_control, ErrorControlName::Required);
+    assert!(!of(1).compression);
+    assert_eq!(of(1).guard_tone, GuardToneName::Hz550);
     assert_eq!(of(2), config.modem);
     assert_eq!(
         config.lines.iter().map(|l| l.engine).collect::<Vec<_>>(),
@@ -137,10 +166,19 @@ engine = "null"
 fn what_is_wrong_is_reported_with_its_key_and_line() {
     let cases = [
         (
-            "[modem]\nmodulations = [\"v22\"]",
+            "[modem]\nmodulations = [\"v32\"]",
             "modem.modulations",
-            "v22",
+            "v32",
         ),
+        (
+            "[modem]\nerror_control = \"maybe\"",
+            "modem.error_control",
+            "maybe",
+        ),
+        ("[modem]\nerror_control = true", "modem.error_control", ""),
+        ("[modem]\ncompression = \"yes\"", "modem.compression", ""),
+        ("[modem]\nguard_tone = \"2100\"", "modem.guard_tone", "2100"),
+        ("[modem]\nguard_tone = 1800", "modem.guard_tone", ""),
         (
             "[modem]\nmodulations = [\"v21\", \"v21\"]",
             "modem.modulations",
@@ -202,8 +240,26 @@ fn the_names_are_what_the_file_spells() {
     }
     assert_eq!(
         ModulationName::ALL.map(ModulationName::as_str),
-        ["v21", "bell103"]
+        ["v22bis", "v22", "bell212a", "v21", "bell103"]
     );
+    assert_eq!(
+        ErrorControlName::ALL.map(ErrorControlName::as_str),
+        ["auto", "required", "off"]
+    );
+    assert_eq!(
+        GuardToneName::ALL.map(GuardToneName::as_str),
+        ["off", "1800", "550"]
+    );
+    for policy in ErrorControlName::ALL {
+        assert_eq!(ErrorControlName::parse(policy.as_str()), Some(policy));
+        assert_eq!(policy.to_string(), policy.as_str());
+    }
+    for tone in GuardToneName::ALL {
+        assert_eq!(GuardToneName::parse(tone.as_str()), Some(tone));
+        assert_eq!(tone.to_string(), tone.as_str());
+    }
+    assert_eq!(ErrorControlName::parse("Auto"), None);
+    assert_eq!(GuardToneName::parse("1800 Hz"), None);
     for modulation in ModulationName::ALL {
         assert_eq!(ModulationName::parse(modulation.as_str()), Some(modulation));
         assert_eq!(modulation.to_string(), modulation.as_str());
@@ -217,7 +273,18 @@ fn modulations() -> impl Strategy<Value = Vec<ModulationName>> {
         Just(vec![ModulationName::Bell103]),
         Just(vec![ModulationName::V21, ModulationName::Bell103]),
         Just(vec![ModulationName::Bell103, ModulationName::V21]),
+        Just(ModulationName::ALL.to_vec()),
+        Just(vec![ModulationName::V22, ModulationName::Bell212A]),
+        Just(vec![ModulationName::Bell103, ModulationName::V22bis]),
     ]
+}
+
+fn error_control() -> impl Strategy<Value = ErrorControlName> {
+    (0usize..3).prop_map(|n| ErrorControlName::ALL[n])
+}
+
+fn guard_tone() -> impl Strategy<Value = GuardToneName> {
+    (0usize..3).prop_map(|n| GuardToneName::ALL[n])
 }
 
 fn line_modem() -> impl Strategy<Value = LineModem> {
@@ -225,12 +292,20 @@ fn line_modem() -> impl Strategy<Value = LineModem> {
         proptest::option::of(modulations()),
         proptest::option::of(any::<bool>()),
         proptest::option::of(-20i8..=-9),
+        proptest::option::of(error_control()),
+        proptest::option::of(any::<bool>()),
+        proptest::option::of(guard_tone()),
     )
-        .prop_map(|(modulations, v8, tx_level_dbm0)| LineModem {
-            modulations,
-            v8,
-            tx_level_dbm0,
-        })
+        .prop_map(
+            |(modulations, v8, tx_level_dbm0, error_control, compression, guard_tone)| LineModem {
+                modulations,
+                v8,
+                tx_level_dbm0,
+                error_control,
+                compression,
+                guard_tone,
+            },
+        )
 }
 
 proptest! {
@@ -247,10 +322,20 @@ proptest! {
         tx_level_dbm0 in -20i8..=-9,
         answer_delay_ms in 0u32..=10_000,
         fallback_ms in 500u32..=20_000,
+        (error_control, compression, guard_tone) in (error_control(), any::<bool>(), guard_tone()),
         lines in proptest::collection::vec((line_modem(), 0usize..3), 1..5),
     ) {
         let mut config = Config {
-            modem: ModemConfig { modulations, v8, tx_level_dbm0, answer_delay_ms, fallback_ms },
+            modem: ModemConfig {
+                modulations,
+                v8,
+                tx_level_dbm0,
+                answer_delay_ms,
+                fallback_ms,
+                error_control,
+                compression,
+                guard_tone,
+            },
             ..Config::default()
         };
         for (n, (modem, engine)) in lines.into_iter().enumerate() {

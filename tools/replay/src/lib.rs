@@ -35,7 +35,7 @@ use std::io::{self, Read, Write};
 
 use engine::{
     CallSettings, EngineState, FRAME_10MS as FRAME, Law, Modem, ModemConfig, ModemEngine,
-    ModemEvent, Standard,
+    ModemEvent, Modulation,
 };
 use rtp::capture::{CaptureError, Reader, channels};
 
@@ -342,10 +342,6 @@ pub fn write_wav<W: Write>(out: &mut W, octets: &[u8], alaw: bool) -> io::Result
 }
 
 /// A modulation as the options spell it.
-pub fn modulation(name: &str) -> Option<Standard> {
-    match name {
-        "v21" => Some(Standard::V21),
-        "bell103" => Some(Standard::Bell103),
-        _ => None,
-    }
+pub fn modulation(name: &str) -> Option<Modulation> {
+    Modulation::from_name(name)
 }

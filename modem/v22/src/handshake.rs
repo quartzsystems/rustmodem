@@ -51,6 +51,7 @@
 //! The optional rate change of clause 6.6 is not built: a modem that
 //! asks for one is answered as for a retrain, at 2400 bit/s.
 
+use dspkit::Complex;
 use dspkit::level::dbm0_to_amplitude;
 use dspkit::osc::Oscillator;
 use g711::Law;
@@ -405,6 +406,8 @@ pub struct Modem {
     tries: u8,
     // Symbols in a row whose error was too high.
     poor: u32,
+    // The point of the symbol decided at the last sample, if one was.
+    point: Option<Complex>,
     events: [Option<Event>; 4],
 }
 
@@ -455,6 +458,7 @@ impl Modem {
             retraining: false,
             tries: 0,
             poor: 0,
+            point: None,
             events: [None; 4],
         };
         match settings.role {
@@ -498,6 +502,40 @@ impl Modem {
     /// Whether the modem has given up.
     pub fn failed(&self) -> bool {
         self.state == State::Failed
+    }
+
+    /// Whether the far end has been heard to be a modem of this kind and
+    /// the handshake is under way: for the calling modem, unscrambled
+    /// binary 1 or the Bell answering tone has been detected; for the
+    /// answering modem, S1 or scrambled binary 1 has. Before that a
+    /// modem that tries one kind after another may give this one up.
+    pub fn engaged(&self) -> bool {
+        match self.role {
+            Role::Calling => self.state != State::CallListen,
+            Role::Answering => !matches!(self.state, State::Wait { .. }),
+        }
+    }
+
+    /// Whether the far end has answered this modem's part of the
+    /// handshake: its S1 or its scrambled binary 1 has been detected.
+    /// A calling modem that has sent and has not been answered may have
+    /// taken another modem's tone for this one's.
+    pub fn answered(&self) -> bool {
+        matches!(
+            self.state,
+            State::FarS1 { .. }
+                | State::Train2400 { .. }
+                | State::Train1200 { .. }
+                | State::Data
+                | State::RetrainWait { .. }
+        )
+    }
+
+    /// The symbol decided at the last sample, if one was: the received
+    /// point after the equaliser and the carrier loop, in units of the
+    /// constellation's grid, for a display.
+    pub fn point(&self) -> Option<Complex> {
+        self.point
     }
 
     /// The sample, counted from the modem's first, at which its receiver
@@ -592,6 +630,7 @@ impl Modem {
             .process(self.demodulator.baseband(), f32::MIN_POSITIVE);
         let (ones, s1) = (out.carrier && detected.ones, out.carrier && detected.s1);
         self.track(ones, s1);
+        self.point = out.symbol.map(|symbol| symbol.point);
         if let Some(symbol) = out.symbol {
             self.receive(symbol, io);
         }

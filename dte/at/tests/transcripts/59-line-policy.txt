@@ -1,0 +1,17 @@
+@ config error_control=required compression=0
+# A line's policy for error control and compression is the factory value
+# of +ES and +DS on that line. Here the line requires error control and
+# allows no compression. The host's commands change them, and &F returns
+# to the line's.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> AT+ES?;+DS?\r
+< \r\n+ES: 3,2,4\r\n\r\n+DS: 0,0,2048,32\r\n\r\nOK\r\n
+> AT\\N3%C3+ES?;+DS?\r
+< \r\n+ES: 3,0,2\r\n\r\n+DS: 3,0,2048,32\r\n\r\nOK\r\n
+> AT+ES=;+DS=;+ES?;+DS?\r
+< \r\n+ES: 3,2,4\r\n\r\n+DS: 0,0,2048,32\r\n\r\nOK\r\n
+> AT\\N0\r
+< \r\nOK\r\n
+> AT&F+ES?;+DS?\r
+< \r\n+ES: 3,2,4\r\n\r\n+DS: 0,0,2048,32\r\n\r\nOK\r\n

@@ -8,7 +8,7 @@
 
 use crate::interp::{AtInterpreter, State};
 use crate::profile::{
-    Carrier, CharacterFraming, FACTORY_DS, FACTORY_ES, FACTORY_ICF, FACTORY_MS,
+    CharacterFraming, CompressionSelection, ErrorControlSelection, FACTORY_ICF, FACTORY_MS,
     ModulationSelection, RANGE_DS, RANGE_ES, RANGE_ICF, RANGE_MS, acceptable_parameter,
 };
 use crate::{Action, HangupCause, Output, Profile, ResultCode, Trace, UnknownCommand};
@@ -30,7 +30,7 @@ enum Next {
     Fail,
 }
 
-/// The extended-syntax parameters phase 0 stores.
+/// The compound extended-syntax parameters.
 #[derive(Clone, Copy)]
 enum Stored {
     Ms,
@@ -132,17 +132,13 @@ impl AtInterpreter {
                 Next::Done
             }
             b'D' => self.dial(cursor, out),
-            // The carrier at 300 bit/s: B0 is the ITU's, V.21, and B1 is
-            // Bell 103. Not in V.250; it is the command Hayes-compatible
-            // modems have for it. It sets the carrier of +MS.
+            // The family of the carrier at 300 and 1200 bit/s: B0 is the
+            // ITU's, V.21 and V.22, and B1 is Bell's, 103 and 212A. Not in
+            // V.250; it is the command Hayes-compatible modems have for
+            // it. It changes the carrier of +MS.
             b'B' => match parameter(cursor, 1) {
                 Some(n) => {
-                    let carrier = if n == 0 {
-                        Carrier::V21
-                    } else {
-                        Carrier::Bell103
-                    };
-                    self.profile.set_carrier(carrier);
+                    self.profile.set_family(n == 1);
                     Next::Continue
                 }
                 None => Next::Fail,
@@ -261,6 +257,29 @@ impl AtInterpreter {
                 cursor.until(|b| !b.is_ascii_alphabetic());
                 self.skip_unknown(cursor)
             }
+            // \N, error control, and %C, compression: the commands that
+            // modems had for them before V.250, which hosts still send.
+            // Each sets the +ES or the +DS that it is.
+            b'\\' if cursor.peek() == Some(b'N') => {
+                cursor.next();
+                match parameter(cursor, 5) {
+                    Some(n) => {
+                        self.profile.set_reliability(n as u8);
+                        Next::Continue
+                    }
+                    None => Next::Fail,
+                }
+            }
+            b'%' if cursor.peek() == Some(b'C') => {
+                cursor.next();
+                match parameter(cursor, 3) {
+                    Some(n) => {
+                        self.profile.set_compression_mode(n as u8);
+                        Next::Continue
+                    }
+                    None => Next::Fail,
+                }
+            }
             b'\\' | b'%' | b'*' | b'-' | b'$' | b'^' | b')' | b':' | b'@' => {
                 cursor.next();
                 self.skip_unknown(cursor)
@@ -353,6 +372,17 @@ impl AtInterpreter {
                     1 => Next::Continue,
                     // S3, S4 and S5 are characters of the 7-bit set.
                     3..=5 if value > 127 => Next::Fail,
+                    // The registers of error control take the values
+                    // that mean something, and set the +ES or +DS that
+                    // each is.
+                    36 if !matches!(value, 0 | 1 | 3 | 4 | 5 | 7) => Next::Fail,
+                    46 if !matches!(value, 136 | 138) => Next::Fail,
+                    48 if !matches!(value, 0 | 7 | 128) => Next::Fail,
+                    36 | 46 | 48 => {
+                        self.profile.set_register(number, value as u8);
+                        self.profile.apply_register(number, value as u8);
+                        Next::Continue
+                    }
                     _ => {
                         if self.profile.set_register(number, value as u8) {
                             Next::Continue
@@ -392,7 +422,17 @@ impl AtInterpreter {
                 }
                 None => Next::Fail,
             },
-            // Flow control: none, or RTS/CTS. Stored, no effect.
+            // The communications mode, of modems before V.250: 0 direct,
+            // 5 error control, 6 buffered. The synchronous modes, 1 to 4,
+            // this modem has not got. It sets the +ES that it is.
+            Some(b'Q') => match cursor.number().unwrap_or(0) {
+                n @ (0 | 5 | 6) => {
+                    self.profile.set_communications_mode(n as u8);
+                    Next::Continue
+                }
+                _ => Next::Fail,
+            },
+            // Flow control: none, or RTS/CTS.
             Some(b'K') => match cursor.number().unwrap_or(0) {
                 n @ (0 | 3) => {
                     self.profile.flow = n as u8;
@@ -424,7 +464,7 @@ impl AtInterpreter {
     /// `&V`: the current settings and registers.
     fn view(&mut self, out: &mut Vec<Output>) {
         /// The lines that describe one profile.
-        fn lines(p: &Profile) -> [String; 6] {
+        fn lines(p: &Profile) -> [String; 7] {
             let settings = format!(
                 "E{} Q{} V{} X{} L{} M{} &C{} &D{} &K{}",
                 u8::from(p.echo),
@@ -449,6 +489,13 @@ impl AtInterpreter {
                 format!("+ES: {}", p.es),
                 format!("+DS: {}", p.ds),
                 format!("+ICF: {}", p.icf),
+                format!(
+                    "+MR: {} +ER: {} +DR: {} +ILRR: {}",
+                    u8::from(p.mr),
+                    u8::from(p.er),
+                    u8::from(p.dr),
+                    u8::from(p.ilrr)
+                ),
             ]
         }
         let mut text = vec!["ACTIVE PROFILE:".to_string()];
@@ -464,8 +511,11 @@ impl AtInterpreter {
 
     /// V.250 clause 5.4: an extended-syntax command, `+<name>` followed by
     /// `=<value>` (set), `?` (read) or `=?` (test), and ended by `;` or the
-    /// end of the line. Phase 0 has `+MS` (clause 6.4.1), `+ES` (6.5.1) and
-    /// `+DS` (6.6.1), and only stores what they are set to.
+    /// end of the line. There are `+MS` (clause 6.4.1), `+ES` (6.5.1),
+    /// `+DS` (6.6.1) and `+ICF` (6.2.11), which are compound, and the
+    /// four that say what is reported when a call connects, `+MR`
+    /// (6.4.3), `+ER` (6.5.5), `+DR` (6.6.2) and `+ILRR` (6.2.13), which
+    /// are 0 or 1.
     fn extended_command(&mut self, cursor: &mut Cursor<'_>, out: &mut Vec<Output>) -> Next {
         enum Form<'a> {
             Set(&'a [u8]),
@@ -496,10 +546,45 @@ impl AtInterpreter {
             cursor.next();
         }
 
+        if let b"MR" | b"ER" | b"DR" | b"ILRR" = name {
+            if !junk.is_empty() {
+                return Next::Fail;
+            }
+            let label = String::from_utf8_lossy(name).into_owned();
+            let flag = match name {
+                b"MR" => &mut self.profile.mr,
+                b"ER" => &mut self.profile.er,
+                b"DR" => &mut self.profile.dr,
+                _ => &mut self.profile.ilrr,
+            };
+            return match form {
+                // An empty value is the default, which is 0.
+                Form::Set(b"" | b"0") => {
+                    *flag = false;
+                    Next::Continue
+                }
+                Form::Set(b"1") => {
+                    *flag = true;
+                    Next::Continue
+                }
+                Form::Read => {
+                    let line = format!("+{label}: {}", u8::from(*flag));
+                    self.info(&[&line], out);
+                    Next::Continue
+                }
+                Form::Test => {
+                    self.info(&[&format!("+{label}: (0,1)")], out);
+                    Next::Continue
+                }
+                Form::Set(_) | Form::Action => Next::Fail,
+            };
+        }
+        // The factory values of +ES and +DS are the line's.
+        let line_factory = Profile::for_line(&self.config);
         let (stored, label, factory, range) = match name {
             b"MS" => (Stored::Ms, "+MS: ", FACTORY_MS, RANGE_MS),
-            b"ES" => (Stored::Es, "+ES: ", FACTORY_ES, RANGE_ES),
-            b"DS" => (Stored::Ds, "+DS: ", FACTORY_DS, RANGE_DS),
+            b"ES" => (Stored::Es, "+ES: ", line_factory.es.as_str(), RANGE_ES),
+            b"DS" => (Stored::Ds, "+DS: ", line_factory.ds.as_str(), RANGE_DS),
             b"ICF" => (Stored::Icf, "+ICF: ", FACTORY_ICF, RANGE_ICF),
             _ => return self.unknown(),
         };
@@ -524,6 +609,20 @@ impl AtInterpreter {
                         Some(selection) => selection.to_string(),
                         None => return Next::Fail,
                     }
+                } else if matches!(stored, Stored::Es) {
+                    // +ES and +DS have an effect: a mode this modem has
+                    // not got is an error.
+                    let current = self.profile.error_control_selection();
+                    match ErrorControlSelection::parse(value, Some(current)) {
+                        Some(selection) => selection.to_string(),
+                        None => return Next::Fail,
+                    }
+                } else if matches!(stored, Stored::Ds) {
+                    let current = self.profile.compression_selection();
+                    match CompressionSelection::parse(value, Some(current)) {
+                        Some(selection) => selection.to_string(),
+                        None => return Next::Fail,
+                    }
                 } else if matches!(stored, Stored::Icf) {
                     // +ICF has an effect too: a format this modem has
                     // not got is an error (V.250 clause 6.2.11).
@@ -533,7 +632,7 @@ impl AtInterpreter {
                         None => return Next::Fail,
                     }
                 } else {
-                    value.iter().map(|b| char::from(*b)).collect()
+                    return Next::Fail;
                 };
                 *self.stored_mut(stored) = value;
                 Next::Continue

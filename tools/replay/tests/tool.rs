@@ -175,7 +175,7 @@ fn what_cannot_be_done_is_said_and_the_exit_code_says_which() {
         &["a.rmcap", "b.rmcap"],
         &["a.rmcap", "--law", "pcm"],
         &["a.rmcap", "--law"],
-        &["a.rmcap", "--modulations", "v22"],
+        &["a.rmcap", "--modulations", "v32"],
         &["a.rmcap", "--modulations", "v21,v21"],
         &["a.rmcap", "--fast"],
     ] {

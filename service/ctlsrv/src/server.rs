@@ -861,6 +861,7 @@ impl Server {
                     tx_level_dbm0: modem.tx_level_dbm0.map(i64::from),
                     answer_delay_ms: modem.answer_delay_ms,
                     fallback_ms: modem.fallback_ms,
+                    ..ModemEdit::default()
                 }),
         };
         // The pool takes the modem settings as it takes the telephony's:
@@ -1011,7 +1012,10 @@ fn modulation(method: &str, name: &str) -> Result<ModulationName, Message> {
     ModulationName::parse(name).ok_or_else(|| {
         message(
             "RMD2003",
-            &[method, "a modulation is not one of: v21, bell103"],
+            &[
+                method,
+                "a modulation is not one of: v22bis, v22, bell212a, v21, bell103",
+            ],
         )
     })
 }
@@ -1069,6 +1073,7 @@ fn new_line(spec: &LineSpec) -> Result<LineConfig, Message> {
                 .tx_level_dbm0
                 .map(|level| tx_level("lines.add", level))
                 .transpose()?,
+            ..LineModem::default()
         };
     }
     if let Some(register) = &spec.register {
@@ -1129,10 +1134,24 @@ fn register_edit(
 /// The change `lines.edit` describes, to the line as it is now.
 fn line_edit(change: &LineChange, current: Option<&LineConfig>) -> Result<LineEdit, Message> {
     Ok(LineEdit {
-        modem: change.modem.as_ref().map(|modem| LineModemEdit {
-            modulations: modem.modulations.clone(),
-            v8: modem.v8,
-            tx_level_dbm0: modem.tx_level_dbm0.map(i64::from),
+        modem: change.modem.as_ref().map(|modem| {
+            // The change names the line's own modem settings, all of
+            // them that the control API has. What it has not, the line's
+            // policy for error control and compression and its guard
+            // tone, stays as the line has it.
+            let own = current.map(|line| &line.modem);
+            LineModemEdit {
+                modulations: modem.modulations.clone(),
+                v8: modem.v8,
+                tx_level_dbm0: modem.tx_level_dbm0.map(i64::from),
+                error_control: own
+                    .and_then(|own| own.error_control)
+                    .map(|policy| policy.as_str().to_string()),
+                compression: own.and_then(|own| own.compression),
+                guard_tone: own
+                    .and_then(|own| own.guard_tone)
+                    .map(|tone| tone.as_str().to_string()),
+            }
         }),
         engine: change
             .engine

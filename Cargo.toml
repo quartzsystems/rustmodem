@@ -97,10 +97,13 @@ dspkit = { path = "dsp/dspkit" }
 tones = { path = "dsp/tones" }
 chansim = { path = "dsp/chansim" }
 fsk = { path = "modem/fsk" }
+v22 = { path = "modem/v22" }
 v8 = { path = "modem/v8" }
 alloccount = { path = "tools/alloccount" }
 engine = { path = "modem/engine" }
 v14 = { path = "link/v14" }
+v42 = { path = "link/v42" }
+v42bis = { path = "link/v42bis" }
 at = { path = "dte/at" }
 serial = { path = "dte/serial" }
 sdp = { path = "voip/sdp" }
@@ -129,8 +132,8 @@ all = { level = "warn", priority = -1 }
 # The signal processing is optimised in debug builds too. Its tests run
 # minutes of signal a sample at a time, and unoptimised they would take as
 # long as the calls they simulate. Overflow checks and debug assertions
-# stay on. The compression is optimised with it: its tests take megabytes
-# through dictionaries of every size.
+# stay on. The link crates are optimised with it: they run under the
+# modem in its tests, and their own take megabytes through them.
 [profile.dev.package.g711]
 opt-level = 3
 
@@ -153,6 +156,12 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.engine]
+opt-level = 3
+
+[profile.dev.package.v14]
+opt-level = 3
+
+[profile.dev.package.v42]
 opt-level = 3
 
 [profile.dev.package.v42bis]

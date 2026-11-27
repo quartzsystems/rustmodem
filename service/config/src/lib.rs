@@ -28,11 +28,11 @@ use msg::{Message, message};
 use toml_edit::DocumentMut;
 
 pub use schema::{
-    Backend, Cidr, CodecName, Config, ControlConfig, EngineKind, HuntGroup, HuntGroupEdit,
-    LineConfig, LineEdit, LineModem, LineModemEdit, LogLevel, MAX_LINE_ID, MediaConfig, MediaEdit,
-    ModemConfig, ModemEdit, ModulationName, PortRange, RegisterConfig, Route, RouteEdit,
-    SerialConfig, ServiceConfig, SettingsEdit, SipConfig, SipEdit, Strategy, Target,
-    UnknownCommand, pattern_covers, pattern_matches,
+    Backend, Cidr, CodecName, Config, ControlConfig, EngineKind, ErrorControlName, GuardToneName,
+    HuntGroup, HuntGroupEdit, LineConfig, LineEdit, LineModem, LineModemEdit, LogLevel,
+    MAX_LINE_ID, MediaConfig, MediaEdit, ModemConfig, ModemEdit, ModulationName, PortRange,
+    RegisterConfig, Route, RouteEdit, SerialConfig, ServiceConfig, SettingsEdit, SipConfig,
+    SipEdit, Strategy, Target, UnknownCommand, pattern_covers, pattern_matches,
 };
 
 /// The directory under `%ProgramData%` that holds rustmodem's files.

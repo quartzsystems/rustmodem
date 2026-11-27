@@ -7,16 +7,22 @@
 
 mod common;
 
-use common::{Harness, SharedProfiles, config_with_lines, summarise};
+use common::{Harness, SharedProfiles, config_with_lines, noise, summarise};
 use config::{EngineKind, LineModem, ModulationName};
 use ctlproto::{Event, LINE_DIAG_PER_SECOND, LineState};
 use pool::{InlineRunner, NullSwitch, SELFTEST_OCTETS, TICK_MS, engine_for};
 
 /// Lines 1 to `count` with the modem engine, and one more with the null
 /// engine, on the null switch with the engines run by the pool's own
-/// tick. Every port is open.
+/// tick. Every port is open. The modems are the 300 bit/s ones.
 fn modems(count: u16) -> Harness {
+    modems_with(count, vec![ModulationName::V21, ModulationName::Bell103])
+}
+
+/// The same with these modulations in `[modem]`.
+fn modems_with(count: u16, modulations: Vec<ModulationName>) -> Harness {
     let mut config = config_with_lines(count + 1);
+    config.modem.modulations = modulations;
     for line in &mut config.lines[..usize::from(count)] {
         line.engine = EngineKind::Modem;
     }
@@ -66,7 +72,7 @@ fn a_line_shows_its_modem_settings_and_which_are_its_own() {
     config.lines[0].modem = LineModem {
         modulations: Some(vec![ModulationName::Bell103]),
         v8: Some(false),
-        tx_level_dbm0: None,
+        ..LineModem::default()
     };
     h.pool.apply_config(&config);
     let line = h.pool.line(1).unwrap();
@@ -338,7 +344,7 @@ fn a_self_test_of_modems_with_nothing_in_common_fails_and_says_why() {
     config.lines[1].modem = LineModem {
         modulations: Some(vec![ModulationName::Bell103]),
         v8: Some(false),
-        tx_level_dbm0: None,
+        ..LineModem::default()
     };
     h.pool.apply_config(&config);
     let mut job = h.pool.selftest_begin(1, 2).unwrap();
@@ -358,4 +364,220 @@ fn a_self_test_of_modems_with_nothing_in_common_fails_and_says_why() {
     // A line that was removed meanwhile is no matter to the end of it.
     h.pool.apply_config(&config_with_lines(1));
     h.pool.selftest_end(1, 2);
+}
+
+// The modems at 1200 and 2400 bit/s, and the data link.
+
+/// Lines 1 and 2 with every modulation.
+fn fast_modems() -> Harness {
+    modems_with(2, ModulationName::ALL.to_vec())
+}
+
+/// Line 1 dials line 2, which answers; the time of the handshake and the
+/// data link passes.
+fn dial(h: &mut Harness) {
+    assert_eq!(h.command(1, "ATD2"), "");
+    assert_eq!(h.read(2), "\r\nRING\r\n");
+    assert_eq!(h.command(2, "ATA"), "");
+    h.advance(9000);
+}
+
+#[test]
+fn two_lines_connect_at_2400_with_error_control_and_compression() {
+    let mut h = fast_modems();
+    // The originator's host asks for every report.
+    assert_eq!(h.command(1, "AT+MR=1;+ER=1;+DR=1;+ILRR=1"), "\r\nOK\r\n");
+    dial(&mut h);
+    assert_eq!(
+        h.read(1),
+        "\r\n+MCR: V22B\r\n\r\n+MRR: 2400\r\n\r\n+ER: LAPM\r\n\r\n+DR: V42B\r\n\r\n+ILRR: 2400\r\n\
+         \r\nCONNECT 2400\r\n"
+    );
+    assert_eq!(h.read(2), "\r\nCONNECT 2400\r\n");
+    for id in [1, 2] {
+        let call = h.pool.line(id).unwrap().call.unwrap();
+        let connect = call.connect.unwrap();
+        assert_eq!(
+            (
+                connect.rate,
+                connect.carrier.as_deref(),
+                connect.protocol.as_deref(),
+                connect.compression.as_deref()
+            ),
+            (2400, Some("V.22bis"), Some("LAPM"), Some("V.42bis"))
+        );
+        let modem = call.modem.expect("the call has a modem");
+        assert_eq!(modem.state, "data");
+        assert!(modem.carrier);
+        assert!(modem.quality_percent > 80, "{modem:?}");
+        assert_eq!((modem.framing_errors, modem.retrains), (0, 0));
+        // There is a constellation, and no scope.
+        let diag = h.pool.line_diag(id).unwrap();
+        assert_eq!(diag.scope_kind, "none");
+        let states: Vec<&str> = diag.history.iter().map(|c| c.state.as_str()).collect();
+        assert!(
+            states.ends_with(&["training", "link", "data"]),
+            "{states:?}"
+        );
+    }
+    let stats = h.pool.stats();
+    assert_eq!(stats.connects.len(), 1);
+    assert_eq!(
+        (stats.connects[0].rate, stats.connects[0].carrier.as_deref()),
+        (2400, Some("V.22bis"))
+    );
+    assert_eq!(stats.protocols.len(), 1);
+    assert_eq!(
+        (stats.protocols[0].name.as_str(), stats.protocols[0].count),
+        ("LAPM", 1)
+    );
+    assert_eq!(
+        (
+            stats.compressions[0].name.as_str(),
+            stats.compressions[0].count
+        ),
+        ("V.42bis", 1)
+    );
+
+    // Data both ways, text that compresses and octets that do not.
+    let text: Vec<u8> = b"the quick brown fox jumps over the lazy dog. "
+        .iter()
+        .copied()
+        .cycle()
+        .take(3000)
+        .collect();
+    let octets = noise(7, 3000);
+    h.host(1).write(&text);
+    h.host(2).write(&octets);
+    h.advance(20_000);
+    assert!(h.host(2).read() == text, "what line 1's host sent");
+    assert!(h.host(1).read() == octets, "what line 2's host sent");
+    assert_eq!(h.state(1), LineState::Online);
+}
+
+#[test]
+fn the_hosts_commands_and_the_lines_policy_decide_the_error_control() {
+    // The answerer's host has error control off, as `\N0` has it: the
+    // modems connect at 2400 bit/s with none.
+    let mut h = fast_modems();
+    assert_eq!(h.command(2, "AT\\N0"), "\r\nOK\r\n");
+    assert_eq!(h.command(1, "AT+ER=1"), "\r\nOK\r\n");
+    dial(&mut h);
+    assert_eq!(h.read(1), "\r\n+ER: NONE\r\n\r\nCONNECT 2400\r\n");
+    // The answerer's host is given the originator's detection pattern as
+    // the characters it is, after its CONNECT.
+    let heard = h.read(2);
+    assert!(heard.starts_with("\r\nCONNECT 2400\r\n"), "{heard:?}");
+    let call = h.pool.line(1).unwrap().call.unwrap().connect.unwrap();
+    assert_eq!(
+        (call.rate, call.protocol, call.compression),
+        (2400, None, None)
+    );
+    assert!(h.pool.stats().protocols.is_empty());
+
+    // The line's policy is the factory value of the host's +ES and +DS.
+    let mut h = fast_modems();
+    let mut config = h.config.clone();
+    config.modem.error_control = config::ErrorControlName::Required;
+    config.lines[1].modem.error_control = Some(config::ErrorControlName::Off);
+    config.lines[1].modem.compression = Some(false);
+    h.pool.apply_config(&config);
+    h.advance(TICK_MS);
+    // The hosts have set nothing of their own, so the lines' new policy
+    // is theirs at once; and it is what &F returns to.
+    assert_eq!(
+        h.command(1, "AT+ES?;+DS?"),
+        "\r\n+ES: 3,2,4\r\n\r\n+DS: 3,0,2048,32\r\n\r\nOK\r\n"
+    );
+    assert_eq!(
+        h.command(2, "AT+ES?;+DS?"),
+        "\r\n+ES: 1,0,1\r\n\r\n+DS: 0,0,2048,32\r\n\r\nOK\r\n"
+    );
+    assert_eq!(h.command(2, "AT\\N3%C3"), "\r\nOK\r\n");
+    assert_eq!(
+        h.command(2, "AT&FE0+ES?;+DS?"),
+        "\r\n+ES: 1,0,1\r\n\r\n+DS: 0,0,2048,32\r\n\r\nOK\r\n"
+    );
+    // Error control is required at line 1 and line 2 has none: line 2
+    // connects, having nothing to wait for, and line 1 clears the call.
+    // Its host has NO CARRIER and no CONNECT, and the log says why.
+    h.take_logs();
+    dial(&mut h);
+    h.advance(3000);
+    assert_eq!(h.read(1), "\r\nNO CARRIER\r\n");
+    let heard = h.read(2);
+    assert!(heard.starts_with("\r\nCONNECT 2400\r\n"), "{heard:?}");
+    assert!(heard.ends_with("\r\nNO CARRIER\r\n"), "{heard:?}");
+    let logs: Vec<String> = h.take_logs().into_iter().map(|log| log.text).collect();
+    assert!(
+        logs.iter().any(|text| text
+            == "RMD8001: The call on line 1 was cleared: error control is required and the far \
+                end has none."),
+        "{logs:?}"
+    );
+    assert_eq!(h.state(1), LineState::Idle);
+}
+
+#[test]
+fn a_host_that_sends_faster_than_the_line_carries_is_held_off_with_cts() {
+    let mut h = fast_modems();
+    dial(&mut h);
+    assert_eq!(h.read(1), "\r\nCONNECT 2400\r\n");
+    assert!(h.host(1).signals().cts);
+    h.read(2);
+    // Twenty seconds of the line's data at once.
+    let data = noise(3, 6000);
+    h.host(1).write(&data);
+    h.advance(200);
+    assert!(
+        !h.host(1).signals().cts,
+        "CTS is off while the line is behind"
+    );
+    // Not all of it has been read from the port: the pool stops reading
+    // too.
+    let mut got = Vec::new();
+    let mut released = false;
+    for _ in 0..400 {
+        h.advance(100);
+        got.extend(h.host(2).read());
+        released |= h.host(1).signals().cts;
+        if got.len() == data.len() && h.host(1).signals().cts {
+            break;
+        }
+    }
+    assert!(released, "CTS came on again");
+    assert!(
+        got == data,
+        "{} of {} octets arrived",
+        got.len(),
+        data.len()
+    );
+
+    // With &K0 the host is not held off, and nothing is lost for that:
+    // the pool does not read what it has no room for.
+    h.advance(1100);
+    h.host(1).write(b"+++");
+    h.advance(1200);
+    assert_eq!(h.read(1), "\r\nOK\r\n");
+    // The escape characters went to the far end as the data they are.
+    h.advance(1000);
+    assert_eq!(h.read(2), "+++");
+    assert_eq!(h.command(1, "AT&K0O"), "\r\nCONNECT 2400\r\n");
+    h.host(1).write(&data);
+    h.advance(200);
+    assert!(h.host(1).signals().cts);
+    let mut got = Vec::new();
+    for _ in 0..400 {
+        h.advance(100);
+        got.extend(h.host(2).read());
+        if got.len() == data.len() {
+            break;
+        }
+    }
+    assert!(
+        got == data,
+        "{} of {} octets arrived",
+        got.len(),
+        data.len()
+    );
 }

@@ -21,7 +21,10 @@ mod profile;
 
 pub use engine::ConnectInfo;
 pub use interp::AtInterpreter;
-pub use profile::{Carrier, CharacterFormat, CharacterFraming, ModulationSelection, Profile};
+pub use profile::{
+    Carrier, CharacterFormat, CharacterFraming, CompressionSelection, ErrorControlSelection,
+    ModulationSelection, Profile,
+};
 
 /// The V.24 circuits a modem drives toward its host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
@@ -229,6 +232,11 @@ pub struct AtConfig {
     /// The name of the line's modem engine, which `I4` reports: `NULL`,
     /// `ECHO`.
     pub engine: &'static str,
+    /// The line's policy for error control: the factory value of `+ES`.
+    pub error_control: engine::ErrorControl,
+    /// Whether the line allows data compression: the factory value of
+    /// `+DS`.
+    pub compression: bool,
 }
 
 impl Default for AtConfig {
@@ -237,6 +245,8 @@ impl Default for AtConfig {
             unknown_command: UnknownCommand::default(),
             auto_answer_rings: 0,
             engine: "NULL",
+            error_control: engine::ErrorControl::Auto,
+            compression: true,
         }
     }
 }

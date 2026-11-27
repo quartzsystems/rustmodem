@@ -7,25 +7,20 @@
 #![allow(dead_code)]
 
 use chansim::{ChannelConfig, Duplex, Rng};
-use engine::{CallSettings, ConnectInfo, Modem, ModemConfig, ModemEngine, ModemEvent, Standard};
+use engine::{CallSettings, ConnectInfo, Modem, ModemConfig, ModemEngine, ModemEvent, Modulation};
 
 /// A modem that allows these modulations, in this order.
-pub fn config(modulations: &[Standard], v8: bool) -> ModemConfig {
-    let mut list = [None; 2];
-    for (slot, &standard) in list.iter_mut().zip(modulations) {
-        *slot = Some(standard);
-    }
+pub fn config(modulations: &[Modulation], v8: bool) -> ModemConfig {
     ModemConfig {
-        modulations: list,
+        modulations: engine::modulations(modulations),
         v8,
         ..ModemConfig::default()
     }
 }
 
-/// The modem of the default configuration: V.21 and then Bell 103, with
-/// V.8.
+/// The 300 bit/s modem: V.21 and then Bell 103, with V.8.
 pub fn default_config() -> ModemConfig {
-    ModemConfig::default()
+    config(&[Modulation::V21, Modulation::Bell103], true)
 }
 
 /// A call between two engines: end A originates and end B answers.
@@ -123,9 +118,9 @@ pub fn random_bytes(seed: u64, len: usize) -> Vec<u8> {
 }
 
 /// The connection an engine reports on a modem.
-pub fn connection(standard: Standard) -> ConnectInfo {
+pub fn connection(standard: Modulation) -> ConnectInfo {
     ConnectInfo {
-        rate: 300,
+        rate: standard.rate(),
         carrier: Some(standard.carrier_name().to_string()),
         protocol: None,
         compression: None,

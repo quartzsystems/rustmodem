@@ -19,10 +19,14 @@
 //! dcd_follows_carrier = true
 //! dtr_action = 2
 //! flow = 3
-//! ms = "V21,1,0,0,0,0"
+//! ms = "V22B,1,0,0,0,0"
 //! es = "3,0,2"
-//! ds = "3,0,2048,6"
+//! ds = "3,0,2048,32"
 //! icf = "3,3"
+//! mr = false
+//! er = false
+//! dr = false
+//! ilrr = false
 //! s0 = 2
 //! s2 = 43
 //! ```
@@ -150,6 +154,10 @@ fn render(profiles: &BTreeMap<LineId, Profile>) -> String {
         table["es"] = value(profile.es.as_str());
         table["ds"] = value(profile.ds.as_str());
         table["icf"] = value(profile.icf.as_str());
+        table["mr"] = value(profile.mr);
+        table["er"] = value(profile.er);
+        table["dr"] = value(profile.dr);
+        table["ilrr"] = value(profile.ilrr);
         for (number, register) in profile.registers() {
             // S1 counts the rings of a call in progress; it is not kept.
             if number != 1 {
@@ -235,6 +243,10 @@ fn profile(item: &Item) -> Result<Profile, String> {
             "es" => profile.es = string()?,
             "ds" => profile.ds = string()?,
             "icf" => profile.icf = string()?,
+            "mr" => profile.mr = boolean()?,
+            "er" => profile.er = boolean()?,
+            "dr" => profile.dr = boolean()?,
+            "ilrr" => profile.ilrr = boolean()?,
             register => {
                 // `s0`, `s2` and so on: the registers a profile has, as
                 // the file spells them. S1 is not a setting.

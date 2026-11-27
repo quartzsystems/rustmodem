@@ -33,7 +33,8 @@ Options:
   --originate           the engine made the call
   --law ulaw|alaw       the law of the call; the capture's by default
   --modulations <list>  the modulations the modem may use, the first by
-                        choice: v21, bell103 or both with a comma
+                        choice: v22bis, v22, bell212a, v21 and bell103,
+                        with commas between; all of them by default
   --no-v8               the modem does not use V.8
   --expect <file>       compares what the engine does with the file, which
                         has what this program prints; lines that begin
@@ -83,15 +84,15 @@ fn asked(arguments: &[String]) -> Option<Asked> {
                 });
             }
             "--modulations" => {
-                let mut chosen = [None; 2];
-                let names: Vec<&str> = rest.next()?.split(',').collect();
-                if names.len() > chosen.len() || (names.len() == 2 && names[0] == names[1]) {
-                    return None;
+                let mut chosen = Vec::new();
+                for name in rest.next()?.split(',') {
+                    let named = modulation(name)?;
+                    if chosen.contains(&named) {
+                        return None;
+                    }
+                    chosen.push(named);
                 }
-                for (slot, name) in chosen.iter_mut().zip(names) {
-                    *slot = Some(modulation(name)?);
-                }
-                options.modem.modulations = chosen;
+                options.modem.modulations = engine::modulations(&chosen);
             }
             "--expect" => expect = Some(rest.next()?.clone()),
             "--tx-out" => tx_out = Some(rest.next()?.clone()),

@@ -1,6 +1,6 @@
-# +MS, +ES and +DS take set, read and test forms. +MS is read and is
-# reported in full; +ES and +DS are stored and have no effect yet. Extended
-# commands are separated by ; and a basic command may follow one.
+# +MS, +ES and +DS take set, read and test forms, and each is read and
+# reported in full. Extended commands are separated by ; and a basic
+# command may follow one.
 > ATE0\r
 < ATE0\r\r\nOK\r\n
 > AT+MS=B103,0,300,300,300,300\r
@@ -13,6 +13,6 @@
 > AT+ES?;+DS?\r
 < \r\n+ES: 3,0,2\r\n\r\n+DS: 3,0,2048,32\r\n\r\nOK\r\n
 > AT+MS=?;+ES=?;+DS=?\r
-< \r\n+MS: (V21,B103),(0,1),(0,300),(0,300),(0,300),(0,300)\r\n\r\n+ES: (0-4),(0-4),(0-6)\r\n\r\n+DS: (0-3),(0),(512-2048),(6-250)\r\n\r\nOK\r\n
+< \r\n+MS: (V21,V22,V22B,B103,B212A),(0,1),(0,300,1200,2400),(0,300,1200,2400),(0,300,1200,2400),(0,300,1200,2400)\r\n\r\n+ES: (0-3),(0-3),(0-5)\r\n\r\n+DS: (0-3),(0),(512-4096),(6-250)\r\n\r\nOK\r\n
 > AT&F+MS?\r
-< \r\n+MS: V21,1,0,0,0,0\r\n\r\nOK\r\n
+< \r\n+MS: V22B,1,0,0,0,0\r\n\r\nOK\r\n

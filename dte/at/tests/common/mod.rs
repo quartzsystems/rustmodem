@@ -18,7 +18,9 @@
 //! Events (`@`):
 //!
 //! ```text
-//! @ config unknown_command=error auto_answer_rings=2    first line only
+//! @ config unknown_command=error auto_answer_rings=2    first line only;
+//!                                also error_control=auto|required|off
+//!                                and compression=0|1, the line's policy
 //! @ stored E0S0=2                the modem starts with a stored profile:
 //!                                what these commands and &W would store;
 //!                                before anything is given to the modem
@@ -187,6 +189,15 @@ impl Runner {
                         }
                         Some(("auto_answer_rings", value)) => {
                             config.auto_answer_rings = number(value)?;
+                        }
+                        Some(("error_control", value)) => {
+                            config.error_control = engine::ErrorControl::ALL
+                                .into_iter()
+                                .find(|policy| policy.name() == value)
+                                .ok_or(format!("unknown policy: {value}"))?;
+                        }
+                        Some(("compression", value)) => {
+                            config.compression = number::<u8>(value)? != 0;
                         }
                         _ => return Err(format!("unknown setting: {word}")),
                     }

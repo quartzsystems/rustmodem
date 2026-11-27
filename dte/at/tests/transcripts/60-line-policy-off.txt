@@ -1,0 +1,11 @@
+@ config error_control=off compression=1
+# A line whose policy is no error control: the factory +ES is buffered
+# mode only, calling and answering.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> AT+ES?;+DS?\r
+< \r\n+ES: 1,0,1\r\n\r\n+DS: 3,0,2048,32\r\n\r\nOK\r\n
+> AT&Q5+ES?\r
+< \r\n+ES: 3,0,2\r\n\r\nOK\r\n
+> AT&F+ES?\r
+< \r\n+ES: 1,0,1\r\n\r\nOK\r\n

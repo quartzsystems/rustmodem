@@ -56,7 +56,10 @@ async fn a_line_takes_modem_settings_of_its_own_and_gives_them_up() {
     let mut client = fixture.connect().await;
     // A line that says nothing has the settings of `[modem]`.
     let line = client.line(1).await;
-    assert_eq!(line.modem.modulations, ["v21", "bell103"]);
+    assert_eq!(
+        line.modem.modulations,
+        ["v22bis", "v22", "bell212a", "v21", "bell103"]
+    );
     assert_eq!((line.modem.v8, line.modem.tx_level_dbm0), (true, -12));
     assert!(line.modem.own.is_empty());
 
@@ -98,7 +101,10 @@ async fn a_line_takes_modem_settings_of_its_own_and_gives_them_up() {
         ..LineModemSpec::default()
     });
     let edited: LineInfo = client.ok(Call::LinesEdit(level_only)).await;
-    assert_eq!(edited.modem.modulations, ["v21", "bell103"]);
+    assert_eq!(
+        edited.modem.modulations,
+        ["v22bis", "v22", "bell212a", "v21", "bell103"]
+    );
     assert_eq!((edited.modem.v8, edited.modem.tx_level_dbm0), (true, -9));
     assert_eq!(edited.modem.own, ["tx_level_dbm0"]);
     assert!(
@@ -123,7 +129,7 @@ async fn a_line_takes_modem_settings_of_its_own_and_gives_them_up() {
     // changed.
     for bad in [
         LineModemSpec {
-            modulations: Some(vec!["v22".to_string()]),
+            modulations: Some(vec!["v32".to_string()]),
             ..LineModemSpec::default()
         },
         LineModemSpec {
@@ -158,7 +164,10 @@ async fn the_modem_table_is_reported_and_changed_and_the_lines_follow() {
     let fixture = Fixture::new(2).await;
     let mut client = fixture.connect().await;
     let settings: Settings = client.ok(Call::ConfigGet).await;
-    assert_eq!(settings.modem.modulations, ["v21", "bell103"]);
+    assert_eq!(
+        settings.modem.modulations,
+        ["v22bis", "v22", "bell212a", "v21", "bell103"]
+    );
     assert_eq!(
         (
             settings.modem.v8,
@@ -375,15 +384,20 @@ async fn the_self_test_runs_two_modems_and_holds_their_lines_meanwhile() {
     let connect = result.connect.clone().unwrap();
     assert_eq!(
         (connect.rate, connect.carrier.as_deref()),
-        (300, Some("V.21"))
+        (2400, Some("V.22bis"))
     );
     assert_eq!(
         (result.octets, result.octets_a_to_b, result.octets_b_to_a),
         (65_536, 65_536, 65_536)
     );
-    // 64 KiB at thirty characters a second is more than half an hour of
-    // the call.
-    assert!(result.call_ms > 2_100_000, "{result:?}");
+    assert_eq!(connect.protocol.as_deref(), Some("LAPM"));
+    assert_eq!(connect.compression.as_deref(), Some("V.42bis"));
+    // 64 KiB at 2400 bit/s, with LAPM, is nearly four minutes of the
+    // call.
+    assert!(
+        result.call_ms > 220_000 && result.call_ms < 300_000,
+        "{result:?}"
+    );
     assert!(result.connect_ms.unwrap() < 10_000);
 
     watcher.line(1).await;

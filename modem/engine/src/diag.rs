@@ -6,16 +6,28 @@
 //! fixed size that the media thread can take every tick without
 //! allocating, and that the pool hands to whoever is watching the line.
 //!
-//! The snapshot is the same shape for every modulation. What a later one
-//! has that this phase's does not, constellation points and an equaliser's
-//! error, goes in the scope: the scope is a run of signed samples, and the
-//! snapshot says what they are samples of.
+//! The snapshot is the same shape for every modulation. The 300 bit/s
+//! modems fill the scope, which is a run of signed samples of their
+//! demodulator's output; the modems at 1200 and 2400 bit/s fill the
+//! constellation and the equaliser's figures, and what their data link
+//! counts.
+
+use crate::link::LinkStats;
 
 /// The samples of the scope a snapshot carries.
 pub const SCOPE_SAMPLES: usize = 64;
 
 /// The state changes a snapshot remembers.
 pub const STATE_HISTORY: usize = 8;
+
+/// The received points a snapshot carries: a little over a tenth of a
+/// second of them at 600 baud.
+pub const CONSTELLATION_POINTS: usize = 64;
+
+/// What a unit of the constellation's grid is in a point of a snapshot.
+/// The points of V.22bis are at 1 and 3 units each way (Figure 2/V.22
+/// bis), which is 30 and 90; a point further out than 127 is held there.
+pub const CONSTELLATION_UNIT: i8 = 30;
 
 /// What an engine is doing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -51,11 +63,17 @@ pub enum EngineState {
     Data = 11,
     /// The attempt failed, or the carrier was lost: sending nothing.
     Ended = 12,
+    /// The modems have connected at 1200 or 2400 bit/s and the data link
+    /// is being made: the detection phase of V.42, and the set-up of
+    /// LAPM.
+    Link = 13,
+    /// The modems are retraining: no data passes until they have.
+    Retrain = 14,
 }
 
 impl EngineState {
     /// Every state.
-    pub const ALL: [EngineState; 13] = [
+    pub const ALL: [EngineState; 15] = [
         EngineState::Idle,
         EngineState::AnswerSilence,
         EngineState::AnswerTone,
@@ -69,6 +87,8 @@ impl EngineState {
         EngineState::Training,
         EngineState::Data,
         EngineState::Ended,
+        EngineState::Link,
+        EngineState::Retrain,
     ];
 
     /// The name of the state, as the control API and the manager show it.
@@ -87,6 +107,8 @@ impl EngineState {
             EngineState::Training => "training",
             EngineState::Data => "data",
             EngineState::Ended => "ended",
+            EngineState::Link => "link",
+            EngineState::Retrain => "retrain",
         }
     }
 
@@ -139,9 +161,12 @@ pub struct Diagnostics {
     pub frequency_error_hz: f32,
     /// How good the received signal is, from 0 to 1. For the 300 bit/s
     /// modems it is the opening of the eye where the bits are sampled,
-    /// which on a clean line is about 0.7.
+    /// which on a clean line is about 0.7. For the others it is one less
+    /// the error of the decisions as a part of the distance to a wrong
+    /// one at 2400 bit/s, which on a clean line is about 0.9.
     pub quality: f32,
-    /// Characters lost to a wrong stop bit in this call.
+    /// Start-stop characters lost to a wrong stop element or a wrong
+    /// parity in this call.
     pub framing_errors: u32,
     /// Retrains in this call. The 300 bit/s modems have none.
     pub retrains: u32,
@@ -154,6 +179,26 @@ pub struct Diagnostics {
     pub scope_kind: ScopeKind,
     /// The scope: the most recent samples, the oldest first.
     pub scope: [i8; SCOPE_SAMPLES],
+    /// The signal-to-noise ratio of the decisions at 1200 and 2400 bit/s,
+    /// in decibels; 0 when there is none to give.
+    pub snr_db: f32,
+    /// The mean-squared error of the equaliser's output against the
+    /// decisions, for a constellation of mean power one.
+    pub equalizer_mse: f32,
+    /// The far end's symbol clock against this end's, in parts in a
+    /// million.
+    pub timing_offset_ppm: f32,
+    /// The bits a symbol carries, which says what the ideal points are:
+    /// 2 for the four points of 1200 bit/s, 4 for the sixteen of 2400
+    /// bit/s, and 0 when there is no constellation.
+    pub constellation_bits: u8,
+    /// How many entries of `constellation` are meant.
+    pub constellation_len: u8,
+    /// The most recent received points, the oldest first, each its real
+    /// and its imaginary part in [`CONSTELLATION_UNIT`]s of the grid.
+    pub constellation: [[i8; 2]; CONSTELLATION_POINTS],
+    /// What the data link counts.
+    pub link: LinkStats,
 }
 
 impl Default for Diagnostics {
@@ -171,6 +216,13 @@ impl Default for Diagnostics {
             changes: 0,
             scope_kind: ScopeKind::None,
             scope: [0; SCOPE_SAMPLES],
+            snr_db: 0.0,
+            equalizer_mse: 0.0,
+            timing_offset_ppm: 0.0,
+            constellation_bits: 0,
+            constellation_len: 0,
+            constellation: [[0; 2]; CONSTELLATION_POINTS],
+            link: LinkStats::default(),
         }
     }
 }
@@ -179,5 +231,10 @@ impl Diagnostics {
     /// The changes of state that are meant, the oldest first.
     pub fn history(&self) -> &[StateChange] {
         &self.history[..usize::from(self.changes).min(STATE_HISTORY)]
+    }
+
+    /// The received points that are meant, the oldest first.
+    pub fn constellation(&self) -> &[[i8; 2]] {
+        &self.constellation[..usize::from(self.constellation_len).min(CONSTELLATION_POINTS)]
     }
 }

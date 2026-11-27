@@ -1,0 +1,48 @@
+# +DS selects the data compression (V.250 clause 6.6.1): the direction,
+# whether to disconnect if it is not agreed (this modem does not), the
+# dictionary and the string length.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> AT+DS?;+DS=?\r
+< \r\n+DS: 3,0,2048,32\r\n\r\n+DS: (0-3),(0),(512-4096),(6-250)\r\n\r\nOK\r\n
+> AT+DS=1,0,4096,250;+DS?\r
+< \r\n+DS: 1,0,4096,250\r\n\r\nOK\r\n
+> AT+DS=0;+DS?\r
+< \r\n+DS: 0,0,4096,250\r\n\r\nOK\r\n
+> AT+DS=3,,512;+DS?\r
+< \r\n+DS: 3,0,512,250\r\n\r\nOK\r\n
+> AT+DS=4\r
+< \r\nERROR\r\n
+> AT+DS=3,1\r
+< \r\nERROR\r\n
+> AT+DS=3,0,511\r
+< \r\nERROR\r\n
+> AT+DS=3,0,4097\r
+< \r\nERROR\r\n
+> AT+DS=3,0,512,5\r
+< \r\nERROR\r\n
+> AT+DS=3,0,512,251\r
+< \r\nERROR\r\n
+> AT+DS?\r
+< \r\n+DS: 3,0,512,250\r\n\r\nOK\r\n
+> AT+DS=;+DS?\r
+< \r\n+DS: 3,0,2048,32\r\n\r\nOK\r\n
+# %C, of modems before V.250: 0 none, 1 MNP 5, which this modem has not
+# got, 2 V.42bis, 3 either. S46: 136 is LAPM without compression and 138
+# with it.
+> AT%C0+DS?\r
+< \r\n+DS: 0,0,2048,32\r\n\r\nOK\r\n
+> AT%C3+DS?\r
+< \r\n+DS: 3,0,2048,32\r\n\r\nOK\r\n
+> AT%C1+DS?\r
+< \r\n+DS: 0,0,2048,32\r\n\r\nOK\r\n
+> AT%C2+DS?\r
+< \r\n+DS: 3,0,2048,32\r\n\r\nOK\r\n
+> AT%C4\r
+< \r\nERROR\r\n
+> ATS46=136+DS?\r
+< \r\n+DS: 0,0,2048,32\r\n\r\nOK\r\n
+> ATS46=138+DS?\r
+< \r\n+DS: 3,0,2048,32\r\n\r\nOK\r\n
+> ATS46=2\r
+< \r\nERROR\r\n

@@ -81,8 +81,8 @@ Which codes are used depends on `X`:
 | `X4` (default) | with rate | yes | yes | yes |
 
 "With rate" means `CONNECT <rate>` when the rate is known. A rate of 0 means
-it is not known, and the code is then plain `CONNECT`. The null engine of
-phase 0 always reports rate 0.
+it is not known, and the code is then plain `CONNECT`. The null engine
+always reports rate 0. The rate is the line's: 300, 1200 or 2400.
 
 With `V0` and `X1` or above, a connection at a known rate reports one of these
 numbers, which follow the common Hayes-compatible convention. Any other rate
@@ -101,7 +101,7 @@ reports 1.
 
 | Command | Behaviour | Clause |
 |---|---|---|
-| `B0`, `B1` | The carrier to use: V.21, Bell 103. They set the first subparameter of `+MS` and nothing else. Above 1 is an error. Default `B0` | |
+| `B0`, `B1` | The family of the carrier at 300 and 1200 bit/s: the ITU's, V.21 and V.22, or Bell's, 103 and 212A. They change the first subparameter of `+MS` to the carrier of the same rate in the other family, and nothing else. With `V22B`, `B0` changes nothing and `B1` makes it `B212A`. Above 1 is an error | |
 | `A` | Answer: go off hook and enter handshaking. `ERROR` if already off hook. Ends the line | 6.3.5 |
 | `D<string>` | Dial. See below. `ERROR` if already off hook. Ends the line | 6.3.1 |
 | `E0`, `E1` | Echo off, on. Default `E1` | 6.2.4 |
@@ -122,13 +122,17 @@ reports 1.
 | `&C0`, `&C1` | DCD always on; DCD follows the carrier. Default `&C1` | 6.2.8 |
 | `&D0`..`&D3` | What a DTR drop does. See below. Default `&D2` | 6.2.9 |
 | `&F`, `&F0` | Return every setting to the factory defaults. The stored profile is left as it is. Does not hang up; the rest of the line runs | 6.1.2 |
-| `&K0`, `&K3` | Flow control: none, RTS/CTS. Stored, no effect. Default `&K3`. Other values are an error | |
+| `&K0`, `&K3` | Flow control: none, RTS/CTS. With `&K3` CTS goes off while the modem holds data of the host's that the line has not taken, and on again when it has; with `&K0` CTS stays on. Either way the modem stops reading the port while it holds too much. Default `&K3`. Other values are an error; `&K4`, XON/XOFF, is not built | |
+| `&Q0`, `&Q5`, `&Q6` | The communications mode of modems before V.250: direct, error control, buffered. Each sets `+ES`. See "The older commands". `&Q1` to `&Q4`, the synchronous modes, are an error | |
 | `&V` | Print the settings, the registers and the extended parameters of the active profile, and then of the stored profile if there is one | |
 | `&W`, `&W0`, `&W1` | Store the active profile. There is one stored profile; `&W0` and `&W1` write the same one. See "Stored profiles" | |
 | `+MS` | Modulation selection. See "Modulation selection" | 6.4.1 |
-| `+ES` | Error control selection. Stored, no effect | 6.5.1 |
-| `+DS` | Data compression. Stored, no effect | 6.6.1 |
+| `+ES` | Error control selection. See "Error control and compression" | 6.5.1 |
+| `+DS` | Data compression. See "Error control and compression" | 6.6.1 |
 | `+ICF` | Character framing. See "Character framing" | 6.2.11 |
+| `+MR`, `+ER`, `+DR`, `+ILRR` | What is reported before `CONNECT`. See "Connection reports" | 6.4.3, 6.5.5, 6.6.2, 6.2.13 |
+| `\N0`..`\N5` | Error control, of modems before V.250. Each sets `+ES`. See "The older commands". Above 5 is an error | |
+| `%C0`..`%C3` | Compression, of the same modems. Each sets `+DS`. Above 3 is an error | |
 | anything else | `OK` or `ERROR`, as the line's `unknown_command` setting says | |
 
 A known command with a number outside its range is always an error, whatever
@@ -167,11 +171,12 @@ is off and the setting is not `&D0`, the modem does not auto-answer.
 
 ### Extended parameters
 
-`+MS`, `+ES`, `+DS` and `+ICF` each take three forms:
+`+MS`, `+ES`, `+DS`, `+ICF`, `+MR`, `+ER`, `+DR` and `+ILRR` each take
+three forms:
 
 | Form | Example | Effect |
 |---|---|---|
-| Set | `AT+ES=1,0,2` | Stores the value. Letters, digits, `,` and `.`, up to 64 characters. An empty value restores the default. `+MS` and `+ICF` are checked: see below |
+| Set | `AT+ES=3,2,4` | Sets the value. A subparameter left out stays as it is. An empty value restores the default. A value the modem has not got is `ERROR`, and the parameter stays as it was |
 | Read | `AT+MS?` | Prints `+MS: <value>` |
 | Test | `AT+MS=?` | Prints `+MS: <ranges>` |
 
@@ -179,14 +184,11 @@ The name alone, with no `=` or `?`, is an error.
 
 | Parameter | Default | Test form reports |
 |---|---|---|
-| `+MS` | `V21,1,0,0,0,0` | `(V21,B103),(0,1),(0,300),(0,300),(0,300),(0,300)` |
-| `+ES` | `3,0,2` | `(0-4),(0-4),(0-6)` |
-| `+DS` | `3,0,2048,6` | `(0-3),(0),(512-2048),(6-250)` |
+| `+MS` | `V22B,1,0,0,0,0` | `(V21,V22,V22B,B103,B212A),(0,1),(0,300,1200,2400),(0,300,1200,2400),(0,300,1200,2400),(0,300,1200,2400)` |
+| `+ES` | `3,0,2`, or what the line's `error_control` makes it | `(0-3),(0-3),(0-5)` |
+| `+DS` | `3,0,2048,32`, or `0,0,2048,32` on a line with `compression = false` | `(0-3),(0),(512-4096),(6-250)` |
 | `+ICF` | `3,3` | `(3,5),(0-3)` |
-
-There is no error control or compression yet. The values of `+ES` and
-`+DS` are stored and reported and nothing reads them; their defaults and
-ranges are placeholders for the phase that adds each.
+| `+MR`, `+ER`, `+DR`, `+ILRR` | `0` | `(0,1)` |
 
 ### Modulation selection
 
@@ -195,9 +197,9 @@ ranges are placeholders for the phase that adds each.
 
 | Subparameter | Values | Meaning |
 |---|---|---|
-| carrier | `V21`, `B103` | The modulation to try first: V.21, or Bell 103. Letters of either case |
+| carrier | `V21`, `V22`, `V22B`, `B103`, `B212A` | The modulation to try first: V.21, V.22, V.22bis, Bell 103 or Bell 212A. Letters of either case |
 | automode | `0`, `1` | With 1 the modem may use the line's other modulations too, and V.8; with 0 it uses this carrier and nothing else, and no V.8 |
-| the four rates | `0`, `300` | 0 is no limit. There is one rate, so they change nothing |
+| the four rates | `0`, `300`, `1200`, `2400` | 0 is no limit. With automode, a modulation whose rate is under a minimum or over a maximum is not used: `AT+MS=V22B,1,0,1200` keeps the call to 1200 bit/s and under. The modems are the same rate both ways, so the stricter of the two pairs is what counts. Without automode the carrier is used whatever the rates say |
 
 A subparameter left out stays as it is: `AT+MS=,0` turns automode off and
 leaves the carrier. The value is reported whole, `+MS: B103,0,0,0,0,0`. A
@@ -209,9 +211,118 @@ stays as it was.
 does not allow is not the host's to choose: the configuration's list is
 used as it is.
 
-Bell 103 is `B103` here because V.250 keeps the names that begin with `V`
-for ITU-T modulations (Table 13); the `CONNECT` report and the control API
-call it `BELL103`.
+The Bell modems are `B103` and `B212A` here because V.250 keeps the names
+that begin with `V` for ITU-T modulations (Table 13); the control API
+calls them `BELL103` and `BELL212A`.
+
+V.22bis, V.22 and Bell 212A are one kind of modem, and an answering line
+that is allowed any of them answers a caller of any of them it is allowed:
+the order among the three changes nothing but what a connection at 1200
+bit/s is called. `docs/MODEM.md` has how a call chooses its modulation.
+
+### Error control and compression
+
+`+ES=<orig_rqst>,<orig_fbk>,<ans_fbk>` (V.250 clause 6.5.1, Table 20) says
+what error control a call has on a modulation that can have it, which is
+every one but V.21 and Bell 103.
+
+| Subparameter | Values | Meaning |
+|---|---|---|
+| orig_rqst | `0`, `1` | Originating: no error control. Direct mode and buffered mode are the same here: the port has no rate to change |
+| | `2` | Originating: V.42 without the detection phase |
+| | `3` | Originating: V.42 with the detection phase |
+| orig_fbk | `0`, `1` | If the answerer has no error control, go on without |
+| | `2`, `3` | If it has none, clear the call. The host gets `NO CARRIER` |
+| ans_fbk | `0`, `1` | Answering: no error control |
+| | `2`, `3` | Answering: error control if the caller has it |
+| | `4`, `5` | Answering: error control or clear the call |
+
+The values that ask for the alternative protocol of V.42 Annex A (MNP),
+`orig_rqst` 4, `orig_fbk` 4 and `ans_fbk` 6, are `ERROR`: the modem has
+LAPM and nothing else. So is the synchronous access mode, `orig_rqst` 6.
+
+`+DS=<direction>,<compression_negotiation>,<max_dict>,<max_string>` (V.250
+clause 6.6.1, Table 27) says what V.42bis compression a call with error
+control asks for and agrees to.
+
+| Subparameter | Values | Meaning |
+|---|---|---|
+| direction | `0` | None |
+| | `1`, `2`, `3` | What the host sends, what it receives, both |
+| compression_negotiation | `0` | The call goes on if compression is not agreed. 1, clear the call, is `ERROR` |
+| max_dict | `512` to `4096` | The most codewords to agree to |
+| max_string | `6` to `250` | The longest string to agree to |
+
+The factory values are the line's policy: `error_control` and `compression`
+in `[modem]` or the line's own (`docs/MODEM.md`).
+
+| `error_control` | `+ES` |
+|---|---|
+| `auto` | `3,0,2` |
+| `required` | `3,2,4` |
+| `off` | `1,0,1` |
+
+With `compression = false` the direction of `+DS` is 0. The dictionary of
+2048 and the string length of 32 are this modem's choice; V.250 leaves the
+first to the manufacturer and recommends 6 for the second, which gives up
+most of what compression is for. What the host sets is what the next call
+uses, and `&F` returns to the line's.
+
+### The older commands
+
+Hosts send the commands that modems had for error control and compression
+before V.250, and the standard modem drivers of Windows do. Each sets the
+`+ES` or the `+DS` that it is, and that is all it does: `AT\N3` and
+`AT+ES=3,0,2` leave the modem the same.
+
+| Command | Meaning where it comes from | Sets |
+|---|---|---|
+| `\N0` | Normal mode: buffered, no error control | `+ES=1,0,1` |
+| `\N1` | Direct mode | `+ES=0,0,0` |
+| `\N2` | Reliable mode: error control or no call | `+ES=3,2,4` |
+| `\N3` | Auto-reliable: error control if the far end has it | `+ES=3,0,2` |
+| `\N4` | LAPM or no call | `+ES=3,3,5` |
+| `\N5` | MNP or no call. There is no MNP: error control or no call | `+ES=3,2,4` |
+| `&Q0` | Direct asynchronous mode | `+ES=0,0,0` |
+| `&Q5` | Error control | `+ES=3,0,2` |
+| `&Q6` | Asynchronous mode with buffering | `+ES=1,0,1` |
+| `%C0` | No compression | direction 0 of `+DS` |
+| `%C1` | MNP 5. There is none: no compression | direction 0 of `+DS` |
+| `%C2`, `%C3` | V.42bis; either | direction 3 of `+DS` |
+| `S36=0`, `4` | If error control is not agreed, hang up | `orig_fbk` 2, and `ans_fbk` 4 unless it is 0 or 1 |
+| `S36=1`, `3`, `5`, `7` | If it is not agreed, go on without | `orig_fbk` 0, and `ans_fbk` 2 unless it is 0 or 1 |
+| `S46=136` | LAPM without compression | direction 0 of `+DS` |
+| `S46=138` | LAPM with compression | direction 3 of `+DS` |
+| `S48=7` | Negotiate error control | `orig_rqst` 3 if it was 2 |
+| `S48=0` | Go to LAPM without negotiating | `orig_rqst` 2 if it was 3 |
+| `S48=128` | Do not negotiate: no error control | `orig_rqst` 1 and `ans_fbk` 1 |
+
+The three registers keep the value written and report it; any other value
+is `ERROR`. The last command given wins: `AT\N0S36=7` has no error
+control, because S36 leaves an `+ES` that has it off as it is, and
+`ATS48=128&Q5` has it.
+
+### Connection reports
+
+`+MR=1`, `+ER=1`, `+DR=1` and `+ILRR=1` each ask for a report when a call
+connects, before its `CONNECT` and in this order:
+
+| Parameter | Report | Values |
+|---|---|---|
+| `+MR` | `+MCR: <carrier>` and then `+MRR: <rate>` | The carrier as `+MS` spells it; the line rate in bit/s |
+| `+ER` | `+ER: <type>` | `LAPM`, `NONE` |
+| `+DR` | `+DR: <type>` | `V42B` for both directions, `V42B TD` for what the host sends only, `V42B RD` for what it receives only, `NONE` |
+| `+ILRR` | `+ILRR: <rate>` | The line rate in bit/s |
+
+`+ILRR` is the rate between the host and the modem in V.250. Here the port
+is no wire and has no rate of its own: the modem takes and gives data as
+fast as the line carries it, so the line rate is what is reported.
+
+The reports are intermediate result codes. With `V1` each is
+`<S3><S4>text<S3><S4>`; with `V0` each is `text<S3><S4>`; with `Q1` there
+are none. `O` reports `CONNECT` and no more.
+
+`CONNECT <rate>` is always the line rate: 300, 1200 or 2400.
 
 ### Character framing
 
@@ -252,7 +363,7 @@ With `ok`, the command is skipped and the line carries on. How much is skipped:
 |---|---|
 | A letter | The letter, a number, then `?` or `=` and digits and commas |
 | `&` | `&`, one more character, then the same |
-| `\`, `%`, `*`, `-`, `$`, `^`, `)`, `:`, `@` | That character, one more character, then the same |
+| `\`, `%`, `*`, `-`, `$`, `^`, `)`, `:`, `@` | That character, one more character, then the same. `\N` and `%C` are not unknown |
 | `#` | `#`, a whole word of letters, then the same |
 | `+` | Everything up to the next `;` |
 
@@ -262,8 +373,8 @@ A register that the interpreter does not have is treated the same way: with
 ## Stored profiles
 
 A profile is every setting the commands above change (`E`, `Q`, `V`, `X`,
-`L`, `M`, `&C`, `&D`, `&K`, `+MS`, `+ES`, `+DS`, `+ICF`) and every
-S-register.
+`L`, `M`, `&C`, `&D`, `&K`, `+MS`, `+ES`, `+DS`, `+ICF`, `+MR`, `+ER`,
+`+DR`, `+ILRR`) and every S-register.
 Each line has an active profile, which the commands change, and may have a
 stored one.
 
@@ -307,6 +418,9 @@ added later under the same id starts from the factory defaults.
 | S9 | 6 | Carrier response time, tenths of a second: how long the far end's carrier must be there before the modem connects. It is not in V.250; it is the register Hayes modems have |
 | S10 | 14 | Carrier loss delay, tenths of a second: how long the carrier may be gone before the modem ends the call (V.250 clause 6.3.12). 255 is 25.5 seconds here; the Recommendation has it mean that the carrier is never taken to be lost |
 | S12 | 50 | Escape guard time, units of 20 ms |
+| S36 | 7 | What follows a failure to agree on error control. See "The older commands". 0, 1, 3, 4, 5 or 7 |
+| S46 | 138 | Error control with compression, 138, or without, 136 |
+| S48 | 7 | Whether error control is negotiated: 7, 0 or 128 |
 
 S7 runs from the `A` or `D` command. When it expires the modem hangs up and
 reports `NO ANSWER` if it was dialling, or `NO CARRIER` if it was answering.

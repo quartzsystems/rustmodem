@@ -17,14 +17,16 @@
 //! and check that it comes back as it went. A third run the null engine,
 //! and so do their peers: data goes both ways between each peer and the
 //! host on the line's port, and every octet is checked as it arrives. The
-//! last third run the modem, and so do their peers: the two connect at
-//! 300 bit/s and carry data the same way, as fast as that goes. At the
-//! end nothing may have been lost, resynchronised or slipped on any call,
-//! the data must be whole, and every call must end cleanly when its peer
-//! hangs up.
+//! last third run the modem, and so do their peers. Half of those are the
+//! 300 bit/s modem, and connect by V.21; the other half are the modem as
+//! it comes, and connect at 2400 bit/s by V.22bis with LAPM and V.42bis.
+//! Both carry data the same way, as fast as each goes. At the end nothing
+//! may have been lost, resynchronised or slipped on any call, the data
+//! must be whole, and every call must end cleanly when its peer hangs up.
 //!
-//! The time the modem's ticks take is printed beside the others', and its
-//! 99th percentile is held under a millisecond.
+//! The time the modems' ticks take is printed beside the others', for
+//! each of the two kinds, and its 99th percentile is held under a
+//! millisecond.
 
 mod support;
 
@@ -59,6 +61,11 @@ const NULL_RATE: u64 = 2000;
 /// thirty characters a second, and this leaves it room.
 const MODEM_RATE: u64 = 25;
 
+/// Data octets a second, each way, on a call between modems at 2400 bit/s
+/// with LAPM: the line carries a little under 300, and this leaves it
+/// room. The data does not compress.
+const FAST_MODEM_RATE: u64 = 200;
+
 /// The longest the 99th percentile of a modem's tick times may be, in
 /// microseconds.
 const MODEM_TICK_P99_US: u32 = 1000;
@@ -88,6 +95,13 @@ fn kind(line: u16) -> Kind {
     }
 }
 
+/// Whether a line's modem, and its peer's, is the modem as it comes, which
+/// connects at 2400 bit/s with LAPM and V.42bis: every other modem line.
+/// The rest are the 300 bit/s modem.
+fn fast(line: u16) -> bool {
+    kind(line) == Kind::Modem && line.is_multiple_of(6)
+}
+
 /// Whether a line runs the echo engine.
 fn echoes(line: u16) -> bool {
     kind(line) == Kind::Echo
@@ -98,6 +112,7 @@ fn rate(line: u16) -> u64 {
     match kind(line) {
         Kind::Echo => 0,
         Kind::Null => NULL_RATE,
+        Kind::Modem if fast(line) => FAST_MODEM_RATE,
         Kind::Modem => MODEM_RATE,
     }
 }
@@ -243,10 +258,11 @@ fn far_end(service: SocketAddrV4, shared: &Shared) -> Vec<Outcome> {
                 media: match kind(line) {
                     Kind::Echo => MediaKind::Pattern,
                     Kind::Null => MediaKind::Null,
-                    Kind::Modem => MediaKind::Modem {
-                        modulations: [Some(engine::Standard::V21), Some(engine::Standard::Bell103)],
-                        v8: true,
-                    },
+                    Kind::Modem if fast(line) => MediaKind::modem(&engine::Modulation::ALL, true),
+                    Kind::Modem => MediaKind::modem(
+                        &[engine::Modulation::V21, engine::Modulation::Bell103],
+                        true,
+                    ),
                 },
                 seed: 0x50AC + u64::from(line),
                 ..AgentConfig::new(&format!("caller{line}"), loopback())
@@ -543,6 +559,7 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
     let seconds = held.as_secs();
     let mut slowest = (0u32, 0u32, 0u32);
     let mut modems = (0u32, 0u32, 0u32);
+    let mut fast_modems = (0u32, 0u32, 0u32);
     let mut overruns = 0;
     for (line, stats) in &worst {
         overruns += stats.overruns;
@@ -564,7 +581,11 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
                 stats.tick_p99_us < MODEM_TICK_P99_US,
                 "line {line}: {stats:?}"
             );
-            &mut modems
+            if fast(*line) {
+                &mut fast_modems
+            } else {
+                &mut modems
+            }
         } else {
             &mut slowest
         };
@@ -577,7 +598,8 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
     println!(
         "soak: {LINES} calls for {seconds} s; of the lines' tick times the greatest median was \
          {} us, the greatest 99th percentile {} us and the longest tick {} us with the echo and \
-         null engines, and {} us, {} us and {} us with the modem; {overruns} ticks overran their \
+         null engines, {} us, {} us and {} us with the modem at 300 bit/s, and {} us, {} us and \
+         {} us with it at 2400 bit/s with LAPM and V.42bis; {overruns} ticks overran their \
          packet; {} wakes of the pool were refused",
         slowest.0,
         slowest.1,
@@ -585,6 +607,9 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
         modems.0,
         modems.1,
         modems.2,
+        fast_modems.0,
+        fast_modems.1,
+        fast_modems.2,
         wakes_refused.load(Ordering::Relaxed)
     );
 

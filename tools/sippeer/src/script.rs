@@ -34,11 +34,15 @@ Settings, before listen:
   media pattern                    a pattern checked against its echo,
   media file <path>                the G.711 octets of a file, or
   media null                       the null engine, for a data call
-  media modem [v21] [bell103] [no-v8]
+  media modem [v22bis] [v22] [bell212a] [v21] [bell103] [no-v8]
+              [ec=auto|required|off] [no-compression]
                                    the modem, for a data call with a line
                                    that has the modem engine: with the
                                    modulations named, the first by choice,
-                                   or both; with V.8 unless no-v8
+                                   or all of them; with V.8 unless no-v8;
+                                   with error control if the line has it
+                                   unless ec says otherwise; and with
+                                   V.42bis unless no-compression
   impair [loss=<n>] [duplicate=<n>] [reorder=<n>] [jitter=<ms>] [ppm=<n>]
                                    faults in what is sent: packets in a
                                    thousand lost, sent twice and held back,
@@ -52,12 +56,12 @@ Then:
   registrar reject <status>
   registrar silent
   call <uri> <address>:<port>      sends an INVITE with an offer
-  call <uri> <address>:<port> as modem originate [v21] [bell103] [no-v8]
+  call <uri> <address>:<port> as modem originate [<as media modem>]
                                    the same, and the call's media is the
                                    modem, as `media modem` has it
   ring                             180 to their INVITE
   answer                           200 with an answer; the media begins
-  answer as modem answer [v21] [bell103] [no-v8]
+  answer as modem answer [<as media modem>]
                                    the same, with the modem as its media
   reject <status>                  refuses their INVITE
   cancel                           cancels our INVITE
@@ -318,31 +322,46 @@ fn step(line: &str) -> Result<Step, String> {
 }
 
 /// The modem a `media modem` or an `as modem` asks for: the modulations
-/// named, the first by choice, or both; with V.8 unless `no-v8`.
+/// named, the first by choice, or all of them; with V.8 unless `no-v8`;
+/// with the error control `ec=` says, or what the far end has; and with
+/// compression unless `no-compression`.
 fn modem_media(words: &[&str]) -> Result<MediaKind, String> {
-    let mut modulations = [None; 2];
-    let mut count = 0;
+    let mut chosen: Vec<engine::Modulation> = Vec::new();
     let mut v8 = true;
+    let mut error_control = engine::ErrorControl::Auto;
+    let mut compression = true;
     for word in words {
-        let standard = match *word {
-            "v21" => engine::Standard::V21,
-            "bell103" => engine::Standard::Bell103,
-            "no-v8" => {
-                v8 = false;
-                continue;
+        if let Some(modulation) = engine::Modulation::from_name(word) {
+            if chosen.contains(&modulation) {
+                return Err(format!("{word} is there twice"));
             }
-            other => return Err(format!("{other} is not v21, bell103 or no-v8")),
-        };
-        if count == modulations.len() || modulations.contains(&Some(standard)) {
-            return Err(format!("{word} is there twice"));
+            chosen.push(modulation);
+        } else if *word == "no-v8" {
+            v8 = false;
+        } else if *word == "no-compression" {
+            compression = false;
+        } else if let Some(policy) = word.strip_prefix("ec=") {
+            error_control = engine::ErrorControl::ALL
+                .into_iter()
+                .find(|known| known.name() == policy)
+                .ok_or(format!("{policy} is not auto, required or off"))?;
+        } else {
+            return Err(format!(
+                "{word} is not a modulation, no-v8, no-compression or ec=<policy>"
+            ));
         }
-        modulations[count] = Some(standard);
-        count += 1;
     }
-    if count == 0 {
-        modulations = [Some(engine::Standard::V21), Some(engine::Standard::Bell103)];
-    }
-    Ok(MediaKind::Modem { modulations, v8 })
+    let modulations = if chosen.is_empty() {
+        engine::Modulation::ALL.map(Some)
+    } else {
+        engine::modulations(&chosen)
+    };
+    Ok(MediaKind::Modem {
+        modulations,
+        v8,
+        error_control,
+        compression,
+    })
 }
 
 /// Reads a script: its steps, each with the number of its line.

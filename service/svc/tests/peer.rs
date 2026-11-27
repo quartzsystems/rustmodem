@@ -414,11 +414,13 @@ fn the_peer_carries_data_as_a_null_engine_far_end() {
     assert!(report.is_clean(), "{report:?}");
 }
 
-/// The modem as the peer runs it by default: both modulations, with V.8.
-const BOTH_WITH_V8: MediaKind = MediaKind::Modem {
-    modulations: [Some(engine::Standard::V21), Some(engine::Standard::Bell103)],
-    v8: true,
-};
+/// The 300 bit/s modem as a peer: both modulations, with V.8.
+fn both_with_v8() -> MediaKind {
+    MediaKind::modem(
+        &[engine::Modulation::V21, engine::Modulation::Bell103],
+        true,
+    )
+}
 
 /// How many octets of `sent` are in `got` in their order: the length of
 /// the longest sequence that is in both.
@@ -451,16 +453,28 @@ struct ModemCall {
 }
 
 fn modem_call(impairments: Impairments, octets: usize) -> ModemCall {
-    modem_call_of(BOTH_WITH_V8, impairments, octets, "V.21")
+    modem_call_of(both_with_v8(), impairments, octets, "V.21")
 }
 
-/// The same with the peer's modem as `media` says, connecting with
-/// `carrier`.
+/// The same with the peer's modem as `media` says, connecting at 300
+/// bit/s with `carrier`.
 fn modem_call_of(
     media: MediaKind,
     impairments: Impairments,
     octets: usize,
     carrier: &str,
+) -> ModemCall {
+    modem_call_at(media, impairments, octets, (300, carrier), 30)
+}
+
+/// The same connecting at a rate with a carrier, and carrying so many
+/// octets a second.
+fn modem_call_at(
+    media: MediaKind,
+    impairments: Impairments,
+    octets: usize,
+    (rate, carrier): (u32, &str),
+    octets_a_second: u64,
 ) -> ModemCall {
     let mut bench = Bench::new("modem", 20, peer(media, 20, impairments));
     let uri = format!("sip:5551000@{}", bench.sip);
@@ -476,13 +490,16 @@ fn modem_call_of(
                 }
             }
         }
-        peer_connected.is_some() && bench.seen.ends_with(b"CONNECT 300\r\n")
+        peer_connected.is_some()
+            && bench
+                .seen
+                .ends_with(format!("CONNECT {rate}\r\n").as_bytes())
     });
-    assert_eq!(peer_connected, Some((300, Some(carrier.to_string()))));
+    assert_eq!(peer_connected, Some((rate, Some(carrier.to_string()))));
     let connect = bench.pool.line(1).unwrap().call.unwrap().connect.unwrap();
     assert_eq!(
         (connect.rate, connect.carrier.as_deref()),
-        (300, Some(carrier))
+        (rate, Some(carrier))
     );
     bench.seen.clear();
 
@@ -495,8 +512,8 @@ fn modem_call_of(
     bench.host().write(&up);
     let mut sent = 0;
     let mut got = Vec::new();
-    // Thirty characters a second, and some seconds for the last of them.
-    let length = Duration::from_millis(octets as u64 * 1000 / 30 + 3000);
+    // So many octets a second, and some seconds for the last of them.
+    let length = Duration::from_millis(octets as u64 * 1000 / octets_a_second + 3000);
     let until = Instant::now() + length;
     while Instant::now() < until {
         bench.turn();
@@ -579,6 +596,51 @@ fn a_modem_line_holds_its_call_when_the_peer_loses_packets() {
     assert!(report.lost > 0, "{report:?}");
 }
 
+/// The peer's modem and the line's as they come: V.8 chooses V.22bis, the
+/// link is LAPM with V.42bis, and every octet arrives, both ways.
+#[test]
+fn a_modem_peer_and_a_modem_line_connect_at_2400_with_error_control() {
+    let media = MediaKind::modem(&engine::Modulation::ALL, true);
+    let call = modem_call_at(media, Impairments::default(), 4000, (2400, "V.22bis"), 200);
+    assert!(call.up.0 == call.up.1, "what the host wrote the peer read");
+    assert!(
+        call.down.0 == call.down.1,
+        "what the peer wrote the host read"
+    );
+    let info = call.bench.pool.line(1).unwrap().call.unwrap();
+    let connect = info.connect.unwrap();
+    assert_eq!(connect.protocol.as_deref(), Some("LAPM"));
+    assert_eq!(connect.compression.as_deref(), Some("V.42bis"));
+    let (report, _) = call.bench.finish();
+    assert!(report.is_clean(), "{report:?}");
+}
+
+/// One packet in a hundred of the peer's is lost, on a call at 2400 bit/s
+/// with LAPM. A lost packet is 20 ms of the line and the frame it falls
+/// in; LAPM has it sent again, and what each host is given is what the
+/// other sent, with nothing missing and nothing wrong. The call holds.
+#[test]
+fn a_call_with_error_control_loses_no_data_when_the_peer_loses_packets() {
+    let impairments = Impairments {
+        loss: 10,
+        ..Impairments::default()
+    };
+    let media = MediaKind::modem(&engine::Modulation::ALL, true);
+    // A minute of it, at a third of what a clean line carries.
+    let call = modem_call_at(media, impairments, 6000, (2400, "V.22bis"), 100);
+    let lost = call.bench.agent.report().unwrap().lost;
+    assert!(lost > 10, "the peer lost {lost} of its packets");
+    assert!(call.up.0 == call.up.1, "what the host wrote the peer read");
+    assert!(
+        call.down.0 == call.down.1,
+        "what the peer wrote the host read"
+    );
+    let stats = call.bench.pool.stats();
+    assert_eq!(stats.retrains, 0, "{stats:?}");
+    let (report, _) = call.bench.finish();
+    assert!(report.lost > 10, "{report:?}");
+}
+
 /// A short call from the peer's modem, as `media` has it, that the line
 /// answers: the data is whole both ways. Its capture is one of the corpus
 /// when `RM_CORPUS` says where to keep it.
@@ -597,26 +659,20 @@ fn corpus_call(name: &'static str, media: MediaKind, carrier: &str) {
 /// Both modems have V.8, and it chooses V.21.
 #[test]
 fn a_modem_line_answers_a_caller_with_v8() {
-    corpus_call("answer-v8-v21", BOTH_WITH_V8, "V.21");
+    corpus_call("answer-v8-v21", both_with_v8(), "V.21");
 }
 
 /// The caller has V.21 and no V.8: the line's V.8 comes to nothing and it
 /// offers V.21, which the caller takes.
 #[test]
 fn a_modem_line_answers_a_v21_caller_without_v8() {
-    let media = MediaKind::Modem {
-        modulations: [Some(engine::Standard::V21), None],
-        v8: false,
-    };
+    let media = MediaKind::modem(&[engine::Modulation::V21], false);
     corpus_call("answer-v21", media, "V.21");
 }
 
 /// The caller has Bell 103 and nothing else: the line falls back to it.
 #[test]
 fn a_modem_line_answers_a_bell_103_caller() {
-    let media = MediaKind::Modem {
-        modulations: [Some(engine::Standard::Bell103), None],
-        v8: false,
-    };
+    let media = MediaKind::modem(&[engine::Modulation::Bell103], false);
     corpus_call("answer-bell103", media, "BELL103");
 }

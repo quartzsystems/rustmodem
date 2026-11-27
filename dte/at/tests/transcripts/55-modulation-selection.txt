@@ -1,15 +1,24 @@
 # +MS selects the modulation (V.250 clause 6.4.1): a carrier, automode,
-# and four rates, each of which is 0 or 300. A subparameter left out
-# stays as it is. B0 and B1 set the carrier: V.21 and Bell 103. S9 is
-# the carrier response time and S10 the carrier loss time, in tenths of
-# a second.
+# and four rates, each of which is 0, 300, 1200 or 2400. A subparameter
+# left out stays as it is. B0 and B1 change the carrier to the one of
+# the same rate in the other family: the ITU's V.21 and V.22, and Bell's
+# 103 and 212A. S9 is the carrier response time and S10 the carrier loss
+# time, in tenths of a second.
 > ATE0\r
 < ATE0\r\r\nOK\r\n
 > AT+MS?\r
-< \r\n+MS: V21,1,0,0,0,0\r\n\r\nOK\r\n
+< \r\n+MS: V22B,1,0,0,0,0\r\n\r\nOK\r\n
 > AT+MS=?\r
-< \r\n+MS: (V21,B103),(0,1),(0,300),(0,300),(0,300),(0,300)\r\n\r\nOK\r\n
+< \r\n+MS: (V21,V22,V22B,B103,B212A),(0,1),(0,300,1200,2400),(0,300,1200,2400),(0,300,1200,2400),(0,300,1200,2400)\r\n\r\nOK\r\n
+# At 2400 bit/s there is V.22bis and nothing of Bell's: B0 leaves it,
+# and B1 asks for Bell 212A.
+> ATB0+MS?\r
+< \r\n+MS: V22B,1,0,0,0,0\r\n\r\nOK\r\n
 > ATB1+MS?\r
+< \r\n+MS: B212A,1,0,0,0,0\r\n\r\nOK\r\n
+> ATB0+MS?\r
+< \r\n+MS: V22,1,0,0,0,0\r\n\r\nOK\r\n
+> AT+MS=V21;B1+MS?\r
 < \r\n+MS: B103,1,0,0,0,0\r\n\r\nOK\r\n
 > AT+MS=,0;+MS?\r
 < \r\n+MS: B103,0,0,0,0,0\r\n\r\nOK\r\n
@@ -21,22 +30,24 @@
 < \r\nOK\r\n
 > AT+MS?\r
 < \r\n+MS: B103,1,300,300,0,0\r\n\r\nOK\r\n
+> AT+MS=v22b,1,0,1200;+MS?\r
+< \r\n+MS: V22B,1,0,1200,0,0\r\n\r\nOK\r\n
 # A carrier, an automode or a rate the modem has not got is an error,
 # and leaves +MS as it was.
 > AT+MS=V34\r
 < \r\nERROR\r\n
 > AT+MS=V21,2\r
 < \r\nERROR\r\n
-> AT+MS=V21,1,1200\r
+> AT+MS=V21,1,9600\r
 < \r\nERROR\r\n
 > AT+MS=V21,1,0,0,0,0,0\r
 < \r\nERROR\r\n
 > ATB2\r
 < \r\nERROR\r\n
 > AT+MS?\r
-< \r\n+MS: B103,1,300,300,0,0\r\n\r\nOK\r\n
+< \r\n+MS: V22B,1,0,1200,0,0\r\n\r\nOK\r\n
 > AT+MS=;+MS?\r
-< \r\n+MS: V21,1,0,0,0,0\r\n\r\nOK\r\n
+< \r\n+MS: V22B,1,0,0,0,0\r\n\r\nOK\r\n
 > ATS9?S10?\r
 < \r\n006\r\n\r\n014\r\n\r\nOK\r\n
 > ATS9=20S10=50S9?S10?\r

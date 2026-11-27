@@ -15,7 +15,10 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::{Duration, Instant};
 
-use engine::{Law, Modem, ModemConfig, ModemEngine, NullConfig, NullEngine, Standard};
+use engine::{
+    ErrorControl, Law, MODULATIONS, Modem, ModemConfig, ModemEngine, Modulation, NullConfig,
+    NullEngine,
+};
 use sdp::{AudioPrefs, Codec, LocalEndpoint, Negotiated, SessionDescription};
 
 use crate::media::{Impairments, MediaReport, MediaStream, Source};
@@ -38,12 +41,29 @@ pub enum MediaKind {
     /// A null engine: the far end of a line with the null engine.
     Null,
     /// The modem: the far end of a line with the modem engine. It may use
-    /// these modulations, the first by choice, and V.8 or not; the rest
-    /// of its settings are the modem's own defaults.
+    /// these modulations, the first by choice, and V.8 or not, with this
+    /// policy for error control and with compression or not; the rest of
+    /// its settings are the modem's own defaults.
     Modem {
-        modulations: [Option<Standard>; 2],
+        modulations: [Option<Modulation>; MODULATIONS],
         v8: bool,
+        error_control: ErrorControl,
+        compression: bool,
     },
+}
+
+impl MediaKind {
+    /// The modem with these modulations, the first by choice, with V.8
+    /// or not, and for the rest as it is by default: error control if the
+    /// far end has it, and compression.
+    pub fn modem(allowed: &[Modulation], v8: bool) -> MediaKind {
+        MediaKind::Modem {
+            modulations: engine::modulations(allowed),
+            v8,
+            error_control: ErrorControl::Auto,
+            compression: true,
+        }
+    }
 }
 
 /// How an agent is set up.
@@ -230,10 +250,17 @@ impl Agent {
                 }
                 Source::Engine(Box::new(engine))
             }
-            MediaKind::Modem { modulations, v8 } => {
+            MediaKind::Modem {
+                modulations,
+                v8,
+                error_control,
+                compression,
+            } => {
                 let mut engine = Modem::new(ModemConfig {
                     modulations: *modulations,
                     v8: *v8,
+                    error_control: *error_control,
+                    compression: *compression,
                     ..ModemConfig::default()
                 });
                 engine.set_law(match negotiated.codec {

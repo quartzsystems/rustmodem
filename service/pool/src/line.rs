@@ -120,6 +120,9 @@ pub(crate) struct Line {
     pub engine_modem: config::ModemConfig,
     /// The line's modem is in a self-test: the line takes no call.
     pub testing: bool,
+    /// The host is asked to stop sending: the line has not taken what it
+    /// sent.
+    pub flow_hold: bool,
     /// When the line's diagnostics were last published, on the pool's
     /// monotonic clock, and whether its call had a modem to show then.
     pub diag_sent: Option<(u64, bool)>,
@@ -127,8 +130,16 @@ pub(crate) struct Line {
 
 impl Line {
     /// A line that starts from its stored profile, if it has one.
-    pub fn new(config: LineConfig, engine: Box<dyn ModemEngine>, stored: Option<Profile>) -> Line {
-        let interpreter = AtInterpreter::with_profile(at_config(&config), stored);
+    /// `modem` is the `[modem]` table: the line's policy for error
+    /// control and compression, which is its own or that table's, is the
+    /// factory value of the host's `+ES` and `+DS`.
+    pub fn new(
+        config: LineConfig,
+        engine: Box<dyn ModemEngine>,
+        stored: Option<Profile>,
+        modem: &config::ModemConfig,
+    ) -> Line {
+        let interpreter = AtInterpreter::with_profile(at_config(&config, modem), stored);
         Line {
             config,
             interpreter,
@@ -151,6 +162,7 @@ impl Line {
             sip: false,
             engine_modem: config::ModemConfig::default(),
             testing: false,
+            flow_hold: false,
             diag_sent: None,
         }
     }
@@ -274,9 +286,13 @@ impl Line {
     }
 }
 
-/// The interpreter settings a line's configuration asks for.
-pub(crate) fn at_config(config: &LineConfig) -> AtConfig {
+/// The interpreter settings a line's configuration asks for, with the
+/// `[modem]` table for what the line does not say itself.
+pub(crate) fn at_config(config: &LineConfig, modem: &config::ModemConfig) -> AtConfig {
+    let modem = modem.for_line(&config.modem);
     AtConfig {
+        error_control: crate::error_control(modem.error_control),
+        compression: modem.compression,
         unknown_command: match config.unknown_command {
             UnknownCommand::Ok => at::UnknownCommand::Ok,
             UnknownCommand::Error => at::UnknownCommand::Error,
@@ -291,41 +307,50 @@ pub(crate) fn at_config(config: &LineConfig) -> AtConfig {
 }
 
 /// What a call that begins now asks of the line's engine: the host's S9
-/// and S10, and its `+MS`, within what the line's configuration allows.
+/// and S10, its `+MS` within what the line's configuration allows, and
+/// its `+ES` and `+DS`, of which the line's policy is the factory value.
+/// `originate` is whether the line makes the call or answers it: `+ES`
+/// has a mode for each.
 pub(crate) fn call_settings(
     profile: &Profile,
     modem: &config::ModemConfig,
+    originate: bool,
 ) -> engine::CallSettings {
-    let allowed: Vec<engine::Standard> = modem
+    let allowed: Vec<engine::Modulation> = modem
         .modulations
         .iter()
-        .map(|name| crate::standard(*name))
+        .map(|name| crate::modulation(*name))
         .collect();
     let selection = profile.modulation();
-    let preferred = match selection.carrier {
-        at::Carrier::V21 => engine::Standard::V21,
-        at::Carrier::Bell103 => engine::Standard::Bell103,
-    };
+    let preferred = selection.carrier.modulation();
     // The configuration says what the line may do. Within that the host
-    // says which carrier to try first and, with automode off, that no
-    // other is to be used and nothing negotiated. A carrier the line may
-    // not use is not the host's to choose.
-    let order: Vec<engine::Standard> = if !allowed.contains(&preferred) {
+    // says which carrier to try first, with automode which rates the
+    // others may be, and with automode off that no other is to be used
+    // and nothing negotiated. A carrier the line may not use is not the
+    // host's to choose, and rates that leave nothing are not either.
+    let order: Vec<engine::Modulation> = if !allowed.contains(&preferred) {
         allowed
     } else if selection.automode {
-        let others = allowed.iter().copied().filter(|s| *s != preferred);
-        std::iter::once(preferred).chain(others).collect()
+        let within: Vec<engine::Modulation> = allowed
+            .iter()
+            .copied()
+            .filter(|modulation| selection.allows(*modulation))
+            .collect();
+        if within.is_empty() {
+            vec![preferred]
+        } else if within.contains(&preferred) {
+            let others = within.iter().copied().filter(|m| *m != preferred);
+            std::iter::once(preferred).chain(others).collect()
+        } else {
+            within
+        }
     } else {
         vec![preferred]
     };
-    let mut modulations = [None; 2];
-    for (slot, standard) in modulations.iter_mut().zip(order) {
-        *slot = Some(standard);
-    }
     engine::CallSettings {
         carrier_response_ms: profile.carrier_response_ms(),
         carrier_loss_ms: profile.carrier_loss_ms(),
-        modulations: Some(modulations),
+        modulations: Some(engine::modulations(&order)),
         v8: if selection.automode {
             None
         } else {
@@ -336,5 +361,8 @@ pub(crate) fn call_settings(
             at::CharacterFormat::E71 => engine::Format::E71,
             at::CharacterFormat::O71 => engine::Format::O71,
         },
+        error_control: Some(profile.error_control(originate)),
+        compression: Some(profile.compression()),
+        detection: Some(profile.detection()),
     }
 }

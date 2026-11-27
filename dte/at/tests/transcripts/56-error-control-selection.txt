@@ -1,0 +1,79 @@
+# +ES selects the error control (V.250 clause 6.5.1): what an originating
+# modem asks for, what it does if there is none, and what an answering
+# modem does. The modes that ask for the alternative protocol of V.42
+# Annex A, which this modem has not got, are errors.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> AT+ES?;+ES=?\r
+< \r\n+ES: 3,0,2\r\n\r\n+ES: (0-3),(0-3),(0-5)\r\n\r\nOK\r\n
+> AT+ES=3,2,4;+ES?\r
+< \r\n+ES: 3,2,4\r\n\r\nOK\r\n
+# A subparameter left out stays as it is.
+> AT+ES=,,5;+ES?\r
+< \r\n+ES: 3,2,5\r\n\r\nOK\r\n
+> AT+ES=2;+ES?\r
+< \r\n+ES: 2,2,5\r\n\r\nOK\r\n
+> AT+ES=4\r
+< \r\nERROR\r\n
+> AT+ES=3,4\r
+< \r\nERROR\r\n
+> AT+ES=3,0,6\r
+< \r\nERROR\r\n
+> AT+ES=3,0,2,0\r
+< \r\nERROR\r\n
+> AT+ES=x\r
+< \r\nERROR\r\n
+> AT+ES?\r
+< \r\n+ES: 2,2,5\r\n\r\nOK\r\n
+# Set to nothing, it is the line's own again.
+> AT+ES=;+ES?\r
+< \r\n+ES: 3,0,2\r\n\r\nOK\r\n
+# The commands modems had for this before V.250, each the +ES it is.
+# \N: 0 normal, 1 direct, 2 reliable, 3 auto-reliable, 4 LAPM, 5 MNP.
+> AT\\N0+ES?\r
+< \r\n+ES: 1,0,1\r\n\r\nOK\r\n
+> AT\\N1+ES?\r
+< \r\n+ES: 0,0,0\r\n\r\nOK\r\n
+> AT\\N2+ES?\r
+< \r\n+ES: 3,2,4\r\n\r\nOK\r\n
+> AT\\N3+ES?\r
+< \r\n+ES: 3,0,2\r\n\r\nOK\r\n
+> AT\\N4+ES?\r
+< \r\n+ES: 3,3,5\r\n\r\nOK\r\n
+> AT\\N5+ES?\r
+< \r\n+ES: 3,2,4\r\n\r\nOK\r\n
+> AT\\N+ES?\r
+< \r\n+ES: 1,0,1\r\n\r\nOK\r\n
+> AT\\N6\r
+< \r\nERROR\r\n
+# &Q: 0 direct, 5 error control, 6 buffered. The synchronous modes are
+# errors.
+> AT&Q5+ES?\r
+< \r\n+ES: 3,0,2\r\n\r\nOK\r\n
+> AT&Q0+ES?\r
+< \r\n+ES: 0,0,0\r\n\r\nOK\r\n
+> AT&Q6+ES?\r
+< \r\n+ES: 1,0,1\r\n\r\nOK\r\n
+> AT&Q1\r
+< \r\nERROR\r\n
+# S36 is what follows a failure to agree on error control: 0 and 4 hang
+# up, the others go on without. S48 is whether it is negotiated: 7 with
+# the detection phase, 0 without it, 128 not at all.
+> AT&Q5S36=0+ES?\r
+< \r\n+ES: 3,2,4\r\n\r\nOK\r\n
+> ATS36=7+ES?\r
+< \r\n+ES: 3,0,2\r\n\r\nOK\r\n
+> ATS48=0+ES?\r
+< \r\n+ES: 2,0,2\r\n\r\nOK\r\n
+> ATS48=7+ES?\r
+< \r\n+ES: 3,0,2\r\n\r\nOK\r\n
+> ATS48=128+ES?\r
+< \r\n+ES: 1,0,1\r\n\r\nOK\r\n
+> ATS36?S48?\r
+< \r\n007\r\n\r\n128\r\n\r\nOK\r\n
+> ATS36=2\r
+< \r\nERROR\r\n
+> ATS48=1\r
+< \r\nERROR\r\n
+> AT&F+ES?;S36?S46?S48?\r
+< \r\n+ES: 3,0,2\r\n\r\n007\r\n\r\n138\r\n\r\n007\r\n\r\nOK\r\n

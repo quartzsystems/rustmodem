@@ -214,6 +214,9 @@ dependencies = [
  "proptest",
  "tones",
  "v14",
+ "v22",
+ "v42",
+ "v42bis",
  "v8",
 ]
 

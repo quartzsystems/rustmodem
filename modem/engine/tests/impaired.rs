@@ -10,7 +10,7 @@ mod common;
 
 use chansim::{ChannelConfig, Echo, Impairments, Noise, Packets, Side};
 use common::{Call, SECOND, connection, default_config, random_bytes};
-use engine::{CallSettings, EngineState, Law, ModemConfig, ModemEvent, Standard};
+use engine::{CallSettings, EngineState, Law, ModemConfig, ModemEvent, Modulation};
 
 const KIB_64: usize = 64 * 1024;
 
@@ -19,8 +19,8 @@ fn carry(name: &str, channel: &ChannelConfig, modem: ModemConfig) -> Call {
     let mut call = Call::place(modem, modem, channel, CallSettings::default());
     assert!(call.connect(40), "{name}: did not connect");
     let (a, b) = call.connections();
-    assert_eq!(a, Some(connection(Standard::V21)), "{name}");
-    assert_eq!(b, Some(connection(Standard::V21)), "{name}");
+    assert_eq!(a, Some(connection(Modulation::V21)), "{name}");
+    assert_eq!(b, Some(connection(Modulation::V21)), "{name}");
     let from_a = random_bytes(11, KIB_64);
     let from_b = random_bytes(12, KIB_64);
     let (at_a, at_b) = call.exchange(&from_a, &from_b);

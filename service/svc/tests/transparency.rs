@@ -402,17 +402,46 @@ fn a_call_whose_media_stops_is_cleared_by_the_timeout() {
     let _ = a.sip;
 }
 
+/// What a call between two modem lines is to connect as.
+#[derive(Clone, Copy)]
+struct Connection {
+    rate: u32,
+    carrier: &'static str,
+    protocol: Option<&'static str>,
+    compression: Option<&'static str>,
+}
+
+/// At 300 bit/s, on a carrier.
+const fn slow(carrier: &'static str) -> Connection {
+    Connection {
+        rate: 300,
+        carrier,
+        protocol: None,
+        compression: None,
+    }
+}
+
+/// With LAPM and V.42bis, at a rate and on a carrier.
+const fn corrected(rate: u32, carrier: &'static str) -> Connection {
+    Connection {
+        rate,
+        carrier,
+        protocol: Some("LAPM"),
+        compression: Some("V.42bis"),
+    }
+}
+
 /// Two lines with the modem engine, each in a service of its own, call
 /// each other over SIP and RTP on loopback, with the media on its threads:
-/// they connect at 300 bit/s with the carrier named, and what each host
-/// sends the other gets. `dial` is what a's host types before it dials.
+/// they connect as `connection` says, and what each host sends the other
+/// gets. `dial` is what a's host types before it dials.
 ///
 /// The data is 64 KiB each way, or as many kibibytes as `RM_MODEM_KIB`
-/// says. A character takes a thirtieth of a second, so that is more than
-/// half an hour of a call; but the two ends tick each other, with no clock
-/// between them, and the call runs as fast as the machine carries it,
-/// which is some seconds.
-fn modems_connect_and_carry_data(line_a: &str, line_b: &str, dial: &str, carrier: &str) {
+/// says. At 300 bit/s a character takes a thirtieth of a second, so that
+/// is more than half an hour of a call; but the two ends tick each other,
+/// with no clock between them, and the call runs as fast as the machine
+/// carries it, which is some seconds.
+fn modems_connect_and_carry_data(line_a: &str, line_b: &str, dial: &str, connection: Connection) {
     let size = std::env::var("RM_MODEM_KIB")
         .ok()
         .and_then(|kib| kib.parse::<usize>().ok())
@@ -432,16 +461,27 @@ fn modems_connect_and_carry_data(line_a: &str, line_b: &str, dial: &str, carrier
     pair.until("both are connected", |pair| {
         pair.a.state() == LineState::Online && pair.b.state() == LineState::Online
     });
+    let told = format!("\r\nCONNECT {}\r\n", connection.rate);
     pair.until("both hosts are told", |pair| {
-        pair.a.seen.ends_with(b"\r\n") && pair.b.seen.ends_with(b"300\r\n")
+        pair.a.seen.ends_with(told.as_bytes()) && pair.b.seen.ends_with(told.as_bytes())
     });
-    assert_eq!(pair.a.heard(), "\r\nCONNECT 300\r\n");
-    assert_eq!(pair.b.heard(), "\r\nRING\r\n\r\nCONNECT 300\r\n");
+    assert_eq!(pair.a.heard(), told);
+    assert_eq!(pair.b.heard(), format!("\r\nRING\r\n{told}"));
     for service in [&pair.a, &pair.b] {
         let connect = service.pool.line(1).unwrap().call.unwrap().connect.unwrap();
         assert_eq!(
-            (connect.rate, connect.carrier.as_deref(), connect.protocol),
-            (300, Some(carrier), None)
+            (
+                connect.rate,
+                connect.carrier.as_deref(),
+                connect.protocol.as_deref(),
+                connect.compression.as_deref()
+            ),
+            (
+                connection.rate,
+                Some(connection.carrier),
+                connection.protocol,
+                connection.compression
+            )
         );
     }
 
@@ -478,22 +518,52 @@ fn modems_connect_and_carry_data(line_a: &str, line_b: &str, dial: &str, carrier
 /// The settings of a line with the modem engine and nothing of its own.
 const MODEM: &str = "engine = \"modem\"";
 
-/// Both modems as they come: V.8 chooses V.21.
+/// A line whose modem is the 300 bit/s one.
+const SLOW: &str = "modem = { modulations = [\"v21\", \"bell103\"] }";
+
+/// Both modems as they come: V.8 chooses V.22bis, and the link is LAPM
+/// with V.42bis.
+#[test]
+fn two_modem_lines_connect_at_2400_with_error_control_and_carry_data_over_sip_and_rtp() {
+    modems_connect_and_carry_data(MODEM, MODEM, "", corrected(2400, "V.22bis"));
+}
+
+/// Neither modem has V.8: the answer sequence of V.22bis does it.
+#[test]
+fn two_modem_lines_connect_at_2400_without_v8_and_carry_data_over_sip_and_rtp() {
+    let line = "modem = { v8 = false }";
+    modems_connect_and_carry_data(line, line, "", corrected(2400, "V.22bis"));
+}
+
+/// The caller's host asks for V.22 and no error control, with `+MS` and
+/// the `\N0` hosts send: 1200 bit/s, and the characters as they are.
+#[test]
+fn two_modem_lines_connect_at_1200_without_error_control_and_carry_data_over_sip_and_rtp() {
+    let connection = Connection {
+        rate: 1200,
+        carrier: "V.22",
+        protocol: None,
+        compression: None,
+    };
+    modems_connect_and_carry_data(MODEM, MODEM, "+MS=V22,0;\\N0", connection);
+}
+
+/// Both modems are the 300 bit/s ones: V.8 chooses V.21.
 #[test]
 fn two_modem_lines_connect_with_v8_and_carry_data_over_sip_and_rtp() {
-    modems_connect_and_carry_data(MODEM, MODEM, "", "V.21");
+    modems_connect_and_carry_data(SLOW, SLOW, "", slow("V.21"));
 }
 
 /// Neither modem has V.8: the answerer's carrier says it is V.21.
 #[test]
 fn two_modem_lines_connect_without_v8_and_carry_data_over_sip_and_rtp() {
-    let line = "modem = { v8 = false }";
-    modems_connect_and_carry_data(line, line, "", "V.21");
+    let line = "modem = { modulations = [\"v21\", \"bell103\"], v8 = false }";
+    modems_connect_and_carry_data(line, line, "", slow("V.21"));
 }
 
 /// The caller's host asks for Bell 103 and nothing else with `+MS`, and
-/// the answerer, which has V.8 and both modulations, falls back to it.
+/// the answerer, which has V.8 and every modulation, falls back to it.
 #[test]
 fn two_modem_lines_connect_with_bell_103_and_carry_data_over_sip_and_rtp() {
-    modems_connect_and_carry_data(MODEM, MODEM, "+MS=B103,0", "BELL103");
+    modems_connect_and_carry_data(MODEM, MODEM, "+MS=B103,0", slow("BELL103"));
 }

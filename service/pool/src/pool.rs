@@ -37,6 +37,14 @@ const CHUNK: usize = 4096;
 /// than the other side takes.
 const HIGH_WATER: usize = 8192;
 
+/// How much of a host's data may wait for the line before the host is
+/// asked to stop, with CTS if it has `&K3`, and how little before it is
+/// asked to go on. With error control a line takes data only as fast as
+/// the far end acknowledges it, and a host that sends faster is held
+/// here: these are a second and a quarter of a second of 2400 bit/s.
+const FLOW_HOLD: usize = 256;
+const FLOW_RELEASE: usize = 64;
+
 /// How far behind its clock the pool may fall before it gives up catching
 /// up tick by tick, in milliseconds.
 const MAX_CATCH_UP_MS: u64 = 2000;
@@ -269,7 +277,8 @@ impl Pool {
                 return Err(message("RMD7002", &[&id.to_string(), state.as_str()]));
             }
             let modem = self.modem.for_line(&line.config.modem);
-            let call = call_settings(line.interpreter.profile(), &modem);
+            // The first line originates and the second answers.
+            let call = call_settings(line.interpreter.profile(), &modem, id == a);
             settings.push((crate::modem_config(&modem), call));
         }
         let (modem_b, call_b) = settings.pop().unwrap_or_default();
@@ -692,9 +701,10 @@ impl Pool {
             Some(engine) => engine,
             None => (self.engines)(&self.lines[index].config, &self.modem),
         };
-        // And with the host's settings as they are now: S9, S10 and +MS.
+        // And with the host's settings as they are now: S9, S10, +MS, +ES
+        // and +DS.
         let profile = self.lines[index].interpreter.profile();
-        engine.set_call(&call_settings(profile, &wanted));
+        engine.set_call(&call_settings(profile, &wanted, originate));
         match self.media.start(id, engine, endpoint, originate) {
             Ok(call) => {
                 call.set_capture(self.lines[index].capture);
@@ -765,8 +775,9 @@ impl Pool {
                     let id = self.lines[index].id();
                     // A modem that gave up before it connected says how
                     // far the handshake got: its last snapshot has it.
-                    let reached = shared
-                        .and_then(|shared| shared.diagnostics())
+                    let snapshot = shared.and_then(|shared| shared.diagnostics());
+                    let reached = snapshot
+                        .as_ref()
                         .filter(|_| !connected)
                         .and_then(|snapshot| {
                             let before = |change: &&engine::StateChange| {
@@ -786,6 +797,24 @@ impl Pool {
                             &message("RMD7001", &[&id.to_string(), state.name()]),
                         );
                     }
+                    // A data link that ended says how: the policy asked
+                    // for error control and the far end had none, or the
+                    // error-corrected connection ended under the call.
+                    let ended = snapshot.as_ref().map(|snapshot| snapshot.link.end);
+                    match ended {
+                        None | Some(engine::LinkEnd::None) => {}
+                        Some(engine::LinkEnd::Required) => {
+                            let source = self.lines[index].source();
+                            self.log_message(&source, &message("RMD8001", &[&id.to_string()]));
+                        }
+                        Some(end) => {
+                            let source = self.lines[index].source();
+                            self.log_message(
+                                &source,
+                                &message("RMD8002", &[&id.to_string(), end.name()]),
+                            );
+                        }
+                    }
                     self.step(index, Input::Event(LineEvent::CarrierLost));
                     self.end_call(index, EndReason::Remote);
                     self.router.hangup(self.now.mono_ms, id);
@@ -800,6 +829,11 @@ impl Pool {
     /// Ends the media of a line's call, if it has any, and takes the
     /// engine back from the runner.
     fn stop_engine(&mut self, index: usize) {
+        if std::mem::take(&mut self.lines[index].flow_hold) {
+            self.with_interpreter(index, |interpreter, out| {
+                interpreter.set_flow_hold(false, out)
+            });
+        }
         let line = &mut self.lines[index];
         line.to_line.clear();
         let Some(call) = line.media.take() else {
@@ -1089,6 +1123,20 @@ impl Pool {
             }
             line.to_line.drain(..taken);
         }
+        // The host is held off while the line has not taken what it
+        // sent, and let go when it has.
+        let waiting = line.to_line.len() + call.waiting();
+        if waiting >= FLOW_HOLD && !line.flow_hold {
+            line.flow_hold = true;
+            self.with_interpreter(index, |interpreter, out| {
+                interpreter.set_flow_hold(true, out)
+            });
+        } else if waiting <= FLOW_RELEASE && line.flow_hold {
+            line.flow_hold = false;
+            self.with_interpreter(index, |interpreter, out| {
+                interpreter.set_flow_hold(false, out)
+            });
+        }
         // Far end to host.
         let mut buffer = [0u8; CHUNK];
         for _ in 0..4 {
@@ -1335,6 +1383,12 @@ impl Pool {
     pub fn apply_config(&mut self, config: &Config) {
         self.router.configure(self.now.mono_ms, config);
         self.modem = config.modem.clone();
+        // A line's policy for error control and compression is its own
+        // or `[modem]`'s, and `[modem]` may be what changed.
+        for line in &mut self.lines {
+            let config = at_config(&line.config, &self.modem);
+            line.interpreter.set_config(config);
+        }
         self.media_prefs = config.sip.enabled.then(|| {
             let codec = config
                 .media
@@ -1369,7 +1423,7 @@ impl Pool {
                 None => {
                     let engine = (self.engines)(wanted, &self.modem);
                     let stored = self.profiles.load(wanted.id);
-                    let mut line = Line::new(wanted.clone(), engine, stored);
+                    let mut line = Line::new(wanted.clone(), engine, stored, &self.modem);
                     line.engine_modem = self.modem.for_line(&wanted.modem);
                     line.binding = self.binding_of(wanted);
                     let source = line.source();
@@ -1429,7 +1483,7 @@ impl Pool {
         let line = &mut self.lines[index];
         line.config = wanted.clone();
         line.binding = binding;
-        line.interpreter.set_config(at_config(wanted));
+        line.interpreter.set_config(at_config(wanted, &self.modem));
         line.retry_at_ms = 0;
         let source = line.source();
         self.log_message(&source, &message("RMD1012", &[&wanted.id.to_string()]));

@@ -282,9 +282,9 @@ mod tests {
             let number: u32 = entry.id[3..].parse().unwrap();
             // Service and configuration, lines and AT, the control API,
             // serial, from phase 1 the manager, from phase 2 telephony and
-            // media, and from phase 3 the modem.
+            // media, from phase 3 the modem, and from phase 4 the link.
             assert!(
-                (1..=7999).contains(&number),
+                (1..=8999).contains(&number),
                 "{} is outside the ranges in use",
                 entry.id
             );

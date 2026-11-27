@@ -11,21 +11,28 @@
 //! what the engine receives is whatever the test likes.
 
 use engine::{
-    CallSettings, EngineState, Law, Modem, ModemConfig, ModemEngine, ModemEvent, Standard,
+    CallSettings, EngineState, ErrorControl, GuardTone, Law, LinkStage, Modem, ModemConfig,
+    ModemEngine, ModemEvent, Modulation,
 };
 use proptest::prelude::*;
 
-fn modem(first: bool, second: bool, bell_first: bool, v8: bool) -> ModemConfig {
-    let (a, b) = if bell_first {
-        (Standard::Bell103, Standard::V21)
-    } else {
-        (Standard::V21, Standard::Bell103)
-    };
+/// A modem from five bits and a turn: the modulations that are allowed,
+/// in the default order turned so many places, and its policy.
+fn modem(allowed: u8, turn: usize, v8: bool, policy: u8, compression: bool) -> ModemConfig {
+    let mut modulations = [None; engine::MODULATIONS];
+    for (place, slot) in modulations.iter_mut().enumerate() {
+        let n = (place + turn) % engine::MODULATIONS;
+        *slot = (allowed >> n & 1 == 1).then_some(Modulation::ALL[n]);
+    }
+    let guards = [GuardTone::Off, GuardTone::Hz1800, GuardTone::Hz550];
     ModemConfig {
-        modulations: [first.then_some(a), second.then_some(b)],
+        modulations,
         v8,
         // A short fallback, so that the states after it are reached.
         fallback_ms: 800,
+        error_control: ErrorControl::ALL[usize::from(policy) % 3],
+        compression,
+        guard_tone: guards[usize::from(policy / 3) % 3],
         ..ModemConfig::default()
     }
 }
@@ -59,8 +66,10 @@ proptest! {
     #[test]
     fn nothing_received_in_any_state_breaks_the_engine(
         answers in any::<bool>(),
-        (first, second, bell_first, v8) in any::<(bool, bool, bool, bool)>(),
-        (far_first, far_second, far_v8) in any::<(bool, bool, bool)>(),
+        (allowed, turn, v8) in (0u8..32, 0usize..5, any::<bool>()),
+        (policy, compression) in (0u8..9, any::<bool>()),
+        (far_allowed, far_v8) in (0u8..32, any::<bool>()),
+        (far_policy, far_compression) in (0u8..9, any::<bool>()),
         alaw in any::<bool>(),
         frame_20ms in any::<bool>(),
         s9 in 1u32..30,
@@ -76,8 +85,8 @@ proptest! {
             carrier_loss_ms: s10 * 100,
             ..CallSettings::default()
         };
-        let mut under_test = Modem::new(modem(first, second, bell_first, v8));
-        let mut far = Modem::new(modem(far_first, far_second, false, far_v8));
+        let mut under_test = Modem::new(modem(allowed, turn, v8, policy, compression));
+        let mut far = Modem::new(modem(far_allowed, 0, far_v8, far_policy, far_compression));
         for engine in [&mut under_test, &mut far] {
             engine.set_law(law);
             engine.set_call(&settings);
@@ -117,15 +126,24 @@ proptest! {
                 match event {
                     ModemEvent::Connect(info) => {
                         connects.set(connects.get() + 1);
-                        assert_eq!(info.rate, 300);
-                        assert!(matches!(info.carrier.as_deref(), Some("V.21" | "BELL103")));
-                        assert_eq!(state, EngineState::Data);
+                        let modulation = Modulation::ALL
+                            .into_iter()
+                            .find(|m| Some(m.carrier_name()) == info.carrier.as_deref())
+                            .expect("a carrier the engine has");
+                        assert_eq!(info.rate, modulation.rate());
+                        assert!(matches!(info.protocol.as_deref(), None | Some("LAPM")));
+                        assert!(matches!(info.compression.as_deref(), None | Some("V.42bis")));
+                        // Compression is of what LAPM carries, and LAPM
+                        // is not on a 300 bit/s modem.
+                        assert!(info.compression.is_none() || info.protocol.is_some());
+                        assert!(info.protocol.is_none() || modulation.synchronous());
                     }
                     ModemEvent::CarrierLost => {
                         losses.set(losses.get() + 1);
                         assert_eq!(state, EngineState::Ended);
                     }
-                    other => panic!("an event the 300 bit/s modems do not have: {other:?}"),
+                    ModemEvent::Retrain => {}
+                    other => panic!("an event the engine does not have: {other:?}"),
                 }
             }
             let diagnostics = engine.diagnostics().unwrap();
@@ -134,6 +152,16 @@ proptest! {
             assert!(diagnostics.frequency_error_hz.abs() <= 150.0);
             assert!((0.0..=1.0).contains(&diagnostics.quality));
             assert!(!diagnostics.history().is_empty());
+            assert!(diagnostics.snr_db.is_finite());
+            assert!(diagnostics.equalizer_mse.is_finite() && diagnostics.equalizer_mse >= 0.0);
+            assert!(diagnostics.timing_offset_ppm.is_finite());
+            assert!(matches!(diagnostics.constellation_bits, 0 | 2 | 4));
+            assert!(diagnostics.constellation().len() <= engine::CONSTELLATION_POINTS);
+            let link = diagnostics.link;
+            assert!(link.window <= 15 && link.window_size <= 15);
+            if link.stage != LinkStage::Lapm {
+                assert_eq!(link.compression, (false, false));
+            }
             taken
         };
 
@@ -179,6 +207,10 @@ proptest! {
             }
         }
 
+        // The side of the host, of whatever link there is and of none.
+        let mut big = vec![0u8; 5000];
+        let read = under_test.dte_read(&mut big);
+        prop_assert!(read <= big.len());
         // A call connects once at the most and ends once at the most.
         prop_assert!(connects.get() <= 1 && losses.get() <= 1);
         // Stopped, it is as it was before the call.

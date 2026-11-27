@@ -97,6 +97,9 @@ dependencies = [
  "g711",
  "tones",
  "v14",
+ "v22",
+ "v42",
+ "v42bis",
  "v8",
 ]
 
@@ -129,6 +132,7 @@ dependencies = [
  "sip",
  "v22",
  "v42",
+ "v42bis",
  "v8",
 ]
 
@@ -263,6 +267,10 @@ version = "0.0.5"
 dependencies = [
  "v14",
 ]
+
+[[package]]
+name = "v42bis"
+version = "0.0.5"
 
 [[package]]
 name = "v8"

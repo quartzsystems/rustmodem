@@ -147,24 +147,45 @@ pub fn engine_for(line: &LineConfig, modem: &config::ModemConfig) -> Box<dyn Mod
 }
 
 /// A modulation of the configuration as the engine knows it.
-pub(crate) fn standard(name: config::ModulationName) -> engine::Standard {
+pub(crate) fn modulation(name: config::ModulationName) -> engine::Modulation {
     match name {
-        config::ModulationName::V21 => engine::Standard::V21,
-        config::ModulationName::Bell103 => engine::Standard::Bell103,
+        config::ModulationName::V22bis => engine::Modulation::V22bis,
+        config::ModulationName::V22 => engine::Modulation::V22,
+        config::ModulationName::Bell212A => engine::Modulation::Bell212A,
+        config::ModulationName::V21 => engine::Modulation::V21,
+        config::ModulationName::Bell103 => engine::Modulation::Bell103,
+    }
+}
+
+/// A policy for error control of the configuration as the engine knows
+/// it.
+pub(crate) fn error_control(name: config::ErrorControlName) -> engine::ErrorControl {
+    match name {
+        config::ErrorControlName::Auto => engine::ErrorControl::Auto,
+        config::ErrorControlName::Required => engine::ErrorControl::Required,
+        config::ErrorControlName::Off => engine::ErrorControl::Off,
     }
 }
 
 /// The modem settings of a line as the engine takes them.
 pub fn modem_config(settings: &config::ModemConfig) -> engine::ModemConfig {
-    let mut modulations = [None; 2];
-    for (slot, name) in modulations.iter_mut().zip(&settings.modulations) {
-        *slot = Some(standard(*name));
-    }
+    let allowed: Vec<engine::Modulation> = settings
+        .modulations
+        .iter()
+        .map(|name| modulation(*name))
+        .collect();
     engine::ModemConfig {
-        modulations,
+        modulations: engine::modulations(&allowed),
         v8: settings.v8,
         tx_level_dbm0: f32::from(settings.tx_level_dbm0),
         answer_delay_ms: settings.answer_delay_ms,
         fallback_ms: settings.fallback_ms,
+        error_control: error_control(settings.error_control),
+        compression: settings.compression,
+        guard_tone: match settings.guard_tone {
+            config::GuardToneName::Off => engine::GuardTone::Off,
+            config::GuardToneName::Hz1800 => engine::GuardTone::Hz1800,
+            config::GuardToneName::Hz550 => engine::GuardTone::Hz550,
+        },
     }
 }

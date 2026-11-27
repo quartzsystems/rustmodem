@@ -65,6 +65,9 @@ pub(crate) fn render(config: &Config) -> String {
         table["tx_level_dbm0"] = value(i64::from(modem.tx_level_dbm0));
         table["answer_delay_ms"] = value(i64::from(modem.answer_delay_ms));
         table["fallback_ms"] = value(i64::from(modem.fallback_ms));
+        table["error_control"] = value(modem.error_control.as_str());
+        table["compression"] = value(modem.compression);
+        table["guard_tone"] = value(modem.guard_tone.as_str());
         document["modem"] = Item::Table(table);
     }
 
@@ -103,6 +106,15 @@ pub(crate) fn line_modem_table(modem: &LineModem) -> InlineTable {
     }
     if let Some(level) = modem.tx_level_dbm0 {
         table.insert("tx_level_dbm0", i64::from(level).into());
+    }
+    if let Some(policy) = modem.error_control {
+        table.insert("error_control", policy.as_str().into());
+    }
+    if let Some(compression) = modem.compression {
+        table.insert("compression", compression.into());
+    }
+    if let Some(tone) = modem.guard_tone {
+        table.insert("guard_tone", tone.as_str().into());
     }
     table
 }
@@ -242,6 +254,15 @@ pub(crate) fn edit_line(document: &mut DocumentMut, index: usize, edit: &LineEdi
         }
         if let Some(level) = modem.tx_level_dbm0 {
             own.insert("tx_level_dbm0", level.into());
+        }
+        if let Some(policy) = &modem.error_control {
+            own.insert("error_control", policy.as_str().into());
+        }
+        if let Some(compression) = modem.compression {
+            own.insert("compression", compression.into());
+        }
+        if let Some(tone) = &modem.guard_tone {
+            own.insert("guard_tone", tone.as_str().into());
         }
         if !own.is_empty() {
             table["modem"] = value(own);
@@ -439,6 +460,21 @@ pub(crate) fn edit_settings(document: &mut DocumentMut, edit: &SettingsEdit) {
         put(
             "fallback_ms",
             edit.modem.fallback_ms.map(|ms| i64::from(ms).into()),
+        );
+        put(
+            "error_control",
+            edit.modem
+                .error_control
+                .as_ref()
+                .map(|policy| policy.as_str().into()),
+        );
+        put("compression", edit.modem.compression.map(Value::from));
+        put(
+            "guard_tone",
+            edit.modem
+                .guard_tone
+                .as_ref()
+                .map(|tone| tone.as_str().into()),
         );
     }
 }

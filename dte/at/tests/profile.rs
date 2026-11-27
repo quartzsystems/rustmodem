@@ -35,8 +35,8 @@ fn a_profile_survives_from_one_interpreter_to_the_next() {
     assert_eq!(profile.ms, "B103,0,0,0,0,0");
     assert_eq!(profile.register(0), Some(2));
     assert_eq!(profile.register(10), Some(30));
-    // S0 to S7, S9, S10 and S12.
-    assert_eq!(profile.registers().count(), 11);
+    // S0 to S7, S9, S10 and S12, and S36, S46 and S48.
+    assert_eq!(profile.registers().count(), 14);
     assert_eq!(profile.register(9), Some(6));
     assert_eq!(profile.check(), Ok(()));
 

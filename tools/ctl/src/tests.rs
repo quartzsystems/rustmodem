@@ -954,7 +954,10 @@ fn selftest_runs_two_modems_and_its_exit_code_says_whether_they_passed() {
     let (_, out, _) = service.ctl(&["line", "1"]);
     assert!(out.contains("Engine:             modem\n"), "{out}");
     assert!(
-        out.contains("Modem:              v21 then bell103, V.8 on, -12 dBm0\n"),
+        out.contains(
+            "Modem:              v22bis then v22 then bell212a then v21 then bell103, V.8 on, \
+             -12 dBm0\n"
+        ),
         "{out}"
     );
 
@@ -963,14 +966,14 @@ fn selftest_runs_two_modems_and_its_exit_code_says_whether_they_passed() {
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines[0], "Self-test:  line 1 calls line 2");
     assert!(
-        lines[1].starts_with("Connect:    300 bit/s V.21 after "),
+        lines[1].starts_with("Connect:    2400 bit/s V.22bis after "),
         "{out}"
     );
     assert_eq!(
         lines[2],
         "Data:       65536 of 65536 octets whole from 1 to 2, 65536 of 65536 from 2 to 1"
     );
-    assert!(lines[3].starts_with("Time:       0:36:"), "{out}");
+    assert!(lines[3].starts_with("Time:       0:04:"), "{out}");
     assert_eq!(lines[4], "Result:     passed");
     assert_eq!(lines.len(), 5);
     // The lines are free again.

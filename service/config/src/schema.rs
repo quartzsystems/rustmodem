@@ -237,6 +237,11 @@ pub struct LineModemEdit {
     pub modulations: Option<Vec<String>>,
     pub v8: Option<bool>,
     pub tx_level_dbm0: Option<i64>,
+    /// The policy for error control as the configuration spells it.
+    pub error_control: Option<String>,
+    pub compression: Option<bool>,
+    /// The guard tone as the configuration spells it.
+    pub guard_tone: Option<String>,
 }
 
 /// A change to `[modem]`: each `Some` replaces that key. The values are
@@ -249,6 +254,11 @@ pub struct ModemEdit {
     pub tx_level_dbm0: Option<i64>,
     pub answer_delay_ms: Option<u32>,
     pub fallback_ms: Option<u32>,
+    /// The policy for error control as the configuration spells it.
+    pub error_control: Option<String>,
+    pub compression: Option<bool>,
+    /// The guard tone as the configuration spells it.
+    pub guard_tone: Option<String>,
 }
 
 impl ModemEdit {
@@ -659,6 +669,12 @@ impl Default for MediaConfig {
 /// A modulation the modem engine has, as the configuration spells it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ModulationName {
+    /// ITU-T V.22bis: 2400 bit/s.
+    V22bis,
+    /// ITU-T V.22: 1200 bit/s.
+    V22,
+    /// Bell 212A: 1200 bit/s.
+    Bell212A,
     /// ITU-T V.21: 300 bit/s.
     V21,
     /// Bell 103: 300 bit/s.
@@ -666,12 +682,25 @@ pub enum ModulationName {
 }
 
 impl ModulationName {
-    /// Every modulation of this phase, in the default fallback order.
-    pub const ALL: [ModulationName; 2] = [ModulationName::V21, ModulationName::Bell103];
+    /// Every modulation, in the default fallback order: the fastest
+    /// first.
+    pub const ALL: [ModulationName; 5] = [
+        ModulationName::V22bis,
+        ModulationName::V22,
+        ModulationName::Bell212A,
+        ModulationName::V21,
+        ModulationName::Bell103,
+    ];
+
+    /// What a message says the modulations are.
+    pub const LIST: &'static str = "v22bis, v22, bell212a, v21 and bell103";
 
     /// The modulation as the configuration spells it.
     pub fn as_str(self) -> &'static str {
         match self {
+            ModulationName::V22bis => "v22bis",
+            ModulationName::V22 => "v22",
+            ModulationName::Bell212A => "bell212a",
             ModulationName::V21 => "v21",
             ModulationName::Bell103 => "bell103",
         }
@@ -684,6 +713,97 @@ impl ModulationName {
 }
 
 impl fmt::Display for ModulationName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A line's policy for error control, on a modulation that can have it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ErrorControlName {
+    /// LAPM if the far end has it, and none if not.
+    #[default]
+    Auto,
+    /// LAPM, or the call is cleared.
+    Required,
+    /// None.
+    Off,
+}
+
+impl ErrorControlName {
+    /// Every policy.
+    pub const ALL: [ErrorControlName; 3] = [
+        ErrorControlName::Auto,
+        ErrorControlName::Required,
+        ErrorControlName::Off,
+    ];
+
+    /// What a message says the policies are.
+    pub const LIST: &'static str = "auto, required or off";
+
+    /// The policy as the configuration spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ErrorControlName::Auto => "auto",
+            ErrorControlName::Required => "required",
+            ErrorControlName::Off => "off",
+        }
+    }
+
+    /// Reads a policy as the configuration spells it.
+    pub fn parse(text: &str) -> Option<ErrorControlName> {
+        ErrorControlName::ALL
+            .into_iter()
+            .find(|p| p.as_str() == text)
+    }
+}
+
+impl fmt::Display for ErrorControlName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The guard tone an answering modem sends with its data at 1200 and
+/// 2400 bit/s.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum GuardToneName {
+    /// None.
+    #[default]
+    Off,
+    /// 1800 Hz.
+    Hz1800,
+    /// 550 Hz.
+    Hz550,
+}
+
+impl GuardToneName {
+    /// Every guard tone.
+    pub const ALL: [GuardToneName; 3] = [
+        GuardToneName::Off,
+        GuardToneName::Hz1800,
+        GuardToneName::Hz550,
+    ];
+
+    /// What a message says the guard tones are.
+    pub const LIST: &'static str = "off, 1800 or 550";
+
+    /// The guard tone as the configuration spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GuardToneName::Off => "off",
+            GuardToneName::Hz1800 => "1800",
+            GuardToneName::Hz550 => "550",
+        }
+    }
+
+    /// Reads a guard tone as the configuration spells it.
+    pub fn parse(text: &str) -> Option<GuardToneName> {
+        GuardToneName::ALL.into_iter().find(|g| g.as_str() == text)
+    }
+}
+
+impl fmt::Display for GuardToneName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -702,9 +822,16 @@ pub struct ModemConfig {
     /// The silence before the answer tone, in milliseconds; 0 for the
     /// value of the Recommendation.
     pub answer_delay_ms: u32,
-    /// How long the fallback sends each modulation's answer carrier, in
-    /// milliseconds.
+    /// How long each step of the fallback lasts, in milliseconds: the
+    /// answer sequence of V.22bis, and each 300 bit/s modem's answer
+    /// carrier.
     pub fallback_ms: u32,
+    /// The policy for error control at 1200 and 2400 bit/s.
+    pub error_control: ErrorControlName,
+    /// Whether V.42bis is asked for and agreed to.
+    pub compression: bool,
+    /// The guard tone sent when answering at 1200 and 2400 bit/s.
+    pub guard_tone: GuardToneName,
 }
 
 impl ModemConfig {
@@ -727,6 +854,9 @@ impl ModemConfig {
             tx_level_dbm0: line.tx_level_dbm0.unwrap_or(self.tx_level_dbm0),
             answer_delay_ms: self.answer_delay_ms,
             fallback_ms: self.fallback_ms,
+            error_control: line.error_control.unwrap_or(self.error_control),
+            compression: line.compression.unwrap_or(self.compression),
+            guard_tone: line.guard_tone.unwrap_or(self.guard_tone),
         }
     }
 }
@@ -739,6 +869,9 @@ impl Default for ModemConfig {
             tx_level_dbm0: -12,
             answer_delay_ms: 0,
             fallback_ms: 3000,
+            error_control: ErrorControlName::Auto,
+            compression: true,
+            guard_tone: GuardToneName::Off,
         }
     }
 }
@@ -753,6 +886,12 @@ pub struct LineModem {
     pub v8: Option<bool>,
     /// The level sent, in dBm0.
     pub tx_level_dbm0: Option<i8>,
+    /// The policy for error control.
+    pub error_control: Option<ErrorControlName>,
+    /// Whether V.42bis is asked for and agreed to.
+    pub compression: Option<bool>,
+    /// The guard tone sent when answering at 1200 and 2400 bit/s.
+    pub guard_tone: Option<GuardToneName>,
 }
 
 impl LineModem {

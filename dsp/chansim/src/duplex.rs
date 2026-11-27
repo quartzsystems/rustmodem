@@ -33,6 +33,10 @@ pub struct End {
     pub events: Vec<Timed<ModemEvent>>,
     /// The ticks this end has run.
     pub ticks: u64,
+    /// Whether the host takes what the engine has for it. A host that
+    /// does not is one that has lowered its RTS: the engine must hold
+    /// the data, and what it cannot hold the far end must.
+    pub reading: bool,
     // The end's own time, in samples of the other end's clock.
     time: f64,
 }
@@ -45,6 +49,7 @@ impl End {
             received: Vec::new(),
             events: Vec::new(),
             ticks: 0,
+            reading: true,
             time: 0.0,
         }
     }
@@ -85,7 +90,7 @@ impl End {
         }
         self.engine.process(&rx, &mut tx);
         let mut buf = [0u8; 256];
-        loop {
+        while self.reading {
             let n = self.engine.dte_read(&mut buf);
             if n == 0 {
                 break;
@@ -136,6 +141,13 @@ impl Duplex {
     /// The channel, for its counts.
     pub fn channel(&self) -> &Channel {
         &self.channel
+    }
+
+    /// Changes the line for another while the call goes on: what is on
+    /// its way is lost, as it is when a network takes another route. The
+    /// two ends' clocks stay as they were.
+    pub fn change_channel(&mut self, config: &ChannelConfig) {
+        self.channel = Channel::new(config);
     }
 
     /// Runs until end B has made this many more ticks.
