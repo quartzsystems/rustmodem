@@ -154,6 +154,11 @@ Check 'the modem holds DSR and CTS toward the host' ($port.DsrHolding -and $port
 $port.Close()
 
 Section 'the driver host is killed'
+# Each port has a host of its own: one that ends takes one port with it.
+$hosts = @(Get-Process WUDFHost -ErrorAction SilentlyContinue).Count
+$ports = @(& $installed port list).Count
+"    $hosts driver host processes, $ports RustModem ports"
+Check 'there is a driver host for each port' ($ports -ge 2 -and $hosts -ge $ports)
 Get-Process WUDFHost -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 8
 $port = New-Object System.IO.Ports.SerialPort 'COM41', 115200

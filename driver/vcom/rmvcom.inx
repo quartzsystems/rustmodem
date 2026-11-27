@@ -70,6 +70,9 @@ UmdfFileObjectPolicy       = AllowNullAndUnknownFileObjects
 UmdfFsContextUsePolicy     = CannotUseFsContexts
 ; The driver asks who is opening the control side of a port.
 UmdfImpersonationLevel     = Impersonation
+; Each port has a driver host process of its own, so that a host that
+; ends takes one port's call with it and no other's.
+UmdfHostProcessSharing     = ProcessSharingDisabled
 
 [Driver.Install]
 UmdfLibraryVersion = $UMDFVERSION$
