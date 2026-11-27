@@ -126,9 +126,14 @@ const GAIN_SLOW_S: f32 = 1.0;
 /// cannot, the modem's to retrain on.
 const FADE: f32 = 0.1;
 
-/// The least the equaliser takes the power in its delay line to be, as a
-/// part of what a signal at its usual size puts there.
-const EQUALIZER_FLOOR: f32 = 0.1;
+/// The power in the equaliser's delay line under which neither it nor the
+/// carrier loop learns, as a part of what a signal at its usual size puts
+/// there. The delay line is eight symbols, and a signal that goes, as for
+/// a lost packet, has it under this in four: sooner than the fade is
+/// seen, and before what is in the line is small enough for the step to
+/// make much of. Sixteen points at their usual size are under it once in
+/// some hundreds of symbols, when six of eight are the small ones.
+const EQUALIZER_FLOOR: f32 = 0.5;
 
 /// The symbols after the carrier comes in which the gain is still
 /// settling and nothing is decided.
@@ -239,6 +244,10 @@ pub struct Demodulator {
     // Whether the signal has been found once: a carrier that comes back
     // is then taken up where it was left.
     found: bool,
+    // Whether a carrier that comes back is taken up where it was left.
+    resuming: bool,
+    // The matched filter's last output.
+    baseband: Complex,
     adapting: bool,
     // Whether nothing is being learned because the signal is far from
     // its usual power, and whether the timing loop has been told to hold.
@@ -309,6 +318,8 @@ impl Demodulator {
             quadrant: 0,
             symbols: 0,
             found: false,
+            resuming: true,
+            baseband: Complex::ZERO,
             adapting: true,
             held: false,
             frozen: false,
@@ -335,6 +346,23 @@ impl Demodulator {
         self.adapting = adapting;
     }
 
+    /// Whether a carrier that goes and comes back is taken up where it
+    /// was left (clause 6.5), which is so unless this says otherwise.
+    /// Off, every carrier that comes is found from nothing: for a
+    /// handshake, where what came before the far modem's signal was not
+    /// the far modem.
+    pub fn set_resuming(&mut self, resuming: bool) {
+        self.resuming = resuming;
+    }
+
+    /// The matched filter's output at the last sample: the far end's
+    /// channel at baseband, with nothing done to it but the filtering.
+    /// The power of a signal here is its power on the line, less what
+    /// the filter takes of it.
+    pub fn baseband(&self) -> Complex {
+        self.baseband
+    }
+
     /// Forgets the signal: the next carrier is found from nothing, as
     /// the first was. The rate and the descrambler are left as they are.
     pub fn retrain(&mut self) {
@@ -356,6 +384,8 @@ impl Demodulator {
         self.rate = Rate::B1200;
         self.quadrant = 0;
         self.found = false;
+        self.resuming = true;
+        self.baseband = Complex::ZERO;
         self.adapting = true;
         self.acquire();
     }
@@ -429,7 +459,8 @@ impl Demodulator {
 
         let was = self.detector.present();
         let carrier = self.detector.process(self.detect_power);
-        if carrier && !was && !self.found {
+        self.baseband = baseband;
+        if carrier && !was && !(self.found && self.resuming) {
             self.acquire();
             self.found = true;
         }
@@ -529,7 +560,7 @@ impl Demodulator {
             Rate::B2400 => self.sixteen.slice(received).point,
         };
         let error = received - decision;
-        if self.adapting && !self.held {
+        if self.adapting && !self.held && self.equalizer.adaptable() {
             // The error where the equaliser works, which is before the
             // carrier loop's turn.
             self.equalizer.update(self.carrier.rotate(error));

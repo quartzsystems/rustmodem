@@ -17,6 +17,9 @@
 //! - [`Demodulator`] makes bits from the line signal: it filters out the
 //!   far end's channel, finds the symbol timing and the carrier, equalises
 //!   the line and decides each symbol.
+//! - [`Modem`] is the two together with the handshake of clause 6.3, the
+//!   fall back to 1200 bit/s and the retrain of clause 6.4: one end of a
+//!   call, from the end of the answer sequence on.
 //!
 //! The editions are the Blue Book's (11/1988) of both Recommendations.
 //! Clause numbers are V.22bis's unless V.22 is named. Where V.22bis at
@@ -26,14 +29,18 @@
 //! 1205 and 1223 bit/s line rates of its Alternative C, the fixed
 //! compromise equaliser of clause 2.3, whose characteristic is left to
 //! each Administration and which the adaptive equaliser stands in for,
-//! and the test loops of clause 7.
+//! the optional rate change of clause 6.6, and the test loops of clause
+//! 7.
 
 #![forbid(unsafe_code)]
 
 mod demodulator;
+mod detect;
+mod handshake;
 mod modulator;
 
 pub use demodulator::{Demodulated, Demodulator, Symbol};
+pub use handshake::{Allowed, BitIo, Event, Failure, Modem, Role, Settings, Signal, Standard};
 pub use modulator::{Modulator, TRANSMIT_DELAY_SAMPLES};
 
 use dspkit::Complex;

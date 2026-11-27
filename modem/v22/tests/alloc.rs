@@ -69,3 +69,63 @@ fn the_sample_path_allocates_nothing() {
     let (allocations, boxed) = alloccount::count(|| std::hint::black_box(Box::new(7u64)));
     assert_eq!((allocations, *boxed), (1, 7));
 }
+
+/// Bits for a modem: ones out, and a count of what came in.
+struct Bits(u32);
+
+impl v22::BitIo for Bits {
+    fn tx_bit(&mut self) -> bool {
+        true
+    }
+
+    fn rx_bit(&mut self, bit: bool) {
+        self.0 += u32::from(bit);
+    }
+}
+
+#[test]
+fn a_whole_call_allocates_nothing() {
+    use v22::{Allowed, Event, Modem, Role, Settings};
+    let law = Law::Alaw;
+    let settings = |role| Settings {
+        role,
+        allowed: Allowed::ALL,
+        guard: GuardTone::Off,
+        level_dbm0: -12.0,
+        law,
+    };
+    let mut calling = Modem::new(settings(Role::Calling));
+    let mut answering = Modem::new(settings(Role::Answering));
+    let (mut to_calling, mut to_answering) = (Bits(0), Bits(0));
+
+    let (allocations, events) = alloccount::count(|| {
+        let mut events = [0u32; 4];
+        let (mut a, mut b) = (0.0f32, 0.0f32);
+        // Twenty seconds: the handshake, data, a retrain and data again.
+        for n in 0..160_000u32 {
+            if n == 80_000 {
+                calling.retrain();
+            }
+            let next_a = calling.process(law.decode(law.encode(b)), &mut to_calling);
+            b = answering.process(law.decode(law.encode(a)), &mut to_answering);
+            a = next_a;
+            for modem in [&mut calling, &mut answering] {
+                while let Some(event) = modem.poll_event() {
+                    events[match event {
+                        Event::Connected { .. } => 0,
+                        Event::Retrain => 1,
+                        Event::Retrained => 2,
+                        Event::Failed(_) => 3,
+                    }] += 1;
+                }
+            }
+        }
+        events
+    });
+    assert_eq!(allocations, 0);
+    // Both connected, both retrained once, and neither gave up.
+    assert_eq!(events, [2, 2, 2, 0]);
+    // Ones were sent and ones came: some eighteen seconds of them at 2400
+    // bit/s each way.
+    assert!(to_calling.0 > 40_000 && to_answering.0 > 40_000);
+}

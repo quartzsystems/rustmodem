@@ -22,10 +22,11 @@
 //! - **Normalised.** The step is divided by the power in the delay line,
 //!   so the same step does the same at every level. A step of one would
 //!   take the whole error out of the next output; a few hundredths is
-//!   usual. The power is not taken to be less than a floor the caller
-//!   sets: when the signal goes, what is left in the delay line is
-//!   nothing much, and a step divided by nothing much would make of the
-//!   taps whatever turned that into a symbol.
+//!   usual. Nothing is adapted while the power in the delay line is
+//!   under a floor the caller sets: when the signal goes, what is left
+//!   there is nothing much, and a step divided by nothing much would make
+//!   of the taps whatever turned that into a symbol. A few symbols of
+//!   that leave an equaliser too loud for the signal when it comes back.
 //! - **Leak.** Two samples a symbol leave directions in which the taps can
 //!   grow without changing the output, since the signal has no power
 //!   there, and rounding walks them that way. Each update the taps are
@@ -43,7 +44,8 @@ use crate::complex::Complex;
 /// The time constant of the mean-squared error, in symbols.
 const MSE_SYMBOLS: f32 = 64.0;
 
-/// The power in the delay line below which nothing is adapted at all.
+/// The least the floor may be: the power in the delay line under which
+/// nothing is adapted, whatever the caller says.
 const POWER_FLOOR: f32 = 1.0e-12;
 
 /// The equaliser, of `N` taps half a symbol apart.
@@ -105,9 +107,8 @@ impl<const N: usize> Equalizer<N> {
         };
     }
 
-    /// Changes the least the power in the delay line is taken to be when
-    /// the step is divided by it: the sum of the squares of its `N`
-    /// samples.
+    /// Changes the power in the delay line, the sum of the squares of its
+    /// `N` samples, under which nothing is adapted.
     pub fn set_power_floor(&mut self, floor: f32) {
         self.floor = if floor.is_nan() {
             POWER_FLOOR
@@ -156,19 +157,33 @@ impl<const N: usize> Equalizer<N> {
         if self.step <= 0.0 {
             return;
         }
-        let mut power = 0.0;
-        for sample in &self.line {
-            power += sample.norm_sqr();
-        }
-        if power <= POWER_FLOOR {
+        let power = self.power();
+        if power < self.floor {
             return;
         }
-        let gain = error.scale(self.step / power.max(self.floor));
+        let gain = error.scale(self.step / power);
         let keep = 1.0 - self.leak;
         let (older, newer) = self.line.split_at(self.at);
         for (&sample, tap) in newer.iter().chain(older).zip(&mut self.taps) {
             *tap = tap.scale(keep) - gain * sample.conj();
         }
+    }
+
+    /// The power in the delay line: the sum of the squares of its
+    /// samples.
+    #[inline]
+    pub fn power(&self) -> f32 {
+        let mut power = 0.0;
+        for sample in &self.line {
+            power += sample.norm_sqr();
+        }
+        power
+    }
+
+    /// Whether there is power enough in the delay line to adapt on.
+    #[inline]
+    pub fn adaptable(&self) -> bool {
+        self.power() >= self.floor
     }
 
     /// Counts an error in the mean-squared error without adapting.
