@@ -243,6 +243,12 @@ fn a_call_whose_far_end_goes_silent_is_reported_stalled() {
         next_event(&mut call, Duration::from_secs(5)),
         Some(MediaEvent::Stalled)
     );
+    // The media thread puts the event in the ring and then wakes the
+    // pool, so the event can be seen here a moment before the wake is.
+    let waited = Instant::now();
+    while wakes.load(Ordering::Relaxed) <= before && waited.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(1));
+    }
     assert!(wakes.load(Ordering::Relaxed) > before);
     let stats = call.stats().expect("published when it stalled");
     assert_eq!(stats.rx_packets, 0);
