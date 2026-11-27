@@ -27,15 +27,17 @@ fn a_profile_survives_from_one_interpreter_to_the_next() {
     let mut first = AtInterpreter::new(config);
     assert_eq!(first.stored_profile(), None);
     assert_eq!(stored_by(&mut first, "AT"), None);
-    let profile = stored_by(&mut first, "ATE0V0X2L3M2&C0&D1&K0S0=2S10=30+MS=V22;&W").unwrap();
+    let profile = stored_by(&mut first, "ATE0V0X2L3M2&C0&D1&K0S0=2S10=30+MS=B103,0;&W").unwrap();
     assert_eq!(first.stored_profile(), Some(&profile));
     assert!(!profile.echo && !profile.verbose && !profile.dcd_follows_carrier);
     assert_eq!((profile.x, profile.volume, profile.speaker), (2, 3, 2));
     assert_eq!((profile.dtr_action, profile.flow), (1, 0));
-    assert_eq!(profile.ms, "V22");
+    assert_eq!(profile.ms, "B103,0,0,0,0,0");
     assert_eq!(profile.register(0), Some(2));
     assert_eq!(profile.register(10), Some(30));
-    assert_eq!(profile.registers().count(), 10);
+    // S0 to S7, S9, S10 and S12.
+    assert_eq!(profile.registers().count(), 11);
+    assert_eq!(profile.register(9), Some(6));
     assert_eq!(profile.check(), Ok(()));
 
     // What a service restart does: a new interpreter, given the profile.

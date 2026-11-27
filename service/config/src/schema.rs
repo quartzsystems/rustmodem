@@ -176,6 +176,9 @@ pub struct LineConfig {
     pub unknown_command: UnknownCommand,
     /// Which modem engine the line runs.
     pub engine: EngineKind,
+    /// The settings of the modem engine that the line has its own value
+    /// for.
+    pub modem: LineModem,
     /// The line's registration to a PBX, if it is an extension of one.
     pub register: Option<RegisterConfig>,
 }
@@ -194,6 +197,7 @@ impl LineConfig {
             auto_answer_rings: 0,
             unknown_command: UnknownCommand::default(),
             engine: EngineKind::default(),
+            modem: LineModem::default(),
             register: None,
         }
     }
@@ -312,6 +316,8 @@ pub struct Config {
     pub sip: SipConfig,
     /// The `[media]` table.
     pub media: MediaConfig,
+    /// The `[modem]` table.
+    pub modem: ModemConfig,
     /// The `[[hunt_group]]` tables, in file order.
     pub hunt_groups: Vec<HuntGroup>,
     /// The `[[route]]` tables, in file order: the order they are tried in.
@@ -342,8 +348,10 @@ impl Config {
 /// Which modem engine a line runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum EngineKind {
-    /// The null engine: data framed straight into the octet stream.
+    /// The modem engine: a softmodem.
     #[default]
+    Modem,
+    /// The null engine: data framed straight into the octet stream.
     Null,
     /// The echo engine: what is received is sent back.
     Echo,
@@ -351,11 +359,12 @@ pub enum EngineKind {
 
 impl EngineKind {
     /// Every engine of this phase.
-    pub const ALL: [EngineKind; 2] = [EngineKind::Null, EngineKind::Echo];
+    pub const ALL: [EngineKind; 3] = [EngineKind::Modem, EngineKind::Null, EngineKind::Echo];
 
     /// The engine as the configuration spells it.
     pub fn as_str(self) -> &'static str {
         match self {
+            EngineKind::Modem => "modem",
             EngineKind::Null => "null",
             EngineKind::Echo => "echo",
         }
@@ -610,6 +619,112 @@ impl Default for MediaConfig {
             rtp_timeout_s: 10,
             capture_dir: String::new(),
         }
+    }
+}
+
+/// A modulation the modem engine has, as the configuration spells it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ModulationName {
+    /// ITU-T V.21: 300 bit/s.
+    V21,
+    /// Bell 103: 300 bit/s.
+    Bell103,
+}
+
+impl ModulationName {
+    /// Every modulation of this phase, in the default fallback order.
+    pub const ALL: [ModulationName; 2] = [ModulationName::V21, ModulationName::Bell103];
+
+    /// The modulation as the configuration spells it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ModulationName::V21 => "v21",
+            ModulationName::Bell103 => "bell103",
+        }
+    }
+
+    /// Reads a modulation as the configuration spells it.
+    pub fn parse(text: &str) -> Option<ModulationName> {
+        ModulationName::ALL.into_iter().find(|m| m.as_str() == text)
+    }
+}
+
+impl fmt::Display for ModulationName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The `[modem]` table: the settings of the modem engine, for every line
+/// that does not say otherwise.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModemConfig {
+    /// The modulations allowed, in the order the fallback tries them.
+    pub modulations: Vec<ModulationName>,
+    /// Whether V.8 is used.
+    pub v8: bool,
+    /// The level sent, in dBm0: -20 to -9.
+    pub tx_level_dbm0: i8,
+    /// The silence before the answer tone, in milliseconds; 0 for the
+    /// value of the Recommendation.
+    pub answer_delay_ms: u32,
+    /// How long the fallback sends each modulation's answer carrier, in
+    /// milliseconds.
+    pub fallback_ms: u32,
+}
+
+impl ModemConfig {
+    /// The transmit levels a configuration may name, in dBm0.
+    pub const TX_LEVELS: std::ops::RangeInclusive<i64> = -20..=-9;
+    /// The answer delays a configuration may name, in milliseconds.
+    pub const ANSWER_DELAYS: std::ops::RangeInclusive<i64> = 0..=10_000;
+    /// The fallback times a configuration may name, in milliseconds.
+    pub const FALLBACK_TIMES: std::ops::RangeInclusive<i64> = 500..=20_000;
+
+    /// These settings with a line's own in place of them where it has
+    /// any.
+    pub fn for_line(&self, line: &LineModem) -> ModemConfig {
+        ModemConfig {
+            modulations: line
+                .modulations
+                .clone()
+                .unwrap_or_else(|| self.modulations.clone()),
+            v8: line.v8.unwrap_or(self.v8),
+            tx_level_dbm0: line.tx_level_dbm0.unwrap_or(self.tx_level_dbm0),
+            answer_delay_ms: self.answer_delay_ms,
+            fallback_ms: self.fallback_ms,
+        }
+    }
+}
+
+impl Default for ModemConfig {
+    fn default() -> Self {
+        ModemConfig {
+            modulations: ModulationName::ALL.to_vec(),
+            v8: true,
+            tx_level_dbm0: -12,
+            answer_delay_ms: 0,
+            fallback_ms: 3000,
+        }
+    }
+}
+
+/// The `modem` table of a line: the settings of `[modem]` that this line
+/// has its own value for. A `None` is the value of `[modem]`.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct LineModem {
+    /// The modulations allowed, in fallback order.
+    pub modulations: Option<Vec<ModulationName>>,
+    /// Whether V.8 is used.
+    pub v8: Option<bool>,
+    /// The level sent, in dBm0.
+    pub tx_level_dbm0: Option<i8>,
+}
+
+impl LineModem {
+    /// Whether the line has no setting of its own.
+    pub fn is_empty(&self) -> bool {
+        *self == LineModem::default()
     }
 }
 

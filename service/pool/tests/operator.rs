@@ -261,7 +261,7 @@ fn changing_only_the_at_settings_keeps_the_port_and_the_call() {
     host.write(b"+++");
     h.advance(1100);
     assert_eq!(h.read(1), "\r\nOK\r\n");
-    assert_eq!(h.command(1, "ATB0"), "\r\nERROR\r\n");
+    assert_eq!(h.command(1, "ATY0"), "\r\nERROR\r\n");
     assert_eq!(h.command(1, "AT&FE0S0?"), "\r\n004\r\n\r\nOK\r\n");
 }
 

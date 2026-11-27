@@ -158,6 +158,11 @@ impl AtInterpreter {
         self.profile.register(u32::from(number))
     }
 
+    /// The settings in force now: what a call that begins now goes by.
+    pub fn profile(&self) -> &Profile {
+        &self.profile
+    }
+
     /// The stored profile, if there is one.
     pub fn stored_profile(&self) -> Option<&Profile> {
         self.stored.as_ref()

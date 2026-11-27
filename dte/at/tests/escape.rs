@@ -282,7 +282,7 @@ fn command_text() -> impl Strategy<Value = Vec<u8>> {
         "S7=1",
         "S12=0",
         "S12=1",
-        "+MS=V34",
+        "+MS=B103",
         "+ES?",
         "+++",
         "\x08",

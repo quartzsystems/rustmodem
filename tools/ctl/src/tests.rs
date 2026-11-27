@@ -100,7 +100,12 @@ impl Service {
         std::fs::create_dir_all(&directory).unwrap();
         let config_path = directory.join("rustmodem.toml");
         let mut config = Config {
-            lines: vec![LineConfig::new(1, "P1"), LineConfig::new(2, "P2")],
+            lines: [(1, "P1"), (2, "P2")]
+                .map(|(id, port)| LineConfig {
+                    engine: config::EngineKind::Null,
+                    ..LineConfig::new(id, port)
+                })
+                .to_vec(),
             ..Config::default()
         };
         config.lines[0].name = Some("Front desk".to_string());
@@ -113,7 +118,7 @@ impl Service {
             router: Box::new(NullSwitch::new()),
             media: Box::new(InlineRunner::new()),
             serial: Box::new(Factory(Arc::clone(&hosts))),
-            engines: Box::new(|_| Box::new(NullEngine::new(NullConfig::default()))),
+            engines: Box::new(|_, _| Box::new(NullEngine::new(NullConfig::default()))),
             sink: Box::new(HubSink(hub.clone())),
             profiles: Box::new(MemoryProfiles::new()),
             call_log: None,

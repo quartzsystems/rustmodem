@@ -13,13 +13,18 @@
 //! gives it. The test only plays the hosts and the far end, and asks the
 //! pool what it sees.
 //!
-//! Half the lines run the echo engine: their peers send a pattern and
-//! check that it comes back as it went. The other half run the null
-//! engine, and so do their peers: data goes both ways between each peer
-//! and the host on the line's port, and every octet is checked as it
-//! arrives. At the end nothing may have been lost, resynchronised or
-//! slipped on any call, the data must be whole, and every call must end
-//! cleanly when its peer hangs up.
+//! A third of the lines run the echo engine: their peers send a pattern
+//! and check that it comes back as it went. A third run the null engine,
+//! and so do their peers: data goes both ways between each peer and the
+//! host on the line's port, and every octet is checked as it arrives. The
+//! last third run the modem, and so do their peers: the two connect at
+//! 300 bit/s and carry data the same way, as fast as that goes. At the
+//! end nothing may have been lost, resynchronised or slipped on any call,
+//! the data must be whole, and every call must end cleanly when its peer
+//! hangs up.
+//!
+//! The time the modem's ticks take is printed beside the others', and its
+//! 99th percentile is held under a millisecond.
 
 mod support;
 
@@ -45,10 +50,18 @@ use tokio::sync::Notify;
 /// How many lines, and calls.
 const LINES: u16 = 24;
 
-/// Data octets a second, each way, on a call that carries data. The null
-/// engine carries up to a sample's worth for every sample; this leaves it
-/// room.
-const RATE: u64 = 2000;
+/// Data octets a second, each way, on a call between null engines. The
+/// null engine carries up to a sample's worth for every sample; this
+/// leaves it room.
+const NULL_RATE: u64 = 2000;
+
+/// Data octets a second, each way, on a call between modems: 300 bit/s is
+/// thirty characters a second, and this leaves it room.
+const MODEM_RATE: u64 = 25;
+
+/// The longest the 99th percentile of a modem's tick times may be, in
+/// microseconds.
+const MODEM_TICK_P99_US: u32 = 1000;
 
 /// How long the calls are held.
 fn soak() -> Duration {
@@ -58,9 +71,35 @@ fn soak() -> Duration {
     Duration::from_secs(minutes.map_or(60, |minutes| minutes * 60))
 }
 
-/// Whether a line runs the echo engine: the odd ones do.
+/// The engine of a line, which is its peer's too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Echo,
+    Null,
+    Modem,
+}
+
+/// The lines take the engines in turn.
+fn kind(line: u16) -> Kind {
+    match line % 3 {
+        1 => Kind::Echo,
+        2 => Kind::Null,
+        _ => Kind::Modem,
+    }
+}
+
+/// Whether a line runs the echo engine.
 fn echoes(line: u16) -> bool {
-    line % 2 == 1
+    kind(line) == Kind::Echo
+}
+
+/// Data octets a second, each way, on a line's call.
+fn rate(line: u16) -> u64 {
+    match kind(line) {
+        Kind::Echo => 0,
+        Kind::Null => NULL_RATE,
+        Kind::Modem => MODEM_RATE,
+    }
 }
 
 /// Octet `index` of a stream of data that does not repeat for a long
@@ -80,10 +119,11 @@ struct Stream {
 }
 
 impl Stream {
-    /// The next octets to send, up to what `elapsed` allows at [`RATE`].
-    fn due(&self, seed: u64, elapsed: Duration) -> Vec<u8> {
+    /// The next octets to send, up to what `elapsed` allows at `rate`
+    /// octets a second.
+    fn due(&self, seed: u64, elapsed: Duration, rate: u64) -> Vec<u8> {
         let sent = self.sent.load(Ordering::Relaxed);
-        let target = elapsed.as_millis() as u64 * RATE / 1000;
+        let target = elapsed.as_millis() as u64 * rate / 1000;
         (sent..target.min(sent + 512))
             .map(|index| octet(seed, index))
             .collect()
@@ -151,7 +191,11 @@ fn configuration(listen: SocketAddrV4) -> Config {
         first + 99
     );
     for line in 1..=LINES {
-        let engine = if echoes(line) { "echo" } else { "null" };
+        let engine = match kind(line) {
+            Kind::Echo => "echo",
+            Kind::Null => "null",
+            Kind::Modem => "modem",
+        };
         text.push_str(&format!(
             "[[line]]\nid = {line}\nserial = {{ backend = \"com0com\", port = \"P{line}\" }}\n\
              engine = \"{engine}\"\nauto_answer_rings = 1\n\n"
@@ -181,15 +225,21 @@ fn far_end(service: SocketAddrV4, shared: &Shared) -> Vec<Outcome> {
         line: u16,
         agent: Agent,
         answered: Option<Instant>,
+        /// Since when the call carries data: for a null engine since it
+        /// was answered, for a modem since it connected.
+        carrying: Option<Instant>,
         ended_early: bool,
     }
     let mut callers: Vec<Caller> = (1..=LINES)
         .map(|line| {
             let mut agent = Agent::bind(AgentConfig {
-                media: if echoes(line) {
-                    MediaKind::Pattern
-                } else {
-                    MediaKind::Null
+                media: match kind(line) {
+                    Kind::Echo => MediaKind::Pattern,
+                    Kind::Null => MediaKind::Null,
+                    Kind::Modem => MediaKind::Modem {
+                        modulations: [Some(engine::Standard::V21), Some(engine::Standard::Bell103)],
+                        v8: true,
+                    },
                 },
                 seed: 0x50AC + u64::from(line),
                 ..AgentConfig::new(&format!("caller{line}"), loopback())
@@ -200,6 +250,7 @@ fn far_end(service: SocketAddrV4, shared: &Shared) -> Vec<Outcome> {
                 line,
                 agent,
                 answered: None,
+                carrying: None,
                 ended_early: false,
             }
         })
@@ -225,9 +276,28 @@ fn far_end(service: SocketAddrV4, shared: &Shared) -> Vec<Outcome> {
             let (Some(answered), Some(engine)) = (caller.answered, caller.agent.engine()) else {
                 continue;
             };
+            while let Some(event) = engine.poll_event() {
+                match event {
+                    engine::ModemEvent::Connect(_) => caller.carrying = Some(Instant::now()),
+                    engine::ModemEvent::CarrierLost => {
+                        caller.ended_early |= hung_up_at.is_none();
+                    }
+                    _ => {}
+                }
+            }
+            if kind(caller.line) == Kind::Null {
+                caller.carrying = Some(answered);
+            }
+            let Some(carrying) = caller.carrying else {
+                continue;
+            };
             let (up, down) = (&shared.up[&caller.line], &shared.down[&caller.line]);
             if !quiet {
-                let due = down.due(down_seed(caller.line), answered.elapsed());
+                let due = down.due(
+                    down_seed(caller.line),
+                    carrying.elapsed(),
+                    rate(caller.line),
+                );
                 let taken = engine.dte_write(&due);
                 down.sent.fetch_add(taken as u64, Ordering::Relaxed);
             }
@@ -389,7 +459,7 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
                 continue;
             };
             if quiet_at.is_none() {
-                let due = up.due(up_seed(*line), since.elapsed());
+                let due = up.due(up_seed(*line), since.elapsed(), rate(*line));
                 host.write(&due);
                 up.sent.fetch_add(due.len() as u64, Ordering::Relaxed);
             }
@@ -448,6 +518,7 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
     // and no tick that took as long as a packet.
     let seconds = held.as_secs();
     let mut slowest = (0u32, 0u32, 0u32);
+    let mut modems = (0u32, 0u32, 0u32);
     let mut overruns = 0;
     for (line, stats) in &worst {
         overruns += stats.overruns;
@@ -464,19 +535,32 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
             stats.tick_p99_us < stats.ptime_ms * 1000,
             "line {line}: {stats:?}"
         );
-        slowest = (
-            slowest.0.max(stats.tick_p50_us),
-            slowest.1.max(stats.tick_p99_us),
-            slowest.2.max(stats.tick_max_us),
+        let of = if kind(*line) == Kind::Modem {
+            assert!(
+                stats.tick_p99_us < MODEM_TICK_P99_US,
+                "line {line}: {stats:?}"
+            );
+            &mut modems
+        } else {
+            &mut slowest
+        };
+        *of = (
+            of.0.max(stats.tick_p50_us),
+            of.1.max(stats.tick_p99_us),
+            of.2.max(stats.tick_max_us),
         );
     }
     println!(
         "soak: {LINES} calls for {seconds} s; of the lines' tick times the greatest median was \
-         {} us, the greatest 99th percentile {} us and the longest tick {} us; {overruns} ticks \
-         overran their packet; {} wakes of the pool were refused",
+         {} us, the greatest 99th percentile {} us and the longest tick {} us with the echo and \
+         null engines, and {} us, {} us and {} us with the modem; {overruns} ticks overran their \
+         packet; {} wakes of the pool were refused",
         slowest.0,
         slowest.1,
         slowest.2,
+        modems.0,
+        modems.1,
+        modems.2,
         wakes_refused.load(Ordering::Relaxed)
     );
 
@@ -515,7 +599,7 @@ fn twenty_four_calls_at_once_lose_nothing_and_carry_their_data_whole() {
             );
             assert_eq!(sent, received, "line {line}, {way}");
             assert!(
-                sent >= seconds * RATE * 8 / 10,
+                sent >= seconds * rate(*line) * 8 / 10,
                 "line {line}, {way}: {sent}"
             );
         }

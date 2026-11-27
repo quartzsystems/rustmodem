@@ -39,6 +39,10 @@ const SAMPLE_US: u64 = 125;
 /// second.
 const PUBLISH_EVERY: u32 = 50;
 
+/// The engine's snapshot of itself is published after this many ticks:
+/// ten times a second.
+const SNAPSHOT_EVERY: u32 = 10;
+
 /// When the loop has fallen behind its free-run timer, the most packets it
 /// makes up in one turn.
 const CATCH_UP: u32 = 5;
@@ -129,6 +133,9 @@ pub struct Ticker {
     histogram: [u32; BUCKETS],
     ticks: u64,
     since_publish: u32,
+    since_snapshot: u32,
+    /// The payload type the engine was last told the law of.
+    law_told: u8,
     /// Where the call's packets are offered when its capture is on.
     capture: Option<CaptureTap>,
     /// Whether this turn's packets are captured. It is read once a turn,
@@ -182,6 +189,8 @@ impl Ticker {
             histogram: [0; BUCKETS],
             ticks: 0,
             since_publish: 0,
+            since_snapshot: 0,
+            law_told: payload_type,
             capture,
             capturing: false,
             began_us: now_us,
@@ -305,6 +314,12 @@ impl Ticker {
 
         port.feed(engine);
         let mut wake = port.drain(engine);
+        if self.since_snapshot >= SNAPSHOT_EVERY {
+            self.since_snapshot = 0;
+            if let Some(snapshot) = engine.diagnostics() {
+                port.shared().publish_diagnostics(&snapshot);
+            }
+        }
 
         // A far end that has the call on hold is silent by agreement.
         if !self.held && now.saturating_sub(self.heard_us) > self.timeout_us {
@@ -328,6 +343,13 @@ impl Ticker {
     ) {
         let began = clock.now_us();
         let at = HEADER_LEN + self.filled * FRAME;
+        // A renegotiation may have changed the codec: the engine is told
+        // the law of the octets it is about to be given.
+        let payload_type = self.receiver.payload_type();
+        if payload_type != self.law_told {
+            self.law_told = payload_type;
+            engine.set_law(law_of(payload_type));
+        }
         engine.process(rx, &mut self.packet[at..at + FRAME]);
         self.filled += 1;
         if self.filled >= self.frames_per_packet {
@@ -364,6 +386,7 @@ impl Ticker {
         }
         self.ticks += 1;
         self.since_publish += 1;
+        self.since_snapshot += 1;
     }
 
     /// The time that `per_mille` of the ticks were no longer than.
@@ -427,6 +450,16 @@ impl Ticker {
 
 /// The octet that is silence in a codec, by its payload type (RFC 3551
 /// section 4.5.14): 0xD5 for PCMA, 0xFF for PCMU.
+/// The G.711 law of an RTP payload type: 8 is PCMA, the A-law, and 0 is
+/// PCMU, the u-law (RFC 3551 section 6).
+pub fn law_of(payload_type: u8) -> engine::Law {
+    if payload_type == 8 {
+        engine::Law::Alaw
+    } else {
+        engine::Law::Ulaw
+    }
+}
+
 fn silence(payload_type: u8) -> u8 {
     if payload_type == 8 { 0xD5 } else { 0xFF }
 }

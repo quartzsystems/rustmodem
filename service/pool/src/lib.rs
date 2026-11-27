@@ -126,14 +126,43 @@ impl ProfileStore for MemoryProfiles {
     }
 }
 
-/// Makes the modem engine of a line, from the line's configuration.
-pub type EngineFactory = Box<dyn FnMut(&LineConfig) -> Box<dyn ModemEngine> + Send>;
+/// Makes the modem engine of a line, from the line's configuration and
+/// the `[modem]` table's.
+pub type EngineFactory =
+    Box<dyn FnMut(&LineConfig, &config::ModemConfig) -> Box<dyn ModemEngine> + Send>;
 
-/// The engine a line's `engine` setting asks for: the null engine or the
-/// echo engine.
-pub fn engine_for(line: &LineConfig) -> Box<dyn ModemEngine> {
+/// The engine a line's `engine` setting asks for: the modem, with the
+/// settings of `[modem]` and the line's own over them, the null engine or
+/// the echo engine.
+pub fn engine_for(line: &LineConfig, modem: &config::ModemConfig) -> Box<dyn ModemEngine> {
     match line.engine {
+        config::EngineKind::Modem => Box::new(engine::Modem::new(modem_config(
+            &modem.for_line(&line.modem),
+        ))),
         config::EngineKind::Null => Box::new(engine::NullEngine::new(Default::default())),
         config::EngineKind::Echo => Box::new(engine::EchoEngine::new()),
+    }
+}
+
+/// A modulation of the configuration as the engine knows it.
+pub(crate) fn standard(name: config::ModulationName) -> engine::Standard {
+    match name {
+        config::ModulationName::V21 => engine::Standard::V21,
+        config::ModulationName::Bell103 => engine::Standard::Bell103,
+    }
+}
+
+/// The modem settings of a line as the engine takes them.
+pub fn modem_config(settings: &config::ModemConfig) -> engine::ModemConfig {
+    let mut modulations = [None; 2];
+    for (slot, name) in modulations.iter_mut().zip(&settings.modulations) {
+        *slot = Some(standard(*name));
+    }
+    engine::ModemConfig {
+        modulations,
+        v8: settings.v8,
+        tx_level_dbm0: f32::from(settings.tx_level_dbm0),
+        answer_delay_ms: settings.answer_delay_ms,
+        fallback_ms: settings.fallback_ms,
     }
 }

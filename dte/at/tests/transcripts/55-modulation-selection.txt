@@ -1,0 +1,47 @@
+# +MS selects the modulation (V.250 clause 6.4.1): a carrier, automode,
+# and four rates, each of which is 0 or 300. A subparameter left out
+# stays as it is. B0 and B1 set the carrier: V.21 and Bell 103. S9 is
+# the carrier response time and S10 the carrier loss time, in tenths of
+# a second.
+> ATE0\r
+< ATE0\r\r\nOK\r\n
+> AT+MS?\r
+< \r\n+MS: V21,1,0,0,0,0\r\n\r\nOK\r\n
+> AT+MS=?\r
+< \r\n+MS: (V21,B103),(0,1),(0,300),(0,300),(0,300),(0,300)\r\n\r\nOK\r\n
+> ATB1+MS?\r
+< \r\n+MS: B103,1,0,0,0,0\r\n\r\nOK\r\n
+> AT+MS=,0;+MS?\r
+< \r\n+MS: B103,0,0,0,0,0\r\n\r\nOK\r\n
+> ATB0+MS?\r
+< \r\n+MS: V21,0,0,0,0,0\r\n\r\nOK\r\n
+> ATB+MS?\r
+< \r\n+MS: V21,0,0,0,0,0\r\n\r\nOK\r\n
+> AT+MS=b103,1,300,300\r
+< \r\nOK\r\n
+> AT+MS?\r
+< \r\n+MS: B103,1,300,300,0,0\r\n\r\nOK\r\n
+# A carrier, an automode or a rate the modem has not got is an error,
+# and leaves +MS as it was.
+> AT+MS=V34\r
+< \r\nERROR\r\n
+> AT+MS=V21,2\r
+< \r\nERROR\r\n
+> AT+MS=V21,1,1200\r
+< \r\nERROR\r\n
+> AT+MS=V21,1,0,0,0,0,0\r
+< \r\nERROR\r\n
+> ATB2\r
+< \r\nERROR\r\n
+> AT+MS?\r
+< \r\n+MS: B103,1,300,300,0,0\r\n\r\nOK\r\n
+> AT+MS=;+MS?\r
+< \r\n+MS: V21,1,0,0,0,0\r\n\r\nOK\r\n
+> ATS9?S10?\r
+< \r\n006\r\n\r\n014\r\n\r\nOK\r\n
+> ATS9=20S10=50S9?S10?\r
+< \r\n020\r\n\r\n050\r\n\r\nOK\r\n
+! s 9=20
+! s 10=50
+> AT&F S9?\r
+< \r\n006\r\n\r\nOK\r\n

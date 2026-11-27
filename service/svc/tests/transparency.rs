@@ -57,9 +57,10 @@ struct Service {
 }
 
 impl Service {
-    /// `engine` is the line's engine; `outbound` is where the line's
-    /// calls go.
-    fn new(transport: SipSocket, engine: &str, outbound: Option<SocketAddrV4>) -> Service {
+    /// `line` is the line's own settings, its engine among them, as the
+    /// configuration file has them; `outbound` is where the line's calls
+    /// go.
+    fn new(transport: SipSocket, line: &str, outbound: Option<SocketAddrV4>) -> Service {
         let sip = transport.local();
         // A stretch of ports the two services and the other test programs
         // do not fight over.
@@ -78,7 +79,7 @@ rtp_timeout_s = 5
 [[line]]
 id = 1
 serial = {{ backend = "com0com", port = "P1" }}
-engine = "{engine}"
+{line}
 
 [[hunt_group]]
 name = "in"
@@ -141,14 +142,14 @@ struct Pair {
 
 impl Pair {
     /// `a` sends the calls its line dials to `b`. Neither has a host yet.
-    fn new(engine_a: &str, engine_b: &str) -> Pair {
+    fn new(line_a: &str, line_b: &str) -> Pair {
         let loopback = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0);
         let transport_a = sip_socket(loopback, Arc::new(|| {})).unwrap();
         let transport_b = sip_socket(loopback, Arc::new(|| {})).unwrap();
         let b_at = transport_b.local();
         let mut pair = Pair {
-            a: Service::new(transport_a, engine_a, Some(b_at)),
-            b: Service::new(transport_b, engine_b, None),
+            a: Service::new(transport_a, line_a, Some(b_at)),
+            b: Service::new(transport_b, line_b, None),
             started: Instant::now(),
         };
         pair.turn();
@@ -177,8 +178,18 @@ impl Pair {
     }
 
     /// Runs both pools until `done`, or fails saying what was waited for.
-    fn until(&mut self, what: &str, mut done: impl FnMut(&mut Pair) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(60);
+    fn until(&mut self, what: &str, done: impl FnMut(&mut Pair) -> bool) {
+        self.until_within(what, Duration::from_secs(60), done);
+    }
+
+    /// Runs both pools until `done`, for no longer than `limit`.
+    fn until_within(
+        &mut self,
+        what: &str,
+        limit: Duration,
+        mut done: impl FnMut(&mut Pair) -> bool,
+    ) {
+        let deadline = Instant::now() + limit;
         loop {
             self.turn();
             if done(self) {
@@ -230,6 +241,11 @@ impl Pair {
     }
 }
 
+/// The settings of a line with the null engine, and of one with the echo
+/// engine.
+const NULL: &str = "engine = \"null\"";
+const ECHO: &str = "engine = \"echo\"";
+
 /// Data that repeats only after a very long time.
 fn noise(seed: u64, len: usize) -> Vec<u8> {
     let mut state = seed | 1;
@@ -248,7 +264,7 @@ fn noise(seed: u64, len: usize) -> Vec<u8> {
 #[test]
 fn a_megabyte_each_way_between_two_null_engine_lines_over_sip_and_rtp() {
     const SIZE: usize = 1024 * 1024;
-    let mut pair = Pair::new("null", "null");
+    let mut pair = Pair::new(NULL, NULL);
     pair.connect();
 
     let from_a = noise(0xA11CE, SIZE);
@@ -316,7 +332,7 @@ fn a_megabyte_each_way_between_two_null_engine_lines_over_sip_and_rtp() {
 /// null engine at the other end reads back the data it sent.
 #[test]
 fn a_call_to_an_echo_line_comes_back_over_rtp() {
-    let mut pair = Pair::new("null", "echo");
+    let mut pair = Pair::new(NULL, ECHO);
     pair.connect();
 
     let data = noise(0xEC40, 64 * 1024);
@@ -365,7 +381,7 @@ fn a_call_to_an_echo_line_comes_back_over_rtp() {
 /// With the media gone and no BYE, the RTP timeout clears the call.
 #[test]
 fn a_call_whose_media_stops_is_cleared_by_the_timeout() {
-    let mut pair = Pair::new("null", "null");
+    let mut pair = Pair::new(NULL, NULL);
     pair.connect();
     // b vanishes: its pool is no longer served, and its media threads end
     // with it.
@@ -384,4 +400,100 @@ fn a_call_whose_media_stops_is_cleared_by_the_timeout() {
     }
     assert_eq!(a.state(), LineState::Idle);
     let _ = a.sip;
+}
+
+/// Two lines with the modem engine, each in a service of its own, call
+/// each other over SIP and RTP on loopback, with the media on its threads:
+/// they connect at 300 bit/s with the carrier named, and what each host
+/// sends the other gets. `dial` is what a's host types before it dials.
+///
+/// A character takes a thirtieth of a second, so the data is half a
+/// kibibyte each way, or as many kibibytes as `RM_MODEM_KIB` says: the 64
+/// of the phase's exit criteria is this test with 64, and takes some
+/// minutes. The two ends tick each other, with no clock between them, so
+/// the call runs as fast as the machine carries it.
+fn modems_connect_and_carry_data(line_a: &str, line_b: &str, dial: &str, carrier: &str) {
+    let size = std::env::var("RM_MODEM_KIB")
+        .ok()
+        .and_then(|kib| kib.parse::<usize>().ok())
+        .map_or(512, |kib| kib * 1024);
+    let mut pair = Pair::new(line_a, line_b);
+    pair.a.host().write(format!("ATE0{dial}\r").as_bytes());
+    pair.b.host().write(b"ATE0\r");
+    pair.until("echo is off", |pair| {
+        pair.a.seen.ends_with(b"OK\r\n") && pair.b.seen.ends_with(b"OK\r\n")
+    });
+    pair.a.heard();
+    pair.b.heard();
+
+    pair.a.host().write(b"ATD5551000\r");
+    pair.until("b rings", |pair| pair.b.seen.ends_with(b"RING\r\n"));
+    pair.b.host().write(b"ATA\r");
+    pair.until("both are connected", |pair| {
+        pair.a.state() == LineState::Online && pair.b.state() == LineState::Online
+    });
+    pair.until("both hosts are told", |pair| {
+        pair.a.seen.ends_with(b"\r\n") && pair.b.seen.ends_with(b"300\r\n")
+    });
+    assert_eq!(pair.a.heard(), "\r\nCONNECT 300\r\n");
+    assert_eq!(pair.b.heard(), "\r\nRING\r\n\r\nCONNECT 300\r\n");
+    for service in [&pair.a, &pair.b] {
+        let connect = service.pool.line(1).unwrap().call.unwrap().connect.unwrap();
+        assert_eq!(
+            (connect.rate, connect.carrier.as_deref(), connect.protocol),
+            (300, Some(carrier), None)
+        );
+    }
+
+    let from_a = noise(0xA11CE, size);
+    let from_b = noise(0xB0B, size);
+    pair.a.host().write(&from_a);
+    pair.b.host().write(&from_b);
+    // Thirty characters a second, and as long again to spare.
+    let limit = Duration::from_secs(size as u64 / 15 + 30);
+    pair.until_within("the data has gone each way", limit, |pair| {
+        pair.a.seen.len() >= size && pair.b.seen.len() >= size
+    });
+    for _ in 0..200 {
+        pair.turn();
+    }
+    assert!(pair.b.seen == from_a, "what a's host sent is what b's got");
+    assert!(pair.a.seen == from_b, "what b's host sent is what a's got");
+    assert_eq!(pair.a.state(), LineState::Online);
+    assert_eq!(pair.b.state(), LineState::Online);
+    pair.a.seen.clear();
+    pair.b.seen.clear();
+
+    // a's host hangs up: b's modem loses the carrier and says so, after
+    // the time its S10 has.
+    pair.a.host().set_dtr(false);
+    pair.until("b's call is cleared", |pair| {
+        pair.b.seen.ends_with(b"NO CARRIER\r\n")
+    });
+    pair.until("both lines are free", |pair| {
+        pair.a.state() == LineState::NotReady && pair.b.state() == LineState::Idle
+    });
+}
+
+/// The settings of a line with the modem engine and nothing of its own.
+const MODEM: &str = "engine = \"modem\"";
+
+/// Both modems as they come: V.8 chooses V.21.
+#[test]
+fn two_modem_lines_connect_with_v8_and_carry_data_over_sip_and_rtp() {
+    modems_connect_and_carry_data(MODEM, MODEM, "", "V.21");
+}
+
+/// Neither modem has V.8: the answerer's carrier says it is V.21.
+#[test]
+fn two_modem_lines_connect_without_v8_and_carry_data_over_sip_and_rtp() {
+    let line = "modem = { v8 = false }";
+    modems_connect_and_carry_data(line, line, "", "V.21");
+}
+
+/// The caller's host asks for Bell 103 and nothing else with `+MS`, and
+/// the answerer, which has V.8 and both modulations, falls back to it.
+#[test]
+fn two_modem_lines_connect_with_bell_103_and_carry_data_over_sip_and_rtp() {
+    modems_connect_and_carry_data(MODEM, MODEM, "+MS=B103,0", "BELL103");
 }

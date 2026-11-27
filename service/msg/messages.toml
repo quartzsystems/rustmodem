@@ -22,6 +22,7 @@
 #   4000-4999  manager
 #   5000-5999  telephony
 #   6000-6999  media
+#   7000-7999  modem
 #
 # The rest is left for later phases.
 
@@ -800,3 +801,14 @@ vars = 3
 text = "The capture of the call on line &1 could not be written to &2: &3"
 cause = "The capture directory could not be made or the file could not be written. The call is not affected; its capture is given up."
 recovery = "Correct media.capture_dir or the permissions of the directory, or free space on the disk."
+
+# ---------------------------------------------------------------------------
+# 7000-7999: modem
+# ---------------------------------------------------------------------------
+
+[RMD7001]
+severity = "warning"
+vars = 2
+text = "The modem on line &1 did not connect: it gave up in the state &2."
+cause = "The far end sent no answer tone or carrier the modem knows, the two modems have no modulation in common, or the line is too poor for the carrier to be held. The state is where the handshake stopped; docs/MODEM.md lists the states."
+recovery = "Check that the far end is a modem of 300 bit/s (V.21 or Bell 103) and that the gateway carries the call as G.711 with no echo canceller, silence suppression or jitter buffer adaptation. Capture a call to see what was received."

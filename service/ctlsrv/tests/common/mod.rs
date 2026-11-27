@@ -135,7 +135,10 @@ impl Fixture {
 
         let config = Config {
             lines: (1..=lines)
-                .map(|id| LineConfig::new(id, &format!("P{id}")))
+                .map(|id| LineConfig {
+                    engine: config::EngineKind::Null,
+                    ..LineConfig::new(id, &format!("P{id}"))
+                })
                 .collect(),
             ..Config::default()
         };
@@ -148,7 +151,7 @@ impl Fixture {
             router: Box::new(NullSwitch::new()),
             media: Box::new(InlineRunner::new()),
             serial: Box::new(Factory(Arc::clone(&hosts))),
-            engines: Box::new(|_| Box::new(NullEngine::new(NullConfig::default()))),
+            engines: Box::new(|_, _| Box::new(NullEngine::new(NullConfig::default()))),
             sink: Box::new(HubSink(hub.clone())),
             profiles: Box::new(MemoryProfiles::new()),
             call_log: None,

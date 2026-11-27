@@ -21,7 +21,7 @@ mod profile;
 
 pub use engine::ConnectInfo;
 pub use interp::AtInterpreter;
-pub use profile::Profile;
+pub use profile::{Carrier, ModulationSelection, Profile};
 
 /// The V.24 circuits a modem drives toward its host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]

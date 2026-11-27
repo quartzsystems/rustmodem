@@ -8,7 +8,8 @@
 
 use crate::interp::{AtInterpreter, State};
 use crate::profile::{
-    FACTORY_DS, FACTORY_ES, FACTORY_MS, RANGE_DS, RANGE_ES, RANGE_MS, acceptable_parameter,
+    Carrier, FACTORY_DS, FACTORY_ES, FACTORY_MS, ModulationSelection, RANGE_DS, RANGE_ES, RANGE_MS,
+    acceptable_parameter,
 };
 use crate::{Action, HangupCause, Output, Profile, ResultCode, Trace, UnknownCommand};
 
@@ -130,6 +131,21 @@ impl AtInterpreter {
                 Next::Done
             }
             b'D' => self.dial(cursor, out),
+            // The carrier at 300 bit/s: B0 is the ITU's, V.21, and B1 is
+            // Bell 103. Not in V.250; it is the command Hayes-compatible
+            // modems have for it. It sets the carrier of +MS.
+            b'B' => match parameter(cursor, 1) {
+                Some(n) => {
+                    let carrier = if n == 0 {
+                        Carrier::V21
+                    } else {
+                        Carrier::Bell103
+                    };
+                    self.profile.set_carrier(carrier);
+                    Next::Continue
+                }
+                None => Next::Fail,
+            },
             // V.250 clause 6.2.4: command echo.
             b'E' => match parameter(cursor, 1) {
                 Some(n) => {
@@ -496,6 +512,15 @@ impl AtInterpreter {
                 // returns the parameter to its default (clause 5.4.4.2).
                 let value = if value.is_empty() {
                     factory.to_string()
+                } else if matches!(stored, Stored::Ms) {
+                    // +MS has an effect, so it is read: a carrier or a
+                    // rate this modem has not got is an error, and a
+                    // subparameter left out stays as it is.
+                    let current = self.profile.modulation();
+                    match ModulationSelection::parse(value, Some(current)) {
+                        Some(selection) => selection.to_string(),
+                        None => return Next::Fail,
+                    }
                 } else {
                     value.iter().map(|b| char::from(*b)).collect()
                 };

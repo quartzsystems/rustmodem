@@ -34,7 +34,10 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use engine::{FRAME_20MS, ModemEngine, ModemEvent, SILENCE_OCTET};
+use engine::{
+    Diagnostics, EngineState, FRAME_20MS, ModemEngine, ModemEvent, SCOPE_SAMPLES, SILENCE_OCTET,
+    STATE_HISTORY, ScopeKind, StateChange,
+};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::router::LineId;
@@ -176,7 +179,15 @@ pub struct MediaShared {
     /// The runner publishes statistics.
     has_stats: AtomicBool,
     stats: [AtomicU64; 21],
+    /// The runner publishes the engine's snapshot of itself.
+    has_diagnostics: AtomicBool,
+    diagnostics: [AtomicU64; DIAGNOSTIC_WORDS],
 }
+
+/// The words a snapshot is carried in: four of numbers, one for each
+/// change of state it remembers, and one for every eight samples of its
+/// scope.
+const DIAGNOSTIC_WORDS: usize = 4 + STATE_HISTORY + SCOPE_SAMPLES / 8;
 
 impl MediaShared {
     /// Whether the pool wants the call's packets captured.
@@ -218,6 +229,74 @@ impl MediaShared {
             slot.store(value, Ordering::Relaxed);
         }
         self.has_stats.store(true, Ordering::Relaxed);
+    }
+
+    /// Publishes the engine's snapshot of itself. Like the statistics,
+    /// each word is stored by itself: a reader may see the levels of one
+    /// tick with the scope of the next, and nothing is torn.
+    pub fn publish_diagnostics(&self, snapshot: &Diagnostics) {
+        let mut words = [0u64; DIAGNOSTIC_WORDS];
+        words[0] = u64::from(snapshot.state as u8)
+            | (u64::from(snapshot.carrier) << 8)
+            | (u64::from(snapshot.changes) << 16)
+            | (u64::from(snapshot.scope_kind as u8) << 24)
+            | (u64::from(snapshot.framing_errors) << 32);
+        words[1] = u64::from(snapshot.rx_level_dbm0.to_bits())
+            | (u64::from(snapshot.tx_level_dbm0.to_bits()) << 32);
+        words[2] = u64::from(snapshot.frequency_error_hz.to_bits())
+            | (u64::from(snapshot.quality.to_bits()) << 32);
+        words[3] = u64::from(snapshot.retrains);
+        for (word, change) in words[4..].iter_mut().zip(&snapshot.history) {
+            *word = u64::from(change.state as u8) | (u64::from(change.at_ms) << 8);
+        }
+        let scope = &mut words[4 + STATE_HISTORY..];
+        for (word, samples) in scope.iter_mut().zip(snapshot.scope.chunks(8)) {
+            for (n, sample) in samples.iter().enumerate() {
+                *word |= u64::from(*sample as u8) << (8 * n);
+            }
+        }
+        for (slot, word) in self.diagnostics.iter().zip(words) {
+            slot.store(word, Ordering::Relaxed);
+        }
+        self.has_diagnostics.store(true, Ordering::Relaxed);
+    }
+
+    /// The snapshot last published, if the call's engine has one to
+    /// show.
+    pub fn diagnostics(&self) -> Option<Diagnostics> {
+        if !self.has_diagnostics.load(Ordering::Relaxed) {
+            return None;
+        }
+        let get = |index: usize| self.diagnostics[index].load(Ordering::Relaxed);
+        let mut snapshot = Diagnostics {
+            state: EngineState::from_number(get(0) as u8),
+            carrier: get(0) >> 8 & 1 != 0,
+            changes: ((get(0) >> 16) as u8).min(STATE_HISTORY as u8),
+            scope_kind: if (get(0) >> 24) as u8 == ScopeKind::Discriminator as u8 {
+                ScopeKind::Discriminator
+            } else {
+                ScopeKind::None
+            },
+            framing_errors: (get(0) >> 32) as u32,
+            rx_level_dbm0: f32::from_bits(get(1) as u32),
+            tx_level_dbm0: f32::from_bits((get(1) >> 32) as u32),
+            frequency_error_hz: f32::from_bits(get(2) as u32),
+            quality: f32::from_bits((get(2) >> 32) as u32),
+            retrains: get(3) as u32,
+            ..Diagnostics::default()
+        };
+        for (n, change) in snapshot.history.iter_mut().enumerate() {
+            let word = get(4 + n);
+            *change = StateChange {
+                state: EngineState::from_number(word as u8),
+                at_ms: (word >> 8) as u32,
+            };
+        }
+        for (n, sample) in snapshot.scope.iter_mut().enumerate() {
+            let word = get(4 + STATE_HISTORY + n / 8);
+            *sample = (word >> (8 * (n % 8))) as u8 as i8;
+        }
+        Some(snapshot)
     }
 
     /// The statistics last published, if the runner publishes any.
@@ -336,6 +415,12 @@ impl MediaCall {
     /// The statistics of the call, if its runner keeps any.
     pub fn stats(&self) -> Option<MediaStats> {
         self.shared.stats()
+    }
+
+    /// The snapshot the call's engine last gave of itself, if it gives
+    /// any.
+    pub fn diagnostics(&self) -> Option<Diagnostics> {
+        self.shared.diagnostics()
     }
 
     /// What the pool and the runner share: it outlives the call, so that
@@ -552,5 +637,8 @@ impl MediaRunner for InlineRunner {
         call.engine.process(&rx, &mut tx);
         call.endpoint.send(&tx);
         call.port.drain(call.engine.as_mut());
+        if let Some(snapshot) = call.engine.diagnostics() {
+            call.port.shared().publish_diagnostics(&snapshot);
+        }
     }
 }

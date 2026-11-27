@@ -281,10 +281,10 @@ mod tests {
             assert!(is_well_formed_id(&entry.id), "{} is malformed", entry.id);
             let number: u32 = entry.id[3..].parse().unwrap();
             // Service and configuration, lines and AT, the control API,
-            // serial, from phase 1 the manager, and from phase 2 telephony
-            // and media.
+            // serial, from phase 1 the manager, from phase 2 telephony and
+            // media, and from phase 3 the modem.
             assert!(
-                (1..=6999).contains(&number),
+                (1..=7999).contains(&number),
                 "{} is outside the ranges in use",
                 entry.id
             );

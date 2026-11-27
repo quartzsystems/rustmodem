@@ -124,7 +124,10 @@ pub struct Harness {
 pub fn config_with_lines(count: u16) -> Config {
     Config {
         lines: (1..=count)
-            .map(|id| LineConfig::new(id, &format!("P{id}")))
+            .map(|id| LineConfig {
+                engine: config::EngineKind::Null,
+                ..LineConfig::new(id, &format!("P{id}"))
+            })
             .collect(),
         ..Config::default()
     }
@@ -156,7 +159,7 @@ impl Harness {
             profiles,
             Box::new(NullSwitch::new()),
             Box::new(InlineRunner::new()),
-            Box::new(move |_| Box::new(NullEngine::new(null))),
+            Box::new(move |_, _| Box::new(NullEngine::new(null))),
         )
     }
 

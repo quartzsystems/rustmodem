@@ -273,7 +273,7 @@ mod tests {
         profile.x = 1;
         profile.dtr_action = 3;
         profile.flow = 0;
-        profile.ms = "V22,1,1200,1200".to_string();
+        profile.ms = "B103,0,300,300,0,0".to_string();
         assert!(profile.set_register(7, 25));
         assert!(profile.set_register(12, 40));
         profile
@@ -295,7 +295,7 @@ mod tests {
         assert!(text.starts_with("# rustmodem stored profiles"), "{text}");
         assert!(text.contains("\n[line.1]\necho = false\n"), "{text}");
         assert!(text.contains("\n[line.12]\n"), "{text}");
-        assert!(text.contains("ms = \"V22,1,1200,1200\"\n"), "{text}");
+        assert!(text.contains("ms = \"B103,0,300,300,0,0\"\n"), "{text}");
         assert!(text.contains("\ns7 = 25\n"), "{text}");
         assert!(!text.contains("s1 ="), "S1 is not kept: {text}");
         assert!(!text.contains("[line]\n"), "{text}");

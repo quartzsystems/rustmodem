@@ -77,7 +77,10 @@ fn a_hundred_lines_on_memory_ports_are_served_as_the_first_is() {
     let (shutdown, stopping) = svc::shutdown::channel();
     let config = Config {
         lines: (1..=LINES)
-            .map(|id| LineConfig::new(id, &format!("P{id}")))
+            .map(|id| LineConfig {
+                engine: config::EngineKind::Null,
+                ..LineConfig::new(id, &format!("P{id}"))
+            })
             .collect(),
         ..Config::default()
     };
@@ -90,7 +93,7 @@ fn a_hundred_lines_on_memory_ports_are_served_as_the_first_is() {
             Box::new(Ports(Arc::clone(&hosts))),
             Arc::clone(&wake),
         )),
-        engines: Box::new(|_| Box::new(NullEngine::new(NullConfig::default()))),
+        engines: Box::new(|_, _| Box::new(NullEngine::new(NullConfig::default()))),
         sink: Box::new(Sink),
         profiles: Box::new(MemoryProfiles::new()),
         call_log: None,

@@ -9,9 +9,10 @@ use msg::{Message, message};
 use toml_edit::{Document, DocumentMut, Item, TableLike};
 
 use crate::schema::{
-    Backend, Cidr, CodecName, Config, ControlConfig, EngineKind, HuntGroup, LineConfig, LogLevel,
-    MAX_LINE_ID, MediaConfig, PortRange, RegisterConfig, Route, SerialConfig, ServiceConfig,
-    SipConfig, Strategy, Target, UnknownCommand, pattern_covers,
+    Backend, Cidr, CodecName, Config, ControlConfig, EngineKind, HuntGroup, LineConfig, LineModem,
+    LogLevel, MAX_LINE_ID, MediaConfig, ModemConfig, ModulationName, PortRange, RegisterConfig,
+    Route, SerialConfig, ServiceConfig, SipConfig, Strategy, Target, UnknownCommand,
+    pattern_covers,
 };
 
 /// The longest pipe or port name accepted.
@@ -203,6 +204,9 @@ impl Reader<'_> {
         if let Some(table) = self.table(root, "media", "media") {
             config.media = self.media(table);
         }
+        if let Some(table) = self.table(root, "modem", "modem") {
+            config.modem = self.modem(table);
+        }
         if let Some(item) = root.get("line") {
             match item.as_array_of_tables() {
                 Some(lines) => self.lines(lines, &mut config.lines),
@@ -355,6 +359,89 @@ impl Reader<'_> {
             }
         }
         sip
+    }
+
+    /// The modulations of a `modulations` key: at least one, each once.
+    fn modulations(&mut self, table: &dyn TableLike, path: &str) -> Option<Vec<ModulationName>> {
+        let values = self.strings(table, "modulations", path)?;
+        let mut modulations: Vec<ModulationName> = Vec::new();
+        let mut valid = true;
+        for (value, line) in &values {
+            match ModulationName::parse(value) {
+                Some(modulation) if !modulations.contains(&modulation) => {
+                    modulations.push(modulation);
+                }
+                _ => {
+                    valid = false;
+                    self.not_allowed_at(path, *line, value, "v21 and bell103, each once");
+                }
+            }
+        }
+        if modulations.is_empty() && valid {
+            let line = table.get("modulations").map_or(0, |item| self.line(item));
+            self.not_allowed_at(path, line, "[]", "at least one of v21 and bell103");
+            return None;
+        }
+        valid.then_some(modulations)
+    }
+
+    /// The transmit level of a `tx_level_dbm0` key.
+    fn tx_level(&mut self, table: &dyn TableLike, path: &str) -> Option<i8> {
+        let (value, item) = self.integer(table, "tx_level_dbm0", path)?;
+        if ModemConfig::TX_LEVELS.contains(&value) {
+            Some(value as i8)
+        } else {
+            self.not_allowed(path, item, &value.to_string(), "-20 to -9");
+            None
+        }
+    }
+
+    fn modem(&mut self, table: &dyn TableLike) -> ModemConfig {
+        let mut modem = ModemConfig::default();
+        if let Some(modulations) = self.modulations(table, "modem.modulations") {
+            modem.modulations = modulations;
+        }
+        if let Some(value) = self.boolean(table, "v8", "modem.v8") {
+            modem.v8 = value;
+        }
+        if let Some(level) = self.tx_level(table, "modem.tx_level_dbm0") {
+            modem.tx_level_dbm0 = level;
+        }
+        if let Some((value, item)) = self.integer(table, "answer_delay_ms", "modem.answer_delay_ms")
+        {
+            if ModemConfig::ANSWER_DELAYS.contains(&value) {
+                modem.answer_delay_ms = value as u32;
+            } else {
+                self.not_allowed(
+                    "modem.answer_delay_ms",
+                    item,
+                    &value.to_string(),
+                    "0 to 10000",
+                );
+            }
+        }
+        if let Some((value, item)) = self.integer(table, "fallback_ms", "modem.fallback_ms") {
+            if ModemConfig::FALLBACK_TIMES.contains(&value) {
+                modem.fallback_ms = value as u32;
+            } else {
+                self.not_allowed(
+                    "modem.fallback_ms",
+                    item,
+                    &value.to_string(),
+                    "500 to 20000",
+                );
+            }
+        }
+        modem
+    }
+
+    /// The `modem` table of a line.
+    fn line_modem(&mut self, table: &dyn TableLike) -> LineModem {
+        LineModem {
+            modulations: self.modulations(table, "line.modem.modulations"),
+            v8: self.boolean(table, "v8", "line.modem.v8"),
+            tx_level_dbm0: self.tx_level(table, "line.modem.tx_level_dbm0"),
+        }
     }
 
     fn media(&mut self, table: &dyn TableLike) -> MediaConfig {
@@ -810,8 +897,12 @@ impl Reader<'_> {
             if let Some((value, item)) = self.string(table, "engine", "line.engine") {
                 match EngineKind::parse(value) {
                     Some(engine) => line.engine = engine,
-                    None => self.not_allowed("line.engine", item, value, "null, echo"),
+                    None => self.not_allowed("line.engine", item, value, "modem, null, echo"),
                 }
+            }
+
+            if let Some(modem) = self.table(table, "modem", "line.modem") {
+                line.modem = self.line_modem(modem);
             }
 
             if let Some(register) = self.table(table, "register", "line.register") {

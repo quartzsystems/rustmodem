@@ -149,7 +149,7 @@ fn a_file_with_none_of_the_new_sections_is_as_it_was() {
     assert_eq!(config.media, MediaConfig::default());
     assert!(config.hunt_groups.is_empty());
     assert!(config.routes.is_empty());
-    assert_eq!(config.lines[0].engine, EngineKind::Null);
+    assert_eq!(config.lines[0].engine, EngineKind::Modem);
     assert_eq!(config.lines[0].register, None);
     // And a configuration with none of them is rendered with none of them.
     let rendered = ConfigFile::from_config(config).unwrap().to_toml();

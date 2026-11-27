@@ -65,6 +65,10 @@ fn starting_config(options: &Options) -> Config {
     let lines = (1..=options.lines)
         .map(|id| {
             let mut line = LineConfig::new(id, &port_of_line(id));
+            // The scripts play the far end of every call themselves: the
+            // lines have the null engine, and the `sip` script gives some
+            // the echo engine.
+            line.engine = config::EngineKind::Null;
             if options.script == Script::Frozen && id == frozen::DISABLED_LINE {
                 line.enabled = false;
             }
@@ -167,7 +171,7 @@ pub fn run(options: &Options) -> Result<(), Vec<Message>> {
                 (
                     Box::new(NullSwitch::new()),
                     Box::new(InlineRunner::new()),
-                    Box::new(move |_| Box::new(DemoEngine::new(Arc::clone(&negotiation)))),
+                    Box::new(move |_, _| Box::new(DemoEngine::new(Arc::clone(&negotiation)))),
                 )
             }
         };

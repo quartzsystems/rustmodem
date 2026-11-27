@@ -25,7 +25,7 @@ use pool::{LineId, MediaCall, MediaEndpoint, MediaPort, MediaRunner, media_pair}
 use crate::capture::{CaptureMeta, CaptureTap, CaptureWriter};
 use crate::endpoint::RtpEndpoint;
 use crate::os;
-use crate::ticker::{Clock, MAX_DATAGRAM, Received, Ticker, Transport};
+use crate::ticker::{Clock, MAX_DATAGRAM, Received, Ticker, Transport, law_of};
 
 /// Tells whatever drives the pool that a call has an event for it to
 /// take. It answers whether the pool was told. `false` means it could not
@@ -266,6 +266,9 @@ fn carry(job: Job, waker: &Waker) -> Box<dyn ModemEngine> {
     );
     let _scheduling = os::ProAudio::enter();
 
+    // The engine is told the law of the call before it is started: it
+    // builds what the call needs from it.
+    engine.set_law(law_of(endpoint.params.get().payload_type));
     if originate {
         engine.originate();
     } else {
@@ -291,6 +294,9 @@ fn carry(job: Job, waker: &Waker) -> Box<dyn ModemEngine> {
     }
 
     ticker.publish(port.shared());
+    if let Some(snapshot) = engine.diagnostics() {
+        port.shared().publish_diagnostics(&snapshot);
+    }
     engine.hangup();
     engine
 }

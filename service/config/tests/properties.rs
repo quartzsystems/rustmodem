@@ -10,8 +10,8 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 
 use config::{
     Backend, Cidr, CodecName, Config, ConfigFile, ControlConfig, EngineKind, HuntGroup, LineConfig,
-    LineEdit, LogLevel, MediaConfig, PortRange, RegisterConfig, Route, SerialConfig, ServiceConfig,
-    SipConfig, Strategy as HuntStrategy, Target, UnknownCommand,
+    LineEdit, LineModem, LogLevel, MediaConfig, ModemConfig, PortRange, RegisterConfig, Route,
+    SerialConfig, ServiceConfig, SipConfig, Strategy as HuntStrategy, Target, UnknownCommand,
 };
 use proptest::prelude::*;
 
@@ -242,6 +242,8 @@ fn valid_config() -> impl Strategy<Value = Config> {
                             auto_answer_rings,
                             unknown_command,
                             engine,
+                            // `modem.rs` has the modem settings.
+                            modem: LineModem::default(),
                             register,
                         }
                     })
@@ -264,6 +266,7 @@ fn valid_config() -> impl Strategy<Value = Config> {
                     lines,
                     sip,
                     media,
+                    modem: ModemConfig::default(),
                     hunt_groups,
                     routes,
                 }

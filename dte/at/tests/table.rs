@@ -161,7 +161,7 @@ $ONLINE_COMMAND
 < \\r\\nOK\\r\\n
 > AT&V\\r
 < \\r\\nACTIVE PROFILE:\\r\\nE0 Q0 V1 X4 L3 M2 &C1 &D2 &K3\\r\\n
-< S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S10:014 S12:050\\r\\n
+< S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S09:006 S10:014 S12:050\\r\\n
 < +MS: V21,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,6\\r\\n\\r\\nOK\\r\\n
 > ATL4\\r
 < \\r\\nERROR\\r\\n
@@ -495,7 +495,7 @@ $ONLINE_COMMAND
 < \\r\\nOK\\r\\n
 > AT&V\\r
 < \\r\\nACTIVE PROFILE:\\r\\nE0 Q0 V1 X4 L0 M0 &C1 &D2 &K0\\r\\n
-< S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S10:014 S12:050\\r\\n
+< S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S09:006 S10:014 S12:050\\r\\n
 < +MS: V21,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,6\\r\\n\\r\\nOK\\r\\n
 > AT&K3\\r
 < \\r\\nOK\\r\\n
@@ -512,12 +512,12 @@ $ONLINE_COMMAND
         script: "\
 > ATS0=2S7=45X3&D1&C0\\r
 < \\r\\nOK\\r\\n
-> AT+MS=V34,1,300,33600;+ES=1,0,2;+DS=0,0,512,6\\r
+> AT+MS=B103,0,300,300;+ES=1,0,2;+DS=0,0,512,6\\r
 < \\r\\nOK\\r\\n
 > AT&V\\r
 < \\r\\nACTIVE PROFILE:\\r\\nE0 Q0 V1 X3 L0 M0 &C0 &D1 &K3\\r\\n
-< S00:002 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:045 S10:014 S12:050\\r\\n
-< +MS: V34,1,300,33600\\r\\n+ES: 1,0,2\\r\\n+DS: 0,0,512,6\\r\\n\\r\\nOK\\r\\n
+< S00:002 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:045 S09:006 S10:014 S12:050\\r\\n
+< +MS: B103,0,300,300,0,0\\r\\n+ES: 1,0,2\\r\\n+DS: 0,0,512,6\\r\\n\\r\\nOK\\r\\n
 > AT&V1\\r
 < \\r\\nERROR\\r\\n
 ",
@@ -547,12 +547,12 @@ $ONLINE_COMMAND
         script: "\
 > AT+MS?\\r
 < \\r\\n+MS: V21,1,0,0,0,0\\r\\n\\r\\nOK\\r\\n
-> AT+MS=v34,1,300,33600\\r
+> AT+MS=b103,0,300,300\\r
 < \\r\\nOK\\r\\n
 > AT+MS?\\r
-< \\r\\n+MS: V34,1,300,33600\\r\\n\\r\\nOK\\r\\n
+< \\r\\n+MS: B103,0,300,300,0,0\\r\\n\\r\\nOK\\r\\n
 > AT+MS=?\\r
-< \\r\\n+MS: (V21),(0,1),(0),(0),(0),(0)\\r\\n\\r\\nOK\\r\\n
+< \\r\\n+MS: (V21,B103),(0,1),(0,300),(0,300),(0,300),(0,300)\\r\\n\\r\\nOK\\r\\n
 > AT+ES?;+ES=?\\r
 < \\r\\n+ES: 3,0,2\\r\\n\\r\\n+ES: (0-4),(0-4),(0-6)\\r\\n\\r\\nOK\\r\\n
 > AT+ES=1,0,2;+DS=0,0,512,6;+ES?;+DS?;E0\\r
@@ -584,7 +584,7 @@ $ONLINE_COMMAND
 < \\r\\nOK\\r\\n
 > ATS95?\\r
 < \\r\\n000\\r\\n\\r\\nOK\\r\\n
-> ATB0X5\\r
+> ATY0X5\\r
 < \\r\\nERROR\\r\\n
 ",
     },
@@ -593,13 +593,13 @@ $ONLINE_COMMAND
 const UNKNOWN_IS_ERROR: &[Row] = &[Row {
     row: "anything else, unknown_command = error",
     script: "\
-> ATB0\\r
+> ATY0\\r
 < \\r\\nERROR\\r\\n
-> ATX1B0X2\\r
+> ATX1Y0X2\\r
 < \\r\\nERROR\\r\\n
 > AT&V\\r
 < \\r\\nACTIVE PROFILE:\\r\\nE0 Q0 V1 X1 L0 M0 &C1 &D2 &K3\\r\\n
-< S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S10:014 S12:050\\r\\n
+< S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S09:006 S10:014 S12:050\\r\\n
 < +MS: V21,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,6\\r\\n\\r\\nOK\\r\\n
 > AT\\\\N3\\r
 < \\r\\nERROR\\r\\n

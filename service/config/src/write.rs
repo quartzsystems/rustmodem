@@ -10,8 +10,9 @@ use toml_edit::{
 };
 
 use crate::schema::{
-    Cidr, Config, EngineKind, HuntGroup, HuntGroupEdit, LineConfig, LineEdit, MediaConfig,
-    RegisterConfig, Route, RouteEdit, SettingsEdit, SipConfig, UnknownCommand,
+    Cidr, Config, EngineKind, HuntGroup, HuntGroupEdit, LineConfig, LineEdit, LineModem,
+    MediaConfig, ModemConfig, RegisterConfig, Route, RouteEdit, SettingsEdit, SipConfig,
+    UnknownCommand,
 };
 
 /// Renders a configuration as a new document with no comments.
@@ -54,6 +55,19 @@ pub(crate) fn render(config: &Config) -> String {
         document["media"] = Item::Table(table);
     }
 
+    if config.modem != ModemConfig::default() {
+        let modem = &config.modem;
+        let mut table = Table::new();
+        table["modulations"] = value(strings(
+            modem.modulations.iter().map(|m| m.as_str().to_string()),
+        ));
+        table["v8"] = value(modem.v8);
+        table["tx_level_dbm0"] = value(i64::from(modem.tx_level_dbm0));
+        table["answer_delay_ms"] = value(i64::from(modem.answer_delay_ms));
+        table["fallback_ms"] = value(i64::from(modem.fallback_ms));
+        document["modem"] = Item::Table(table);
+    }
+
     for line in &config.lines {
         add_line(&mut document, line);
     }
@@ -76,6 +90,23 @@ fn strings(values: impl Iterator<Item = String>) -> Array {
 }
 
 /// The `register` table of a line, written inline.
+/// The `modem` table of a line: the keys the line has its own value
+/// for.
+pub(crate) fn line_modem_table(modem: &LineModem) -> InlineTable {
+    let mut table = InlineTable::new();
+    if let Some(modulations) = &modem.modulations {
+        let names = strings(modulations.iter().map(|m| m.as_str().to_string()));
+        table.insert("modulations", Value::Array(names));
+    }
+    if let Some(v8) = modem.v8 {
+        table.insert("v8", v8.into());
+    }
+    if let Some(level) = modem.tx_level_dbm0 {
+        table.insert("tx_level_dbm0", i64::from(level).into());
+    }
+    table
+}
+
 pub(crate) fn register_table(register: &RegisterConfig) -> InlineTable {
     let mut table = InlineTable::new();
     table.insert("server", register.server.as_str().into());
@@ -134,6 +165,9 @@ pub(crate) fn add_line(document: &mut DocumentMut, line: &LineConfig) {
     }
     if line.engine != EngineKind::default() {
         table["engine"] = value(line.engine.as_str());
+    }
+    if !line.modem.is_empty() {
+        table["modem"] = value(line_modem_table(&line.modem));
     }
     if let Some(register) = &line.register {
         table["register"] = value(register_table(register));

@@ -208,15 +208,17 @@ impl World {
         let engines = {
             let journal = Arc::clone(&journal);
             let mut made = 0;
-            Box::new(move |_line: &config::LineConfig| {
-                made += 1;
-                Box::new(LoopEngine {
-                    id: made,
-                    journal: Arc::clone(&journal),
-                    data: VecDeque::new(),
-                    events: VecDeque::new(),
-                }) as Box<dyn ModemEngine>
-            })
+            Box::new(
+                move |_line: &config::LineConfig, _modem: &config::ModemConfig| {
+                    made += 1;
+                    Box::new(LoopEngine {
+                        id: made,
+                        journal: Arc::clone(&journal),
+                        data: VecDeque::new(),
+                        events: VecDeque::new(),
+                    }) as Box<dyn ModemEngine>
+                },
+            )
         };
         let mut harness = Harness::with_parts(
             config_with_lines(2),

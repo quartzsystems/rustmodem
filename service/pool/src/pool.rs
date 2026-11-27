@@ -18,8 +18,8 @@ use msg::{Message, Severity, message};
 use serial::{ModemSignals, SerialEvent, SerialOperation, WaitHandle};
 
 use crate::handle::Command;
-use crate::line::{ActiveCall, Line, at_config};
-use crate::media::{MediaEndpoint, MediaEvent, MediaRunner, MediaStats};
+use crate::line::{ActiveCall, Line, at_config, call_settings};
+use crate::media::{MediaCall, MediaEndpoint, MediaEvent, MediaRunner, MediaStats};
 use crate::router::{CallRouter, LineDirectory, LineId, RouterEvent};
 use crate::stats::{MediaNow, Tallies};
 use crate::{
@@ -71,6 +71,8 @@ pub struct Pool {
     media: Box<dyn MediaRunner>,
     serial: Box<dyn SerialFactory>,
     engines: EngineFactory,
+    /// The `[modem]` table of the configuration in force.
+    modem: config::ModemConfig,
     sink: Box<dyn EventSink>,
     profiles: Box<dyn ProfileStore>,
     call_log: Option<Box<dyn Write + Send>>,
@@ -117,6 +119,7 @@ impl Pool {
             media: parts.media,
             serial: parts.serial,
             engines: parts.engines,
+            modem: config::ModemConfig::default(),
             sink: parts.sink,
             profiles: parts.profiles,
             call_log: parts.call_log,
@@ -552,10 +555,21 @@ impl Pool {
         // it.
         self.stop_engine(index);
         let id = self.lines[index].id();
-        let engine = match self.lines[index].engine.take() {
+        // The modem settings may have changed since the engine was made,
+        // in `[modem]` or in the line's own table: a call begins with an
+        // engine made from the settings there are now.
+        let wanted = self.modem.for_line(&self.lines[index].config.modem);
+        if self.lines[index].engine_modem != wanted {
+            self.lines[index].engine = None;
+            self.lines[index].engine_modem = wanted.clone();
+        }
+        let mut engine = match self.lines[index].engine.take() {
             Some(engine) => engine,
-            None => (self.engines)(&self.lines[index].config),
+            None => (self.engines)(&self.lines[index].config, &self.modem),
         };
+        // And with the host's settings as they are now: S9, S10 and +MS.
+        let profile = self.lines[index].interpreter.profile();
+        engine.set_call(&call_settings(profile, &wanted));
         match self.media.start(id, engine, endpoint, originate) {
             Ok(call) => {
                 call.set_capture(self.lines[index].capture);
@@ -619,8 +633,34 @@ impl Pool {
                 }
                 ModemEvent::CarrierLost => {
                     // The engine has stopped by itself.
+                    let line = &self.lines[index];
+                    let shared = line.media.as_ref().map(MediaCall::shared);
+                    let connected = line.call.as_ref().is_some_and(|c| c.connect.is_some());
                     self.stop_engine(index);
                     let id = self.lines[index].id();
+                    // A modem that gave up before it connected says how
+                    // far the handshake got: its last snapshot has it.
+                    let reached = shared
+                        .and_then(|shared| shared.diagnostics())
+                        .filter(|_| !connected)
+                        .and_then(|snapshot| {
+                            let before = |change: &&engine::StateChange| {
+                                change.state != engine::EngineState::Ended
+                            };
+                            snapshot
+                                .history()
+                                .iter()
+                                .rev()
+                                .find(before)
+                                .map(|c| c.state)
+                        });
+                    if let Some(state) = reached {
+                        let source = self.lines[index].source();
+                        self.log_message(
+                            &source,
+                            &message("RMD7001", &[&id.to_string(), state.name()]),
+                        );
+                    }
                     self.step(index, Input::Event(LineEvent::CarrierLost));
                     self.end_call(index, EndReason::Remote);
                     self.router.hangup(self.now.mono_ms, id);
@@ -1162,6 +1202,7 @@ impl Pool {
     /// and changes the ones that differ.
     pub fn apply_config(&mut self, config: &Config) {
         self.router.configure(self.now.mono_ms, config);
+        self.modem = config.modem.clone();
         self.media_prefs = config.sip.enabled.then(|| {
             let codec = config
                 .media
@@ -1194,9 +1235,10 @@ impl Pool {
         for wanted in &config.lines {
             match self.index_of(wanted.id) {
                 None => {
-                    let engine = (self.engines)(wanted);
+                    let engine = (self.engines)(wanted, &self.modem);
                     let stored = self.profiles.load(wanted.id);
                     let mut line = Line::new(wanted.clone(), engine, stored);
+                    line.engine_modem = self.modem.for_line(&wanted.modem);
                     line.binding = self.binding_of(wanted);
                     let source = line.source();
                     self.lines.push(line);
@@ -1248,7 +1290,8 @@ impl Pool {
             self.reject(index, reason);
             self.with_interpreter(index, |interpreter, out| interpreter.operator_hangup(out));
             self.settle();
-            self.lines[index].engine = Some((self.engines)(wanted));
+            self.lines[index].engine = Some((self.engines)(wanted, &self.modem));
+            self.lines[index].engine_modem = self.modem.for_line(&wanted.modem);
         }
         let binding = self.binding_of(wanted);
         let line = &mut self.lines[index];

@@ -15,7 +15,7 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::{Duration, Instant};
 
-use engine::{ModemEngine, NullConfig, NullEngine};
+use engine::{Law, Modem, ModemConfig, ModemEngine, NullConfig, NullEngine, Standard};
 use sdp::{AudioPrefs, Codec, LocalEndpoint, Negotiated, SessionDescription};
 
 use crate::media::{Impairments, MediaReport, MediaStream, Source};
@@ -37,6 +37,13 @@ pub enum MediaKind {
     File(Vec<u8>),
     /// A null engine: the far end of a line with the null engine.
     Null,
+    /// The modem: the far end of a line with the modem engine. It may use
+    /// these modulations, the first by choice, and V.8 or not; the rest
+    /// of its settings are the modem's own defaults.
+    Modem {
+        modulations: [Option<Standard>; 2],
+        v8: bool,
+    },
 }
 
 /// How an agent is set up.
@@ -210,6 +217,23 @@ impl Agent {
                 let mut engine = NullEngine::new(NullConfig {
                     carrier_loss_ticks: 500,
                     ..NullConfig::default()
+                });
+                if self.originated {
+                    engine.originate();
+                } else {
+                    engine.answer();
+                }
+                Source::Engine(Box::new(engine))
+            }
+            MediaKind::Modem { modulations, v8 } => {
+                let mut engine = Modem::new(ModemConfig {
+                    modulations: *modulations,
+                    v8: *v8,
+                    ..ModemConfig::default()
+                });
+                engine.set_law(match negotiated.codec {
+                    Codec::Pcma => Law::Alaw,
+                    Codec::Pcmu => Law::Ulaw,
                 });
                 if self.originated {
                     engine.originate();

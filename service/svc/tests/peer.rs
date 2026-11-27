@@ -402,3 +402,161 @@ fn the_peer_carries_data_as_a_null_engine_far_end() {
     let (report, _) = bench.finish();
     assert!(report.is_clean(), "{report:?}");
 }
+
+/// The modem as the peer runs it: both modulations, with V.8.
+fn modem_peer(impairments: Impairments) -> AgentConfig {
+    let modulations = [Some(engine::Standard::V21), Some(engine::Standard::Bell103)];
+    let media = MediaKind::Modem {
+        modulations,
+        v8: true,
+    };
+    peer(media, 20, impairments)
+}
+
+/// How many octets of `sent` are in `got` in their order: the length of
+/// the longest sequence that is in both.
+fn in_order(sent: &[u8], got: &[u8]) -> usize {
+    let mut row = vec![0usize; got.len() + 1];
+    for octet in sent {
+        let mut diagonal = 0;
+        for (n, other) in got.iter().enumerate() {
+            let above = row[n + 1];
+            row[n + 1] = if octet == other {
+                diagonal + 1
+            } else {
+                above.max(row[n])
+            };
+            diagonal = above;
+        }
+    }
+    row[got.len()]
+}
+
+/// The peer's modem calls a line with the modem engine: they connect at
+/// 300 bit/s and data goes both ways for `seconds`. Gives what the host
+/// and the peer each sent and got, and the bench to finish.
+struct ModemCall {
+    bench: Bench,
+    /// What the line's host wrote and the peer's modem read.
+    up: (Vec<u8>, Vec<u8>),
+    /// What the peer's modem wrote and the line's host read.
+    down: (Vec<u8>, Vec<u8>),
+}
+
+fn modem_call(impairments: Impairments, octets: usize) -> ModemCall {
+    let mut bench = Bench::new("modem", 20, modem_peer(impairments));
+    let uri = format!("sip:5551000@{}", bench.sip);
+    bench.agent.invite(&uri, bench.sip);
+    bench.until("the line rings", |bench| bench.seen.ends_with(b"RING\r\n"));
+    bench.host().write(b"ATA\r");
+    let mut peer_connected = None;
+    bench.until("both modems are connected", |bench| {
+        if let Some(engine) = bench.agent.engine() {
+            while let Some(event) = engine.poll_event() {
+                if let engine::ModemEvent::Connect(info) = event {
+                    peer_connected = Some((info.rate, info.carrier));
+                }
+            }
+        }
+        peer_connected.is_some() && bench.seen.ends_with(b"CONNECT 300\r\n")
+    });
+    assert_eq!(peer_connected, Some((300, Some("V.21".to_string()))));
+    let connect = bench.pool.line(1).unwrap().call.unwrap().connect.unwrap();
+    assert_eq!(
+        (connect.rate, connect.carrier.as_deref()),
+        (300, Some("V.21"))
+    );
+    bench.seen.clear();
+
+    let down: Vec<u8> = (0..octets as u32)
+        .map(|n| (n * 7 + n / 251) as u8)
+        .collect();
+    let up: Vec<u8> = (0..octets as u32)
+        .map(|n| (n * 13 + n / 127) as u8)
+        .collect();
+    bench.host().write(&up);
+    let mut sent = 0;
+    let mut got = Vec::new();
+    // Thirty characters a second, and some seconds for the last of them.
+    let length = Duration::from_millis(octets as u64 * 1000 / 30 + 3000);
+    let until = Instant::now() + length;
+    while Instant::now() < until {
+        bench.turn();
+        let engine = bench.agent.engine().expect("the call has an engine");
+        sent += engine.dte_write(&down[sent..]);
+        let mut buffer = [0u8; 256];
+        let len = engine.dte_read(&mut buffer);
+        got.extend_from_slice(&buffer[..len]);
+        std::thread::sleep(Duration::from_micros(200));
+    }
+    assert_eq!(sent, down.len(), "the peer's modem took all there was");
+    // The call is still up: neither modem lost the other's carrier.
+    assert_eq!(bench.pool.line(1).unwrap().state, LineState::Online);
+    let seen = std::mem::take(&mut bench.seen);
+    ModemCall {
+        bench,
+        up: (up, got),
+        down: (down, seen),
+    }
+}
+
+/// Over a clean path the peer's modem and the line's connect and every
+/// character arrives, both ways.
+#[test]
+fn a_modem_peer_and_a_modem_line_carry_data_over_a_clean_path() {
+    let call = modem_call(Impairments::default(), 300);
+    assert!(call.up.0 == call.up.1, "what the host wrote the peer read");
+    assert!(
+        call.down.0 == call.down.1,
+        "what the peer wrote the host read"
+    );
+    let (report, _) = call.bench.finish();
+    assert!(report.is_clean(), "{report:?}");
+}
+
+/// The peer's clock is fast by 300 parts in a million, three times what a
+/// telephone network allows a clock: the line's modem takes its time from
+/// what arrives, and every character still arrives.
+#[test]
+fn a_modem_line_carries_data_from_a_peer_whose_clock_is_off() {
+    let impairments = Impairments {
+        clock_ppm: 300,
+        ..Impairments::default()
+    };
+    let call = modem_call(impairments, 300);
+    assert!(call.up.0 == call.up.1, "what the host wrote the peer read");
+    assert!(
+        call.down.0 == call.down.1,
+        "what the peer wrote the host read"
+    );
+    let (report, _) = call.bench.finish();
+    assert_eq!((report.slips, report.resync), (0, 0), "{report:?}");
+}
+
+/// One packet in a hundred of the peer's is lost. The modems connect all
+/// the same and hold their carriers; a lost packet is 20 ms of the line,
+/// six bits, and costs the characters it falls in and nothing after them.
+#[test]
+fn a_modem_line_holds_its_call_when_the_peer_loses_packets() {
+    let impairments = Impairments {
+        loss: 10,
+        ..Impairments::default()
+    };
+    let call = modem_call(impairments, 300);
+    let lost = call.bench.agent.report().unwrap().lost as usize;
+    assert!(lost > 0, "the peer lost none of its packets");
+    // A lost packet may damage the character it falls in and the one
+    // after, in what the host is sent; what the peer is sent is late by
+    // as much, which to its modem is a gap of the same length.
+    for (which, (sent, got)) in [("up", &call.up), ("down", &call.down)] {
+        let kept = in_order(sent, got);
+        assert!(
+            kept + 6 * lost >= sent.len() && kept * 10 >= sent.len() * 8,
+            "{which}: {kept} of {} arrived in order with {lost} packets lost",
+            sent.len()
+        );
+        assert!(got.len() <= sent.len() + 6 * lost, "{which}: {}", got.len());
+    }
+    let (report, _) = call.bench.finish();
+    assert!(report.lost > 0, "{report:?}");
+}

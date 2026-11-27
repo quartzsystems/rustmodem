@@ -110,6 +110,9 @@ pub(crate) struct Line {
     pub hunt_groups: Vec<String>,
     /// The service speaks SIP, by its configuration.
     pub sip: bool,
+    /// The modem settings the line's engine was made with: `[modem]`'s
+    /// with the line's own over them.
+    pub engine_modem: config::ModemConfig,
 }
 
 impl Line {
@@ -136,6 +139,7 @@ impl Line {
             capture: false,
             hunt_groups: Vec::new(),
             sip: false,
+            engine_modem: config::ModemConfig::default(),
         }
     }
 
@@ -222,8 +226,53 @@ pub(crate) fn at_config(config: &LineConfig) -> AtConfig {
         },
         auto_answer_rings: config.auto_answer_rings,
         engine: match config.engine {
+            EngineKind::Modem => "MODEM",
             EngineKind::Null => "NULL",
             EngineKind::Echo => "ECHO",
+        },
+    }
+}
+
+/// What a call that begins now asks of the line's engine: the host's S9
+/// and S10, and its `+MS`, within what the line's configuration allows.
+pub(crate) fn call_settings(
+    profile: &Profile,
+    modem: &config::ModemConfig,
+) -> engine::CallSettings {
+    let allowed: Vec<engine::Standard> = modem
+        .modulations
+        .iter()
+        .map(|name| crate::standard(*name))
+        .collect();
+    let selection = profile.modulation();
+    let preferred = match selection.carrier {
+        at::Carrier::V21 => engine::Standard::V21,
+        at::Carrier::Bell103 => engine::Standard::Bell103,
+    };
+    // The configuration says what the line may do. Within that the host
+    // says which carrier to try first and, with automode off, that no
+    // other is to be used and nothing negotiated. A carrier the line may
+    // not use is not the host's to choose.
+    let order: Vec<engine::Standard> = if !allowed.contains(&preferred) {
+        allowed
+    } else if selection.automode {
+        let others = allowed.iter().copied().filter(|s| *s != preferred);
+        std::iter::once(preferred).chain(others).collect()
+    } else {
+        vec![preferred]
+    };
+    let mut modulations = [None; 2];
+    for (slot, standard) in modulations.iter_mut().zip(order) {
+        *slot = Some(standard);
+    }
+    engine::CallSettings {
+        carrier_response_ms: profile.carrier_response_ms(),
+        carrier_loss_ms: profile.carrier_loss_ms(),
+        modulations: Some(modulations),
+        v8: if selection.automode {
+            None
+        } else {
+            Some(false)
         },
     }
 }
