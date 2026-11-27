@@ -17,10 +17,12 @@
 //! half an hour of a 300 bit/s call is some seconds, and the pool is not
 //! kept waiting.
 
-use ctlproto::{ConnectInfo, ErrorInfo, LineDiag, ModemInfo, ModemStateChange, SelfTestResult};
+use ctlproto::{
+    ConnectInfo, ErrorInfo, LineDiag, LinkInfo, ModemInfo, ModemStateChange, SelfTestResult,
+};
 use engine::{
-    CallSettings, Diagnostics, EngineState, FRAME_10MS, Law, Modem, ModemConfig, ModemEngine,
-    ModemEvent, SILENCE_OCTET, ScopeKind,
+    CONSTELLATION_UNIT, CallSettings, Diagnostics, EngineState, FRAME_10MS, Law, LinkEnd,
+    LinkStage, LinkStats, Modem, ModemConfig, ModemEngine, ModemEvent, SILENCE_OCTET, ScopeKind,
 };
 use msg::message;
 
@@ -40,9 +42,54 @@ fn level(dbm0: f32) -> Option<i32> {
     (dbm0 >= NOTHING_DBM0).then(|| (dbm0 * 10.0).round() as i32)
 }
 
+/// A data link's counts as the control API has them; none for a modem
+/// that has no link, or has not started it.
+fn link_info(link: &LinkStats) -> Option<LinkInfo> {
+    if link.stage == LinkStage::Idle {
+        return None;
+    }
+    let compression = |agreed: bool, compressed: bool| {
+        match (agreed, compressed) {
+            (false, _) => "none",
+            (true, false) => "transparent",
+            (true, true) => "compressed",
+        }
+        .to_string()
+    };
+    Some(LinkInfo {
+        stage: link.stage.name().to_string(),
+        end: (link.end != LinkEnd::None).then(|| link.end.name().to_string()),
+        frames_tx: link.frames_sent,
+        frames_rx: link.frames_received,
+        retransmissions: link.retransmissions,
+        frame_errors: link.frame_errors,
+        window: u32::from(link.window),
+        window_size: u32::from(link.window_size),
+        peer_busy: link.peer_busy,
+        own_busy: link.own_busy,
+        compression_tx: compression(link.compression.0, link.compressed_mode.0),
+        compression_rx: compression(link.compression.1, link.compressed_mode.1),
+        tx_octets_in: link.compress_in,
+        tx_octets_out: link.compress_out,
+        rx_octets_in: link.decompress_in,
+        rx_octets_out: link.decompress_out,
+        breaks: link.breaks,
+    })
+}
+
 /// A modem's snapshot of itself as the control API has it.
 pub(crate) fn modem_info(snapshot: &Diagnostics) -> ModemInfo {
+    // The receiver's figures are those of a modem at 1200 or 2400 bit/s
+    // that has connected, which is when its link is started.
+    let link = link_info(&snapshot.link).map(Box::new);
+    let receiver = link.is_some() && snapshot.equalizer_mse > 0.0;
+    let tenths = |value: f32| (value * 10.0).round() as i32;
     ModemInfo {
+        snr_tenth_db: receiver.then(|| tenths(snapshot.snr_db)),
+        equalizer_error_tenth_db: receiver
+            .then(|| tenths(10.0 * snapshot.equalizer_mse.max(1e-12).log10())),
+        timing_offset_ppm: receiver.then(|| snapshot.timing_offset_ppm.round() as i32),
+        link,
         state: snapshot.state.name().to_string(),
         rx_level_tenth_dbm0: level(snapshot.rx_level_dbm0),
         tx_level_tenth_dbm0: level(snapshot.tx_level_dbm0),
@@ -60,9 +107,8 @@ pub(crate) fn line_diag(line: LineId, snapshot: Option<&Diagnostics>) -> LineDia
         return LineDiag {
             line,
             modem: None,
-            history: Vec::new(),
             scope_kind: "none".to_string(),
-            scope: Vec::new(),
+            ..LineDiag::default()
         };
     };
     let (scope_kind, scope) = match snapshot.scope_kind {
@@ -82,6 +128,13 @@ pub(crate) fn line_diag(line: LineId, snapshot: Option<&Diagnostics>) -> LineDia
             .collect(),
         scope_kind: scope_kind.to_string(),
         scope,
+        constellation_bits: u32::from(snapshot.constellation_bits),
+        constellation_unit: if snapshot.constellation_bits == 0 {
+            0
+        } else {
+            i32::from(CONSTELLATION_UNIT)
+        },
+        constellation: snapshot.constellation().iter().flatten().copied().collect(),
     }
 }
 

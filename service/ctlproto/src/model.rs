@@ -236,6 +236,10 @@ pub struct CallRecord {
     /// The RTP of the call, if it had media.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<Box<MediaInfo>>,
+    /// The modem of the call as it last reported itself, if the line's
+    /// engine was a modem: its retrains, and what its data link counted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modem: Option<ModemInfo>,
 }
 
 /// An `RMD` message as the control API carries it.

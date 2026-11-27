@@ -122,12 +122,18 @@ pub fn values(result: &SelfTestResult) -> [String; 5] {
     [
         match (&result.connect, result.connect_ms) {
             (Some(connect), Some(ms)) => format!(
-                "{} bit/s{} after {} of the call",
+                "{} bit/s{}{} after {} of the call",
                 connect.rate,
                 match &connect.carrier {
                     Some(carrier) => format!(", {carrier},"),
                     None => String::new(),
                 },
+                // What the modems agreed over the modulation.
+                [&connect.protocol, &connect.compression]
+                    .into_iter()
+                    .flatten()
+                    .map(|part| format!(" {part},"))
+                    .collect::<String>(),
                 seconds(ms)
             ),
             _ => "The modems did not connect".to_string(),

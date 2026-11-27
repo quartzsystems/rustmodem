@@ -476,6 +476,27 @@ fn modem_call_at(
     (rate, carrier): (u32, &str),
     octets_a_second: u64,
 ) -> ModemCall {
+    modem_call_with(
+        media,
+        impairments,
+        (octets, octets),
+        (rate, carrier, carrier),
+        octets_a_second,
+    )
+}
+
+/// The same with so many octets from the line's host and so many from
+/// the peer's modem, and with the carrier as the peer's modem names it
+/// and as the line's does: the two are one signal where the peer has
+/// Bell 212A and the line V.22.
+fn modem_call_with(
+    media: MediaKind,
+    impairments: Impairments,
+    (up_octets, down_octets): (usize, usize),
+    (rate, peers, carrier): (u32, &str, &str),
+    octets_a_second: u64,
+) -> ModemCall {
+    let octets = up_octets.max(down_octets);
     let mut bench = Bench::new("modem", 20, peer(media, 20, impairments));
     let uri = format!("sip:5551000@{}", bench.sip);
     bench.agent.invite(&uri, bench.sip);
@@ -495,7 +516,7 @@ fn modem_call_at(
                 .seen
                 .ends_with(format!("CONNECT {rate}\r\n").as_bytes())
     });
-    assert_eq!(peer_connected, Some((rate, Some(carrier.to_string()))));
+    assert_eq!(peer_connected, Some((rate, Some(peers.to_string()))));
     let connect = bench.pool.line(1).unwrap().call.unwrap().connect.unwrap();
     assert_eq!(
         (connect.rate, connect.carrier.as_deref()),
@@ -503,10 +524,10 @@ fn modem_call_at(
     );
     bench.seen.clear();
 
-    let down: Vec<u8> = (0..octets as u32)
+    let down: Vec<u8> = (0..down_octets as u32)
         .map(|n| (n * 7 + n / 251) as u8)
         .collect();
-    let up: Vec<u8> = (0..octets as u32)
+    let up: Vec<u8> = (0..up_octets as u32)
         .map(|n| (n * 13 + n / 127) as u8)
         .collect();
     bench.host().write(&up);
@@ -675,4 +696,103 @@ fn a_modem_line_answers_a_v21_caller_without_v8() {
 fn a_modem_line_answers_a_bell_103_caller() {
     let media = MediaKind::modem(&[engine::Modulation::Bell103], false);
     corpus_call("answer-bell103", media, "BELL103");
+}
+
+/// A short call at 1200 or 2400 bit/s from the peer's modem, as `media`
+/// has it, for the corpus. The line's host sends `up` octets: none where
+/// the call has error control, so that a replay of the capture, whose
+/// engine is given nothing to send, sends every frame the call sent.
+fn fast_corpus_call(
+    name: &'static str,
+    media: MediaKind,
+    (rate, peers, carrier): (u32, &str, &str),
+    up: usize,
+) -> ctlproto::ConnectInfo {
+    let mut call = modem_call_with(
+        media,
+        Impairments::default(),
+        (up, 60),
+        (rate, peers, carrier),
+        60,
+    );
+    assert!(call.up.0 == call.up.1, "what the host wrote the peer read");
+    assert!(
+        call.down.0 == call.down.1,
+        "what the peer wrote the host read"
+    );
+    let info = call.bench.pool.line(1).unwrap().call.unwrap();
+    call.bench.keep = Some(name);
+    let (report, _) = call.bench.finish();
+    assert!(report.is_clean(), "{report:?}");
+    info.connect.unwrap()
+}
+
+/// The peer's modem with one modulation and no V.8.
+fn only(modulation: engine::Modulation, error_control: bool, compression: bool) -> MediaKind {
+    MediaKind::Modem {
+        modulations: engine::modulations(&[modulation]),
+        v8: false,
+        error_control: if error_control {
+            engine::ErrorControl::Auto
+        } else {
+            engine::ErrorControl::Off
+        },
+        compression,
+    }
+}
+
+/// Both modems as they come: V.8, V.22bis, LAPM and V.42bis.
+#[test]
+fn a_modem_line_answers_at_2400_with_error_control_and_compression() {
+    let connect = fast_corpus_call(
+        "answer-v8-v22bis-lapm-v42bis",
+        MediaKind::modem(&engine::Modulation::ALL, true),
+        (2400, "V.22bis", "V.22bis"),
+        0,
+    );
+    assert_eq!(connect.protocol.as_deref(), Some("LAPM"));
+    assert_eq!(connect.compression.as_deref(), Some("V.42bis"));
+}
+
+/// The caller has V.22bis, no V.8 and no error control: the line finds
+/// none in the detection phase and carries start-stop characters.
+#[test]
+fn a_modem_line_answers_a_v22bis_caller_without_error_control() {
+    let connect = fast_corpus_call(
+        "answer-v22bis",
+        only(engine::Modulation::V22bis, false, false),
+        (2400, "V.22bis", "V.22bis"),
+        60,
+    );
+    assert_eq!((connect.protocol, connect.compression), (None, None));
+}
+
+/// The caller has V.22 and LAPM, and no compression.
+#[test]
+fn a_modem_line_answers_a_v22_caller_with_error_control() {
+    let connect = fast_corpus_call(
+        "answer-v22-lapm",
+        only(engine::Modulation::V22, true, false),
+        (1200, "V.22", "V.22"),
+        0,
+    );
+    assert_eq!(connect.protocol.as_deref(), Some("LAPM"));
+    assert_eq!(connect.compression, None);
+}
+
+/// The caller has Bell 212A and nothing else. To the line, which has
+/// V.22 too, its signal is that of V.22, and V.22 is what it says.
+#[test]
+fn a_modem_line_answers_a_bell_212a_caller() {
+    let connect = fast_corpus_call(
+        "answer-bell212a",
+        only(engine::Modulation::Bell212A, false, false),
+        (
+            1200,
+            engine::Modulation::Bell212A.carrier_name(),
+            engine::Modulation::V22.carrier_name(),
+        ),
+        60,
+    );
+    assert_eq!((connect.protocol, connect.compression), (None, None));
 }

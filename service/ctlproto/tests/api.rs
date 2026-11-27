@@ -13,13 +13,14 @@ use ctlproto::{
     Call, CallEvent, CallInfo, CallList, CallRecord, ClientFrame, ConnectInfo, ConnectTally,
     ControlChange, ControlSettings, Counters, Direction, Done, EVENT_NAMES, EVENTS_BY_NAME_ONLY,
     EndReason, ErrorInfo, Event, Hello, HuntGroupInfo, HuntGroupList, LINE_DIAG_PER_SECOND,
-    LineDiag, LineInfo, LineList, LineModem, LineModemSpec, LineSip, LineState, ListenerState,
-    LogEvent, LogLevel, LogTail, MediaChange, MediaInfo, MediaSettings, ModemChange, ModemInfo,
-    ModemSettings, ModemStateChange, PROTOCOL, PortInfo, PortKind, PortList, RegisterChange,
-    RegisterSpec, Registration, RegistrationState, Reloaded, RequestFrame, RouteInfo, RouteList,
-    SelfTestResult, ServerFrame, ServiceChange, ServiceInfo, ServiceMode, ServiceSettings,
-    Settings, SettingsResult, SipChange, SipMode, SipRegistration, SipSettings, SipStatus,
-    SipTrace, Stats, Subscription, Tally, TraceDirection, decode_client, decode_server, encode,
+    LineDiag, LineInfo, LineList, LineModem, LineModemSpec, LineSip, LineState, LinkInfo,
+    ListenerState, LogEvent, LogLevel, LogTail, MediaChange, MediaInfo, MediaSettings, ModemChange,
+    ModemInfo, ModemSettings, ModemStateChange, PROTOCOL, PortInfo, PortKind, PortList,
+    RegisterChange, RegisterSpec, Registration, RegistrationState, Reloaded, RequestFrame,
+    RouteInfo, RouteList, SelfTestResult, ServerFrame, ServiceChange, ServiceInfo, ServiceMode,
+    ServiceSettings, Settings, SettingsResult, SipChange, SipMode, SipRegistration, SipSettings,
+    SipStatus, SipTrace, Stats, Subscription, Tally, TraceDirection, decode_client, decode_server,
+    encode,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -84,14 +85,43 @@ fn modem_info(full: bool) -> ModemInfo {
         quality_percent: 71,
         framing_errors: 2,
         retrains: 0,
+        snr_tenth_db: full.then_some(312),
+        equalizer_error_tenth_db: full.then_some(-305),
+        timing_offset_ppm: full.then_some(-12),
+        link: full.then(|| Box::new(link_info(full))),
+    }
+}
+
+fn link_info(full: bool) -> LinkInfo {
+    LinkInfo {
+        stage: "lapm".to_string(),
+        end: full.then(|| "remote".to_string()),
+        frames_tx: 162,
+        frames_rx: 161,
+        retransmissions: 3,
+        frame_errors: 2,
+        window: 1,
+        window_size: 15,
+        peer_busy: false,
+        own_busy: false,
+        compression_tx: "compressed".to_string(),
+        compression_rx: "transparent".to_string(),
+        tx_octets_in: 20_000,
+        tx_octets_out: 8_120,
+        rx_octets_in: 20_074,
+        rx_octets_out: 20_000,
+        breaks: 0,
     }
 }
 
 fn line_modem() -> LineModem {
     LineModem {
-        modulations: vec!["v21".to_string(), "bell103".to_string()],
+        modulations: vec!["v22bis".to_string(), "v21".to_string()],
         v8: true,
         tx_level_dbm0: -12,
+        error_control: "auto".to_string(),
+        compression: true,
+        guard_tone: "off".to_string(),
         own: vec!["v8".to_string()],
     }
 }
@@ -106,16 +136,22 @@ fn line_diag(full: bool) -> LineDiag {
         }],
         scope_kind: "discriminator".to_string(),
         scope: vec![127, -127, 0, 64],
+        constellation_bits: 4,
+        constellation_unit: 30,
+        constellation: vec![30, 30, -91, 29, 88, -93],
     }
 }
 
 fn modem_settings() -> ModemSettings {
     ModemSettings {
-        modulations: vec!["v21".to_string(), "bell103".to_string()],
+        modulations: vec!["v22bis".to_string(), "v21".to_string()],
         v8: true,
         tx_level_dbm0: -12,
         answer_delay_ms: 0,
         fallback_ms: 3000,
+        error_control: "auto".to_string(),
+        compression: true,
+        guard_tone: "off".to_string(),
     }
 }
 
@@ -233,6 +269,7 @@ fn call_record(full: bool) -> CallRecord {
         bytes_tx: 10,
         bytes_rx: 20,
         media: full.then(|| Box::new(media_info(full))),
+        modem: full.then(|| modem_info(full)),
     }
 }
 
@@ -410,8 +447,12 @@ fn sample(name: &str, full: bool) -> Value {
             modulations: full.then(|| vec!["bell103".to_string()]),
             v8: full.then_some(false),
             tx_level_dbm0: full.then_some(-15),
+            error_control: full.then(|| "required".to_string()),
+            compression: full.then_some(false),
+            guard_tone: full.then(|| "1800".to_string()),
         }),
         "ModemInfo" => to_value(&modem_info(full)),
+        "LinkInfo" => to_value(&link_info(full)),
         "ModemStateChange" => to_value(&line_diag(full).history[0]),
         "LineDiag" => to_value(&line_diag(full)),
         "SelfTestResult" => to_value(&SelfTestResult {
@@ -434,6 +475,9 @@ fn sample(name: &str, full: bool) -> Value {
             tx_level_dbm0: full.then_some(-12),
             answer_delay_ms: full.then_some(0),
             fallback_ms: full.then_some(3000),
+            error_control: full.then(|| "off".to_string()),
+            compression: full.then_some(true),
+            guard_tone: full.then(|| "550".to_string()),
         }),
         "Done" => to_value(&Done {}),
         "LineSip" => to_value(&line_sip(full)),

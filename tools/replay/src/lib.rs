@@ -26,7 +26,21 @@
 //! The data the host sent is not in a capture, so a replayed engine sends
 //! none: in a capture of a call that carried data from the host, the
 //! transmission differs from the first character on. What was received
-//! does not depend on it.
+//! does not depend on it where the call had no error control. Where it
+//! had, the far end acknowledges frames the replayed engine never sent,
+//! which to LAPM is an error that ends the connection: a call with error
+//! control replays as it went only as far as the host's first octet.
+//!
+//! # The data link
+//!
+//! At 1200 and 2400 bit/s there is a data link between the modem and the
+//! host (V.42), and a replay says what it did: the stage it came to, what
+//! the XID frames asked for and answered, the frames sent again and the
+//! frames received in error as their counts change, and how it ended.
+//! The edition of V.42 the link is written from has no re-establishment
+//! of a connection, so a reset is its end: `link down protocol`. Every
+//! frame of LAPM, sent and received, is kept too, and
+//! [`render_with_frames`] has them among the rest.
 
 #![forbid(unsafe_code)]
 
@@ -34,10 +48,12 @@ use std::fmt::Write as _;
 use std::io::{self, Read, Write};
 
 use engine::{
-    CallSettings, EngineState, FRAME_10MS as FRAME, Law, Modem, ModemConfig, ModemEngine,
-    ModemEvent, Modulation,
+    CallSettings, EngineState, FRAME_10MS as FRAME, Law, LinkEnd, LinkStage, LinkStats, Modem,
+    ModemConfig, ModemEngine, ModemEvent, Modulation,
 };
 use rtp::capture::{CaptureError, Reader, channels};
+
+pub mod frames;
 
 /// Which end of the call the engine is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,11 +112,51 @@ pub enum What {
     /// The engine entered a state.
     State(EngineState),
     /// The engine connected.
-    Connect { rate: u32, carrier: Option<String> },
+    Connect {
+        rate: u32,
+        carrier: Option<String>,
+        /// The error control and the compression, where there is any.
+        protocol: Option<String>,
+        compression: Option<String>,
+    },
     /// The engine gave up, or lost the carrier.
     CarrierLost,
     /// The engine retrained, or changed its rate.
     Retrain,
+    /// The data link came to a stage: what the stage is, and what is to
+    /// be said of it there.
+    Link(String),
+    /// An XID frame went one way or the other: what it asks or answers.
+    Xid(String),
+    /// I frames have been sent again: how many in the call so far.
+    Retransmissions(u32),
+    /// Frames have been received in error: how many in the call so far.
+    FrameErrors(u32),
+    /// A frame of LAPM was sent or received.
+    Frame(String),
+}
+
+/// A stage of the data link as a line of the report has it.
+fn link_line(link: &LinkStats) -> String {
+    let stage = link.stage.name();
+    match link.stage {
+        LinkStage::Lapm => {
+            let compression = match link.compression {
+                (true, true) => "both",
+                (true, false) => "out",
+                (false, true) => "in",
+                (false, false) => "none",
+            };
+            format!(
+                "{stage} window {} compression {compression}",
+                link.window_size
+            )
+        }
+        LinkStage::Down if link.end != LinkEnd::None => {
+            format!("{stage} {}", link.end.name())
+        }
+        _ => stage.to_string(),
+    }
 }
 
 /// What a replay did.
@@ -149,6 +205,7 @@ pub fn replay<R: Read>(reader: &mut Reader<R>, options: &Options) -> Result<Outc
 /// far the replay is exact; it may be empty.
 pub fn replay_frames(received: &[u8], captured: &[u8], law: Law, options: &Options) -> Outcome {
     let mut engine = Modem::new(options.modem);
+    engine.tap_frames(true);
     engine.set_law(law);
     engine.set_call(&options.call);
     match options.role {
@@ -167,6 +224,7 @@ pub fn replay_frames(received: &[u8], captured: &[u8], law: Law, options: &Optio
         captured_sent: (captured.len() / FRAME) as u64,
     };
     let mut state = EngineState::Idle;
+    let mut link = LinkStats::default();
     let mut exact = true;
     let mut tx = [0u8; FRAME];
     let mut buffer = [0u8; 512];
@@ -181,7 +239,27 @@ pub fn replay_frames(received: &[u8], captured: &[u8], law: Law, options: &Optio
         } else {
             exact = false;
         }
+        while let Some(frame) = engine.poll_frame() {
+            let described = frames::describe(&frame, options.role);
+            let mut push = |what| outcome.steps.push(Step { at_ms, what });
+            push(What::Frame(described.text));
+            if let Some(xid) = described.xid {
+                push(What::Xid(xid));
+            }
+        }
         if let Some(snapshot) = engine.diagnostics() {
+            let now = snapshot.link;
+            let mut push = |what| outcome.steps.push(Step { at_ms, what });
+            if (now.stage, now.end) != (link.stage, link.end) && now.stage != LinkStage::Idle {
+                push(What::Link(link_line(&now)));
+            }
+            if now.retransmissions > link.retransmissions {
+                push(What::Retransmissions(now.retransmissions));
+            }
+            if now.frame_errors > link.frame_errors {
+                push(What::FrameErrors(now.frame_errors));
+            }
+            link = now;
             if snapshot.state != state {
                 state = snapshot.state;
                 outcome.steps.push(Step {
@@ -196,6 +274,8 @@ pub fn replay_frames(received: &[u8], captured: &[u8], law: Law, options: &Optio
                 ModemEvent::Connect(info) => What::Connect {
                     rate: info.rate,
                     carrier: info.carrier,
+                    protocol: info.protocol,
+                    compression: info.compression,
                 },
                 ModemEvent::CarrierLost => What::CarrierLost,
                 ModemEvent::Retrain | ModemEvent::RateChange(_) => What::Retrain,
@@ -222,8 +302,18 @@ fn digest(data: &[u8]) -> u64 {
 }
 
 /// What a replay did, as text: a line for each thing, in the form an
-/// expectation file has.
+/// expectation file has. The frames of the data link are not in it.
 pub fn render(outcome: &Outcome) -> String {
+    rendered(outcome, false)
+}
+
+/// What a replay did with every frame of LAPM the data link sent and
+/// received among the rest, each where it came.
+pub fn render_with_frames(outcome: &Outcome) -> String {
+    rendered(outcome, true)
+}
+
+fn rendered(outcome: &Outcome, frames: bool) -> String {
     let mut text = String::new();
     let _ = writeln!(text, "role {}", outcome.role.as_str());
     let _ = writeln!(text, "law {}", if outcome.alaw { "alaw" } else { "ulaw" });
@@ -232,13 +322,30 @@ pub fn render(outcome: &Outcome) -> String {
         let at = step.at_ms;
         let _ = match &step.what {
             What::State(state) => writeln!(text, "{at} state {}", state.name()),
-            What::Connect { rate, carrier } => writeln!(
-                text,
-                "{at} connect {rate} {}",
-                carrier.as_deref().unwrap_or("-")
-            ),
+            What::Connect {
+                rate,
+                carrier,
+                protocol,
+                compression,
+            } => {
+                let _ = write!(
+                    text,
+                    "{at} connect {rate} {}",
+                    carrier.as_deref().unwrap_or("-")
+                );
+                for more in [protocol, compression].into_iter().flatten() {
+                    let _ = write!(text, " {more}");
+                }
+                writeln!(text)
+            }
             What::CarrierLost => writeln!(text, "{at} carrier-lost"),
             What::Retrain => writeln!(text, "{at} retrain"),
+            What::Link(line) => writeln!(text, "{at} link {line}"),
+            What::Xid(line) => writeln!(text, "{at} xid {line}"),
+            What::Retransmissions(count) => writeln!(text, "{at} retransmissions {count}"),
+            What::FrameErrors(count) => writeln!(text, "{at} frame-errors {count}"),
+            What::Frame(_) if !frames => Ok(()),
+            What::Frame(line) => writeln!(text, "{at} frame {line}"),
         };
     }
     let _ = writeln!(

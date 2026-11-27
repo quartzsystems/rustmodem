@@ -260,7 +260,10 @@ the compressor each way.
 ## Replaying a call
 
 `rustmodem-replay` gives the frames of a captured call to a new engine and
-prints what it does; `docs/CAPTURE.md` has it.
+prints what it does: its states, and for a call at 1200 or 2400 bit/s what
+the data link did, with what the XID frames agreed and, if asked, every
+frame of LAPM both ways. `docs/CAPTURE.md` has it. The engine keeps the
+frames for it in a tap that is off in a call of the service.
 
 ## Seeing and trying the modem
 

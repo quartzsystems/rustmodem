@@ -668,6 +668,9 @@ fn service_modem(manager: &Manager) -> LineModem {
                         .collect(),
                     v8: true,
                     tx_level_dbm0: -12,
+                    error_control: "auto".to_string(),
+                    compression: true,
+                    guard_tone: "off".to_string(),
                     own: Vec::new(),
                 },
                 |line| line.modem.clone(),
@@ -1069,6 +1072,7 @@ mod tests {
             modulations: Some(vec!["bell103".to_string()]),
             v8: Some(false),
             tx_level_dbm0: Some(-15),
+            ..LineModemSpec::default()
         };
         let with_own = Form {
             modem: Some(own.clone()),

@@ -551,6 +551,7 @@ fn a_client_that_stops_reading_is_disconnected_and_holds_nobody_up() {
             bytes_tx: 0,
             bytes_rx: 0,
             media: None,
+            modem: None,
         }));
     }
     assert!(

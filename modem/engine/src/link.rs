@@ -379,6 +379,92 @@ impl<const N: usize> Ring<N> {
     }
 }
 
+/// How much of a frame the tap keeps: the whole of every frame but an I
+/// frame with a long information field, of which it is the beginning.
+pub const TAP_OCTETS: usize = 48;
+
+/// The frames the tap holds until they are taken. A frame takes longer
+/// on the line than a tick, so a reader that takes them every tick loses
+/// none.
+const TAP_FRAMES: usize = 8;
+
+/// A frame the link sent or received, as a tool that shows frames is
+/// given it: its octets from the address to the end of the information
+/// field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TappedFrame {
+    /// Whether this end sent it; otherwise it received it, whole.
+    pub sent: bool,
+    /// How long the frame was, in octets.
+    pub len: u16,
+    /// Its first octets.
+    pub octets: [u8; TAP_OCTETS],
+}
+
+impl TappedFrame {
+    const EMPTY: TappedFrame = TappedFrame {
+        sent: false,
+        len: 0,
+        octets: [0; TAP_OCTETS],
+    };
+
+    /// The octets of the frame that were kept.
+    pub fn kept(&self) -> &[u8] {
+        &self.octets[..usize::from(self.len).min(TAP_OCTETS)]
+    }
+}
+
+/// The tap: the last frames, for whoever asked for them. It is off
+/// unless asked for, and a call of the service never asks.
+#[derive(Clone, Debug)]
+struct Tap {
+    on: bool,
+    frames: [TappedFrame; TAP_FRAMES],
+    head: usize,
+    len: usize,
+}
+
+impl Tap {
+    const fn new() -> Tap {
+        Tap {
+            on: false,
+            frames: [TappedFrame::EMPTY; TAP_FRAMES],
+            head: 0,
+            len: 0,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.head = 0;
+        self.len = 0;
+    }
+
+    /// Keeps a frame, if the tap is on and has room: a reader that does
+    /// not take them loses the newest.
+    #[inline]
+    fn keep(&mut self, sent: bool, frame: &[u8]) {
+        if !self.on || self.len == TAP_FRAMES {
+            return;
+        }
+        let place = &mut self.frames[(self.head + self.len) % TAP_FRAMES];
+        let kept = frame.len().min(TAP_OCTETS);
+        place.sent = sent;
+        place.len = frame.len().min(usize::from(u16::MAX)) as u16;
+        place.octets[..kept].copy_from_slice(&frame[..kept]);
+        self.len += 1;
+    }
+
+    fn take(&mut self) -> Option<TappedFrame> {
+        if self.len == 0 {
+            return None;
+        }
+        let frame = self.frames[self.head];
+        self.head = (self.head + 1) % TAP_FRAMES;
+        self.len -= 1;
+        Some(frame)
+    }
+}
+
 /// The counts a display reads.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LinkStats {
@@ -452,6 +538,7 @@ pub struct DataLink {
     events: [Option<LinkEvent>; 4],
     stats: LinkStats,
     frame: [u8; v42::hdlc::MAX_FRAME],
+    tap: Tap,
 }
 
 impl DataLink {
@@ -488,7 +575,20 @@ impl DataLink {
             events: [None; 4],
             stats: LinkStats::default(),
             frame: [0; v42::hdlc::MAX_FRAME],
+            tap: Tap::new(),
         }
+    }
+
+    /// Turns the tap on the link's frames on or off. It stays as it is
+    /// set from call to call.
+    pub fn set_tap(&mut self, on: bool) {
+        self.tap.on = on;
+        self.tap.clear();
+    }
+
+    /// The next frame the tap has kept.
+    pub fn poll_frame(&mut self) -> Option<TappedFrame> {
+        self.tap.take()
     }
 
     /// Stops the link and forgets what it held.
@@ -499,6 +599,7 @@ impl DataLink {
         self.events = [None; 4];
         self.stats = LinkStats::default();
         self.negotiated = Negotiated::default();
+        self.tap.clear();
     }
 
     /// Starts the link, the modems having connected: the detection
@@ -833,6 +934,7 @@ impl v22::BitIo for DataLink {
                     let len = self.lapm.poll_transmit(&mut self.frame);
                     if len > 0 {
                         self.framer.send(&self.frame[..len]);
+                        self.tap.keep(true, &self.frame[..len]);
                     }
                 }
                 self.framer.next_bit()
@@ -855,6 +957,7 @@ impl v22::BitIo for DataLink {
             LinkStage::Protocol | LinkStage::Lapm => {
                 if let Deframed::Frame(_) = self.deframer.process(bit) {
                     self.lapm.receive(self.deframer.frame());
+                    self.tap.keep(false, self.deframer.frame());
                 }
             }
             LinkStage::Async => {

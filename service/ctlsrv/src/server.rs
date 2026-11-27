@@ -11,9 +11,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use config::{
-    Backend, Config, ConfigFile, ControlConfig, EngineKind, HuntGroup, HuntGroupEdit, LineConfig,
-    LineEdit, LineModem, LineModemEdit, MediaEdit, ModemEdit, ModulationName, RegisterConfig,
-    Route, RouteEdit, ServiceConfig, SettingsEdit, SipEdit, Strategy, Target, UnknownCommand,
+    Backend, Config, ConfigFile, ControlConfig, EngineKind, ErrorControlName, GuardToneName,
+    HuntGroup, HuntGroupEdit, LineConfig, LineEdit, LineModem, LineModemEdit, MediaEdit, ModemEdit,
+    ModulationName, RegisterConfig, Route, RouteEdit, ServiceConfig, SettingsEdit, SipEdit,
+    Strategy, Target, UnknownCommand,
 };
 use ctlproto::{
     Call, CallList, ClientFrame, ControlSettings, Done, EVENT_NAMES, EventSelection, Hello,
@@ -785,6 +786,9 @@ impl Server {
                 tx_level_dbm0: i32::from(config.modem.tx_level_dbm0),
                 answer_delay_ms: config.modem.answer_delay_ms,
                 fallback_ms: config.modem.fallback_ms,
+                error_control: config.modem.error_control.as_str().to_string(),
+                compression: config.modem.compression,
+                guard_tone: config.modem.guard_tone.as_str().to_string(),
             },
             path: self.shared.config_path.display().to_string(),
         }
@@ -861,7 +865,9 @@ impl Server {
                     tx_level_dbm0: modem.tx_level_dbm0.map(i64::from),
                     answer_delay_ms: modem.answer_delay_ms,
                     fallback_ms: modem.fallback_ms,
-                    ..ModemEdit::default()
+                    error_control: modem.error_control,
+                    compression: modem.compression,
+                    guard_tone: modem.guard_tone,
                 }),
         };
         // The pool takes the modem settings as it takes the telephony's:
@@ -1022,6 +1028,24 @@ fn modulation(method: &str, name: &str) -> Result<ModulationName, Message> {
 
 /// A level for a new line. Its range is checked by the configuration; here
 /// it has only to be a number the configuration can hold.
+fn error_control(method: &str, name: &str) -> Result<ErrorControlName, Message> {
+    ErrorControlName::parse(name).ok_or_else(|| {
+        message(
+            "RMD2003",
+            &[method, "error_control is not one of: auto, required, off"],
+        )
+    })
+}
+
+fn guard_tone(method: &str, name: &str) -> Result<GuardToneName, Message> {
+    GuardToneName::parse(name).ok_or_else(|| {
+        message(
+            "RMD2003",
+            &[method, "guard_tone is not one of: off, 1800, 550"],
+        )
+    })
+}
+
 fn tx_level(method: &str, level: i32) -> Result<i8, Message> {
     i8::try_from(level)
         .map_err(|_| message("RMD2003", &[method, "tx_level_dbm0 is not a level in dBm0"]))
@@ -1073,7 +1097,17 @@ fn new_line(spec: &LineSpec) -> Result<LineConfig, Message> {
                 .tx_level_dbm0
                 .map(|level| tx_level("lines.add", level))
                 .transpose()?,
-            ..LineModem::default()
+            error_control: modem
+                .error_control
+                .as_deref()
+                .map(|name| error_control("lines.add", name))
+                .transpose()?,
+            compression: modem.compression,
+            guard_tone: modem
+                .guard_tone
+                .as_deref()
+                .map(|name| guard_tone("lines.add", name))
+                .transpose()?,
         };
     }
     if let Some(register) = &spec.register {
@@ -1134,24 +1168,13 @@ fn register_edit(
 /// The change `lines.edit` describes, to the line as it is now.
 fn line_edit(change: &LineChange, current: Option<&LineConfig>) -> Result<LineEdit, Message> {
     Ok(LineEdit {
-        modem: change.modem.as_ref().map(|modem| {
-            // The change names the line's own modem settings, all of
-            // them that the control API has. What it has not, the line's
-            // policy for error control and compression and its guard
-            // tone, stays as the line has it.
-            let own = current.map(|line| &line.modem);
-            LineModemEdit {
-                modulations: modem.modulations.clone(),
-                v8: modem.v8,
-                tx_level_dbm0: modem.tx_level_dbm0.map(i64::from),
-                error_control: own
-                    .and_then(|own| own.error_control)
-                    .map(|policy| policy.as_str().to_string()),
-                compression: own.and_then(|own| own.compression),
-                guard_tone: own
-                    .and_then(|own| own.guard_tone)
-                    .map(|tone| tone.as_str().to_string()),
-            }
+        modem: change.modem.as_ref().map(|modem| LineModemEdit {
+            modulations: modem.modulations.clone(),
+            v8: modem.v8,
+            tx_level_dbm0: modem.tx_level_dbm0.map(i64::from),
+            error_control: modem.error_control.clone(),
+            compression: modem.compression,
+            guard_tone: modem.guard_tone.clone(),
         }),
         engine: change
             .engine

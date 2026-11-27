@@ -1,0 +1,21 @@
+# What rustmodem-replay --answer prints for answer-v22-lapm.rmcap. Made with:
+#   rustmodem-replay modem/engine/tests/corpus/answer-v22-lapm.rmcap
+role answer
+law ulaw
+frames 1410
+10 state answer-silence
+2150 state answer-tone
+7150 state gap
+7230 state fallback
+8130 state training
+8900 link detection
+8900 state link
+9440 link setup
+9710 xid rx command n401 128/128 k 15/15 compression none
+9710 xid tx response n401 128/128 k 15/15 compression none
+10020 link lapm window 15 compression none
+10020 state data
+10020 connect 1200 V.22 LAPM
+data 60 68549a0fb96d1595
+framing-errors 0
+sent-as-captured 1410 of 1410

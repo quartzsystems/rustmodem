@@ -127,11 +127,25 @@ fn cell(bench: &Bench, id: u16, column: Column) -> String {
     })
 }
 
+/// The names the modulation list has, as it shows them.
+const TITLES: [&str; 5] = ["V.22bis", "V.22", "Bell 212A", "V.21", "Bell 103"];
+
+/// Every modulation but V.22bis, as the service calls them and in its
+/// order.
+const WITHOUT_BIS: [&str; 4] = ["v22", "bell212a", "v21", "bell103"];
+
 /// The rows of the modulation list: the name and whether it is checked.
-fn modulations(dialog: Hwnd) -> Vec<(String, bool)> {
+fn rows(dialog: Hwnd) -> Vec<(&'static str, bool)> {
     let list = CheckList::of(dialog.item(modem_ids::LIST));
     (0..list.row_count())
-        .map(|row| (list.cell_text(row, 0), list.checked(row)))
+        .map(|row| {
+            let shown = list.cell_text(row, 0);
+            let title = TITLES
+                .into_iter()
+                .find(|title| *title == shown)
+                .unwrap_or("a name the list should not have");
+            (title, list.checked(row))
+        })
         .collect()
 }
 
@@ -179,13 +193,26 @@ fn the_modulations_are_reordered_and_the_settings_sent() {
         let list = CheckList::of(dialog.item(modem_ids::LIST));
         match time {
             1 => {
-                // As the service has them: both, V.21 first, with V.8,
-                // at -12.
+                // As the service has them: all five, the fastest first,
+                // with V.8, at -12, with error control if the far end has
+                // it, compression, and no guard tone.
                 assert_eq!(
-                    modulations(dialog),
-                    [("V.21".to_string(), true), ("Bell 103".to_string(), true)]
+                    rows(dialog),
+                    [
+                        ("V.22bis", true),
+                        ("V.22", true),
+                        ("Bell 212A", true),
+                        ("V.21", true),
+                        ("Bell 103", true)
+                    ]
                 );
                 assert!(controls::checked(dialog.item(modem_ids::V8)));
+                let error_control = Combo::of(dialog.item(modem_ids::ERROR_CONTROL));
+                assert_eq!(error_control.count(), 3);
+                assert_eq!(error_control.selected(), Some(0));
+                assert!(controls::checked(dialog.item(modem_ids::COMPRESSION)));
+                let guard_tone = Combo::of(dialog.item(modem_ids::GUARD_TONE));
+                assert_eq!(guard_tone.entry(guard_tone.selected().unwrap()), "Off");
                 let level = Combo::of(dialog.item(modem_ids::LEVEL));
                 assert_eq!(level.count(), 12);
                 assert_eq!(level.entry(level.selected().unwrap()), "-12 dBm0");
@@ -197,34 +224,37 @@ fn the_modulations_are_reordered_and_the_settings_sent() {
                 dialog.command(modem_ids::DOWN);
             }
             2 => {
-                assert_eq!(
-                    modulations(dialog),
-                    [("Bell 103".to_string(), true), ("V.21".to_string(), true)]
-                );
+                assert_eq!(rows(dialog)[..2], [("V.22", true), ("V.22bis", true)]);
                 // The row that moved is still the one selected, now the
-                // last.
+                // second: it can go either way.
                 assert_eq!(list.selected(), Some(1));
                 assert!(dialog.item(modem_ids::UP).enabled());
-                assert!(!dialog.item(modem_ids::DOWN).enabled());
+                assert!(dialog.item(modem_ids::DOWN).enabled());
                 // Moving keeps the boxes with their rows.
                 list.set_checked(1, false);
                 dialog.command(modem_ids::UP);
             }
             3 => {
-                assert_eq!(
-                    modulations(dialog),
-                    [("V.21".to_string(), false), ("Bell 103".to_string(), true)]
-                );
+                assert_eq!(rows(dialog)[..2], [("V.22bis", false), ("V.22", true)]);
                 dialog.command(modem_ids::DOWN);
             }
             4 => {
                 assert_eq!(
-                    modulations(dialog),
-                    [("Bell 103".to_string(), true), ("V.21".to_string(), false)]
+                    rows(dialog),
+                    [
+                        ("V.22", true),
+                        ("V.22bis", false),
+                        ("Bell 212A", true),
+                        ("V.21", true),
+                        ("Bell 103", true)
+                    ]
                 );
                 controls::set_checked(dialog.item(modem_ids::V8), false);
                 Combo::of(dialog.item(modem_ids::LEVEL)).select(Some(1));
                 dialog.item(modem_ids::DELAY).set_text("1500");
+                Combo::of(dialog.item(modem_ids::ERROR_CONTROL)).select(Some(1));
+                controls::set_checked(dialog.item(modem_ids::COMPRESSION), false);
+                Combo::of(dialog.item(modem_ids::GUARD_TONE)).select(Some(1));
                 dialog.command(id::OK);
             }
             other => panic!("unexpected {other}"),
@@ -240,11 +270,19 @@ fn the_modulations_are_reordered_and_the_settings_sent() {
             && bench
                 .opened
                 .manager
-                .with_model(|model| model.lines.line(5).unwrap().modem.modulations == ["bell103"])
+                .with_model(|model| model.lines.line(5).unwrap().modem.modulations == WITHOUT_BIS)
     }));
     bench.opened.manager.with_model(|model| {
         let modem = &model.lines.line(5).unwrap().modem;
         assert_eq!((modem.v8, modem.tx_level_dbm0), (false, -10));
+        assert_eq!(
+            (
+                modem.error_control.as_str(),
+                modem.compression,
+                modem.guard_tone.as_str()
+            ),
+            ("required", false, "1800")
+        );
         assert!(modem.own.is_empty());
     });
 
@@ -254,13 +292,29 @@ fn the_modulations_are_reordered_and_the_settings_sent() {
         assert_eq!(name, "modem");
         match time {
             1 => {
+                // The ones that are allowed first, and after them the
+                // one that is not.
                 assert_eq!(
-                    modulations(dialog),
-                    [("Bell 103".to_string(), true), ("V.21".to_string(), false)]
+                    rows(dialog),
+                    [
+                        ("V.22", true),
+                        ("Bell 212A", true),
+                        ("V.21", true),
+                        ("Bell 103", true),
+                        ("V.22bis", false)
+                    ]
                 );
                 assert!(!controls::checked(dialog.item(modem_ids::V8)));
                 assert_eq!(dialog.item(modem_ids::DELAY).text(), "1500");
-                CheckList::of(dialog.item(modem_ids::LIST)).set_checked(0, false);
+                let error_control = Combo::of(dialog.item(modem_ids::ERROR_CONTROL));
+                assert_eq!(error_control.selected(), Some(1));
+                assert!(!controls::checked(dialog.item(modem_ids::COMPRESSION)));
+                let guard_tone = Combo::of(dialog.item(modem_ids::GUARD_TONE));
+                assert_eq!(guard_tone.entry(guard_tone.selected().unwrap()), "1800 Hz");
+                let list = CheckList::of(dialog.item(modem_ids::LIST));
+                for row in 0..4 {
+                    list.set_checked(row, false);
+                }
                 dialog.command(id::OK);
             }
             // Refused: the dialog is still up.
@@ -273,7 +327,7 @@ fn the_modulations_are_reordered_and_the_settings_sent() {
     assert_eq!(seen.task_titles(), ["RMD4015"]);
     seen.tasks.borrow_mut().clear();
     bench.opened.manager.with_model(|model| {
-        assert_eq!(model.lines.line(5).unwrap().modem.modulations, ["bell103"]);
+        assert_eq!(model.lines.line(5).unwrap().modem.modulations, WITHOUT_BIS);
     });
 }
 
@@ -314,9 +368,19 @@ fn a_line_is_given_modem_settings_of_its_own_and_gives_them_up() {
     assert!(seen.tasks.borrow().is_empty(), "{:?}", seen.task_titles());
     bench.opened.manager.with_model(|model| {
         let modem = &model.lines.line(5).unwrap().modem;
-        assert_eq!(modem.modulations, ["bell103"]);
+        assert_eq!(modem.modulations, WITHOUT_BIS);
         assert!(!modem.v8);
-        assert_eq!(modem.own, ["modulations", "v8", "tx_level_dbm0"]);
+        assert_eq!(
+            modem.own,
+            [
+                "modulations",
+                "v8",
+                "tx_level_dbm0",
+                "error_control",
+                "compression",
+                "guard_tone"
+            ]
+        );
         // The other lines have the service's still.
         assert!(model.lines.line(4).unwrap().modem.own.is_empty());
     });
@@ -328,8 +392,14 @@ fn a_line_is_given_modem_settings_of_its_own_and_gives_them_up() {
         ("line-modem", 1) => {
             assert!(controls::checked(dialog.item(modem_ids::OWN)));
             assert_eq!(
-                modulations(dialog),
-                [("Bell 103".to_string(), true), ("V.21".to_string(), false)]
+                rows(dialog),
+                [
+                    ("V.22", true),
+                    ("Bell 212A", true),
+                    ("V.21", true),
+                    ("Bell 103", true),
+                    ("V.22bis", false)
+                ]
             );
             controls::set_checked(dialog.item(modem_ids::OWN), false);
             close(name, dialog);
@@ -339,7 +409,7 @@ fn a_line_is_given_modem_settings_of_its_own_and_gives_them_up() {
     });
     bench.choose(Command::EditLine);
     bench.opened.manager.with_model(|model| {
-        assert_eq!(model.lines.line(5).unwrap().modem.own.len(), 3);
+        assert_eq!(model.lines.line(5).unwrap().modem.own.len(), 6);
     });
 
     // The box cleared and OK: the line has the service's again.
@@ -404,10 +474,10 @@ fn the_diagnostics_show_the_modem_of_the_line_and_follow_the_selection() {
     assert_eq!(text(diag_ids::TX), "-12.0 dBm0");
     assert_eq!(text(diag_ids::CARRIER), "Detected");
     assert_eq!(text(diag_ids::FREQUENCY), "+0.4 Hz");
-    assert_eq!(text(diag_ids::QUALITY), "70%");
+    assert_eq!(text(diag_ids::QUALITY), "90%");
     assert_eq!(
         Progress::of(window.item(diag_ids::QUALITY_BAR)).percent(),
-        70
+        90
     );
     assert_eq!(text(diag_ids::FRAMING), "0");
     assert_eq!(text(diag_ids::RETRAINS), "0");
@@ -415,7 +485,25 @@ fn the_diagnostics_show_the_modem_of_the_line_and_follow_the_selection() {
     assert_eq!(history.count(), 2);
     assert!(history.entry(0).ends_with("training"));
     assert!(history.entry(1).ends_with("data"));
-    assert!(text(diag_ids::SCOPE_KIND).starts_with("Demodulator output"));
+    // The call is at 1200 bit/s with LAPM and V.42bis: the receiver's
+    // figures, the data link, and the constellation where a 300 bit/s
+    // call has its scope.
+    assert_eq!(text(diag_ids::SNR), "31.5 dB");
+    assert_eq!(text(diag_ids::EQUALIZER), "-31.5 dB");
+    assert_eq!(text(diag_ids::TIMING), "-12 ppm");
+    assert_eq!(text(diag_ids::LINK), "LAPM");
+    assert!(text(diag_ids::FRAMES).ends_with(" in"));
+    assert!(text(diag_ids::LINK_ERRORS).ends_with(" sent again"));
+    assert_eq!(text(diag_ids::WINDOW), "1 of 15");
+    assert!(
+        text(diag_ids::COMPRESSION).starts_with("2.5:1 out"),
+        "{}",
+        text(diag_ids::COMPRESSION)
+    );
+    assert_eq!(
+        text(diag_ids::SCOPE_KIND),
+        "Constellation: four points, 1200 bit/s"
+    );
 
     // The command again with another line selected: the same window
     // shows that line. Line 5 has no call, and so nothing to show.
@@ -503,7 +591,8 @@ fn the_self_test_passes_between_two_idle_lines() {
                 let text = |control: u16| dialog.item(control).text();
                 assert_eq!(text(selftest_ids::RESULT), "Passed");
                 assert!(
-                    text(selftest_ids::CONNECT).starts_with("2400 bit/s, V.22bis, after "),
+                    text(selftest_ids::CONNECT)
+                        .starts_with("2400 bit/s, V.22bis, LAPM, V.42bis, after "),
                     "{}",
                     text(selftest_ids::CONNECT)
                 );

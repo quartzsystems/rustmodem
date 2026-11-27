@@ -5,9 +5,9 @@
 //! What the client prints: tables by default, for people.
 
 use ctlproto::{
-    CallInfo, CallRecord, ErrorInfo, Event, HuntGroupInfo, LineDiag, LineInfo, LineModem,
-    ListenerState, LogEvent, LogLevel, MediaInfo, ModemInfo, PortInfo, Registration, RouteInfo,
-    SelfTestResult, ServiceInfo, SipMode, SipStatus, Stats,
+    CallInfo, CallRecord, ConnectInfo, ErrorInfo, Event, HuntGroupInfo, LineDiag, LineInfo,
+    LineModem, LinkInfo, ListenerState, LogEvent, LogLevel, MediaInfo, ModemInfo, PortInfo,
+    Registration, RouteInfo, SelfTestResult, ServiceInfo, SipMode, SipStatus, Stats,
 };
 
 /// A column of a table.
@@ -399,13 +399,107 @@ fn modem_settings(modem: &LineModem) -> String {
         }
     };
     format!(
-        "{}{}, V.8 {}{}, {} dBm0{}",
+        "{}{}, V.8 {}{}, {} dBm0{}, error control {}{}, compression {}{}, guard tone {}{}",
         modem.modulations.join(" then "),
         own("modulations"),
         if modem.v8 { "on" } else { "off" },
         own("v8"),
         modem.tx_level_dbm0,
         own("tx_level_dbm0"),
+        modem.error_control,
+        own("error_control"),
+        if modem.compression { "on" } else { "off" },
+        own("compression"),
+        modem.guard_tone,
+        own("guard_tone"),
+    )
+}
+
+/// What a connection has over its modulation: `, LAPM, V.42bis`, or
+/// nothing.
+fn over_the_modem(connect: &ConnectInfo) -> String {
+    let mut text = String::new();
+    for part in [&connect.protocol, &connect.compression]
+        .into_iter()
+        .flatten()
+    {
+        text.push_str(", ");
+        text.push_str(part);
+    }
+    text
+}
+
+/// How many octets went into a compressor for each that came out.
+fn ratio(plain: u32, coded: u32) -> String {
+    if plain == 0 || coded == 0 {
+        return "no data yet".to_string();
+    }
+    format!("{:.1}:1", f64::from(plain) / f64::from(coded))
+}
+
+/// A call's data link in a line.
+fn link_summary(link: &LinkInfo) -> String {
+    let what = match (link.stage.as_str(), link.end.as_deref()) {
+        ("down", Some(end)) => format!("ended ({end})"),
+        (stage, _) => stage.to_string(),
+    };
+    if link.window_size == 0 && link.frames_tx == 0 && link.frames_rx == 0 {
+        return what;
+    }
+    let direction = |mode: &str, plain: u32, coded: u32| match mode {
+        "none" => "none".to_string(),
+        mode => format!("{mode} {}", ratio(plain, coded)),
+    };
+    format!(
+        "{what}, frames {} out and {} in, {} bad, {} sent again, window {} of {}{}{}, \
+         compression out {}, in {}",
+        link.frames_tx,
+        link.frames_rx,
+        link.frame_errors,
+        link.retransmissions,
+        link.window,
+        link.window_size,
+        if link.own_busy { ", host busy" } else { "" },
+        if link.peer_busy { ", far end busy" } else { "" },
+        direction(&link.compression_tx, link.tx_octets_in, link.tx_octets_out),
+        direction(&link.compression_rx, link.rx_octets_out, link.rx_octets_in),
+    )
+}
+
+/// The constellation in a line: how many points, of which constellation,
+/// and how far the farthest is from the ideal point nearest it, in units
+/// of the grid, where a unit is the distance to a wrong decision at 2400
+/// bit/s.
+fn constellation_summary(diag: &LineDiag) -> String {
+    let unit = f64::from(diag.constellation_unit.max(1));
+    // The ideal points are at 1 and 3 units each way: the sixteen of
+    // them, or at 1200 bit/s the four at (3, 1) turned through the
+    // quadrants.
+    let ideal: Vec<(f64, f64)> = match diag.constellation_bits {
+        4 => [-3.0, -1.0, 1.0, 3.0]
+            .iter()
+            .flat_map(|x| [-3.0, -1.0, 1.0, 3.0].map(|y| (*x, y)))
+            .collect(),
+        _ => vec![(3.0, 1.0), (-1.0, 3.0), (-3.0, -1.0), (1.0, -3.0)],
+    };
+    let mut farthest = 0f64;
+    let mut count = 0;
+    for [re, im] in diag.constellation.as_chunks::<2>().0 {
+        let (x, y) = (f64::from(*re) / unit, f64::from(*im) / unit);
+        let nearest = ideal
+            .iter()
+            .map(|(ix, iy)| ((x - ix).powi(2) + (y - iy).powi(2)).sqrt())
+            .fold(f64::INFINITY, f64::min);
+        farthest = farthest.max(nearest);
+        count += 1;
+    }
+    format!(
+        "{count} points of {}, the farthest {farthest:.2} of a unit from its place",
+        if diag.constellation_bits == 4 {
+            "sixteen"
+        } else {
+            "four"
+        }
     )
 }
 
@@ -468,6 +562,22 @@ pub fn diag(diag: &LineDiag) -> String {
         ("Framing errors", modem.framing_errors.to_string()),
         ("Retrains", modem.retrains.to_string()),
     ];
+    let decibels = |tenths: i32| format!("{:.1} dB", f64::from(tenths) / 10.0);
+    if let Some(snr) = modem.snr_tenth_db {
+        pairs.push(("Signal to noise", decibels(snr)));
+    }
+    if let Some(error) = modem.equalizer_error_tenth_db {
+        pairs.push(("Equaliser error", decibels(error)));
+    }
+    if let Some(ppm) = modem.timing_offset_ppm {
+        pairs.push(("Timing offset", format!("{ppm:+} ppm")));
+    }
+    if let Some(link) = &modem.link {
+        pairs.push(("Link", link_summary(link)));
+    }
+    if !diag.constellation.is_empty() {
+        pairs.push(("Constellation", constellation_summary(diag)));
+    }
     if !diag.history.is_empty() {
         let history: Vec<String> = diag
             .history
@@ -503,12 +613,13 @@ pub fn selftest(result: &SelfTestResult) -> String {
             "Connect",
             match (&result.connect, result.connect_ms) {
                 (Some(connect), Some(ms)) => format!(
-                    "{}{} after {}.{} s of the call",
+                    "{}{}{} after {}.{} s of the call",
                     rate(connect.rate),
                     match &connect.carrier {
                         Some(carrier) => format!(" {carrier}"),
                         None => String::new(),
                     },
+                    over_the_modem(connect),
                     ms / 1000,
                     ms % 1000 / 100
                 ),
@@ -713,7 +824,7 @@ pub fn calls(calls: &[CallRecord]) -> String {
                 timestamp(call.started_ms),
                 duration(call.ended_ms.saturating_sub(call.started_ms)),
                 match &call.connect {
-                    Some(connect) => rate(connect.rate),
+                    Some(connect) => format!("{}{}", rate(connect.rate), over_the_modem(connect)),
                     None => "-".to_string(),
                 },
                 call.reason.as_str().to_string(),

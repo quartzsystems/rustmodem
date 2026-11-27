@@ -172,7 +172,21 @@ impl StatsView {
             } else {
                 EMPTY.to_string()
             },
-            named(&stats.protocols),
+            // The share of the calls that connected with error control:
+            // LAPM is the one there is.
+            match stats.protocols.first() {
+                Some(_) => {
+                    let corrected: u64 = stats.protocols.iter().map(|tally| tally.count).sum();
+                    let calls = stats.calls_connected.max(corrected).max(1);
+                    format!(
+                        "{} on {}% of calls",
+                        named(&stats.protocols),
+                        (corrected * 100 + calls / 2) / calls
+                    )
+                }
+                None if connected => "None".to_string(),
+                None => EMPTY.to_string(),
+            },
             if engines.is_empty() {
                 EMPTY.to_string()
             } else {

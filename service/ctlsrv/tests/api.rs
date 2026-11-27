@@ -1141,6 +1141,7 @@ fn state_event(number: u64) -> Event {
         bytes_tx: 0,
         bytes_rx: 0,
         media: None,
+        modem: None,
     })
 }
 

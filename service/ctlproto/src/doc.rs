@@ -833,8 +833,8 @@ pub const TYPES: &[TypeDoc] = &[
             required(
                 "modulations",
                 "array of string",
-                "The modulations the modem may use, the preferred one first: `v21`, \
-                 `bell103`.",
+                "The modulations the modem may use, the preferred one first: `v22bis`, \
+                 `v22`, `bell212a`, `v21`, `bell103`.",
             ),
             required("v8", "boolean", "Whether the modem uses V.8."),
             required(
@@ -843,10 +843,28 @@ pub const TYPES: &[TypeDoc] = &[
                 "The level the modem sends at, in dBm0.",
             ),
             required(
+                "error_control",
+                "string",
+                "The policy for error control at 1200 and 2400 bit/s: `auto`, LAPM if \
+                 the far end has it; `required`, LAPM or the call is cleared; `off`.",
+            ),
+            required(
+                "compression",
+                "boolean",
+                "Whether V.42bis is asked for and agreed to, where there is LAPM.",
+            ),
+            required(
+                "guard_tone",
+                "string",
+                "The guard tone sent when answering at 1200 and 2400 bit/s: `off`, \
+                 `1800` or `550`.",
+            ),
+            required(
                 "own",
                 "array of string",
-                "The keys the line sets for itself: `modulations`, `v8`, `tx_level_dbm0`. \
-                 The others are those of `[modem]`.",
+                "The keys the line sets for itself: `modulations`, `v8`, `tx_level_dbm0`, \
+                 `error_control`, `compression`, `guard_tone`. The others are those of \
+                 `[modem]`.",
             ),
         ],
     },
@@ -858,14 +876,29 @@ pub const TYPES: &[TypeDoc] = &[
             optional(
                 "modulations",
                 "array of string",
-                "The modulations the line's modem may use, the preferred one first: `v21`, \
-                 `bell103`.",
+                "The modulations the line's modem may use, the preferred one first: \
+                 `v22bis`, `v22`, `bell212a`, `v21`, `bell103`.",
             ),
             optional("v8", "boolean", "Whether the line's modem uses V.8."),
             optional(
                 "tx_level_dbm0",
                 "integer",
                 "The level the line's modem sends at, in dBm0: -20 to -9.",
+            ),
+            optional(
+                "error_control",
+                "string",
+                "The line's policy for error control: `auto`, `required` or `off`.",
+            ),
+            optional(
+                "compression",
+                "boolean",
+                "Whether the line's modem asks for and agrees to V.42bis.",
+            ),
+            optional(
+                "guard_tone",
+                "string",
+                "The guard tone the line's modem sends: `off`, `1800` or `550`.",
             ),
         ],
     },
@@ -879,8 +912,8 @@ pub const TYPES: &[TypeDoc] = &[
                 "state",
                 "string",
                 "What the modem is doing: `answer-silence`, `answer-tone`, `v8-jm`, `gap`, \
-                 `fallback`, `listening`, `v8-te`, `v8-cm`, `v8-cj`, `training`, `data`, \
-                 `ended` or `idle`. `docs/MODEM.md` says what each is.",
+                 `fallback`, `listening`, `v8-te`, `v8-cm`, `v8-cj`, `training`, `link`, \
+                 `data`, `retrain`, `ended` or `idle`. `docs/MODEM.md` says what each is.",
             ),
             optional(
                 "rx_level_tenth_dbm0",
@@ -910,18 +943,128 @@ pub const TYPES: &[TypeDoc] = &[
                 "integer",
                 "How good the received signal is, 0 to 100. For the 300 bit/s modems it \
                  is the opening of the eye where the bits are sampled, which on a clean \
-                 line is about 70.",
+                 line is about 70. For the others it is 100 less the error of the \
+                 decisions as a part of the distance to a wrong one at 2400 bit/s, which \
+                 on a clean line is about 90.",
             ),
             required(
                 "framing_errors",
                 "integer",
-                "Characters lost to a wrong stop bit in this call.",
+                "Start-stop characters lost to a wrong stop bit or a wrong parity in \
+                 this call.",
             ),
             required(
                 "retrains",
                 "integer",
                 "Retrains in this call. The 300 bit/s modems have none.",
             ),
+            optional(
+                "snr_tenth_db",
+                "integer",
+                "The signal-to-noise ratio of the receiver's decisions, in tenths of a \
+                 decibel. Absent but at 1200 and 2400 bit/s, once connected.",
+            ),
+            optional(
+                "equalizer_error_tenth_db",
+                "integer",
+                "The equaliser's mean-squared error against the signal, in tenths of a \
+                 decibel: the more negative the better. Absent as `snr_tenth_db` is.",
+            ),
+            optional(
+                "timing_offset_ppm",
+                "integer",
+                "The far end's symbol clock against this end's, in parts in a million. \
+                 Absent as `snr_tenth_db` is.",
+            ),
+            optional(
+                "link",
+                "LinkInfo",
+                "The data link, at 1200 and 2400 bit/s once the modems have connected.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "LinkInfo",
+        text: "The data link of a call at 1200 or 2400 bit/s: the detection phase of \
+               V.42, and then LAPM with or without V.42bis, or start-stop characters.",
+        fields: &[
+            required(
+                "stage",
+                "string",
+                "Where the link is: `detection`, finding out whether the far end has \
+                 error control; `setup`, making the LAPM connection; `lapm`; `async`, \
+                 start-stop characters with no error control; `down`.",
+            ),
+            optional(
+                "end",
+                "string",
+                "How the link ended, if it has: `required`, error control was required \
+                 and the far end has none; `no-protocol` and `no-response`, the far end \
+                 did not go on with it; `refused`; `remote`, the far end released it; \
+                 `local`; `timed-out`, the far end stopped answering; `protocol` and \
+                 `compression`, the far end sent what V.42 or V.42bis does not allow.",
+            ),
+            required("frames_tx", "integer", "Frames sent."),
+            required("frames_rx", "integer", "Frames received whole."),
+            required("retransmissions", "integer", "I frames sent again."),
+            required(
+                "frame_errors",
+                "integer",
+                "Frames received with a check sequence that failed, too short, too long \
+                 or aborted.",
+            ),
+            required(
+                "window",
+                "integer",
+                "I frames sent and not yet acknowledged.",
+            ),
+            required(
+                "window_size",
+                "integer",
+                "The window agreed for what this end sends; 0 without LAPM.",
+            ),
+            required(
+                "peer_busy",
+                "boolean",
+                "Whether the far end has said it cannot take more.",
+            ),
+            required(
+                "own_busy",
+                "boolean",
+                "Whether this end has said it cannot take more: its host is not reading.",
+            ),
+            required(
+                "compression_tx",
+                "string",
+                "The compression of what this end sends: `none`, or with V.42bis agreed \
+                 `transparent` or `compressed`, which is the mode it is in now.",
+            ),
+            required(
+                "compression_rx",
+                "string",
+                "The compression of what this end receives, the same way.",
+            ),
+            required(
+                "tx_octets_in",
+                "integer",
+                "The host's octets into the compressor.",
+            ),
+            required(
+                "tx_octets_out",
+                "integer",
+                "The octets out of the compressor, to the line.",
+            ),
+            required(
+                "rx_octets_in",
+                "integer",
+                "The octets into the decompressor, from the line.",
+            ),
+            required(
+                "rx_octets_out",
+                "integer",
+                "The octets out of the decompressor, to the host.",
+            ),
+            required("breaks", "integer", "Breaks received from the far end."),
         ],
     },
     TypeDoc {
@@ -966,6 +1109,26 @@ pub const TYPES: &[TypeDoc] = &[
                 "array of integer",
                 "The scope: the most recent samples, the oldest first, each from -127 to \
                  127. Empty when there is none.",
+            ),
+            required(
+                "constellation_bits",
+                "integer",
+                "The bits a symbol carries, which says what the ideal points are: 2 for \
+                 the four of 1200 bit/s, 4 for the sixteen of 2400 bit/s, 0 when there \
+                 is no constellation.",
+            ),
+            required(
+                "constellation_unit",
+                "integer",
+                "What a unit of the constellation's grid is in a point. The ideal points \
+                 are at 1 and 3 units each way.",
+            ),
+            required(
+                "constellation",
+                "array of integer",
+                "The constellation: the most recent received points, the oldest first, \
+                 64 at the most, two numbers for each: its real part and then its \
+                 imaginary part, from -127 to 127. Empty when there is none.",
             ),
         ],
     },
@@ -1029,8 +1192,8 @@ pub const TYPES: &[TypeDoc] = &[
             required(
                 "modulations",
                 "array of string",
-                "The modulations a modem may use, the preferred one first: `v21`, \
-                 `bell103`.",
+                "The modulations a modem may use, the preferred one first: `v22bis`, \
+                 `v22`, `bell212a`, `v21`, `bell103`.",
             ),
             required("v8", "boolean", "Whether a modem uses V.8."),
             required(
@@ -1046,7 +1209,24 @@ pub const TYPES: &[TypeDoc] = &[
             required(
                 "fallback_ms",
                 "integer",
-                "How long an answering modem offers each modulation, in milliseconds.",
+                "How long an answering modem gives each kind of modem, in milliseconds.",
+            ),
+            required(
+                "error_control",
+                "string",
+                "The policy for error control at 1200 and 2400 bit/s: `auto`, \
+                 `required` or `off`.",
+            ),
+            required(
+                "compression",
+                "boolean",
+                "Whether V.42bis is asked for and agreed to.",
+            ),
+            required(
+                "guard_tone",
+                "string",
+                "The guard tone sent when answering at 1200 and 2400 bit/s: `off`, \
+                 `1800` or `550`.",
             ),
         ],
     },
@@ -1057,7 +1237,8 @@ pub const TYPES: &[TypeDoc] = &[
             optional(
                 "modulations",
                 "array of string",
-                "The modulations, all of them, the preferred one first: `v21`, `bell103`.",
+                "The modulations, all of them, the preferred one first: `v22bis`, `v22`, \
+                 `bell212a`, `v21`, `bell103`.",
             ),
             optional("v8", "boolean", "Whether a modem uses V.8."),
             optional(
@@ -1074,6 +1255,21 @@ pub const TYPES: &[TypeDoc] = &[
                 "fallback_ms",
                 "integer",
                 "A new time for each modulation offered, in milliseconds: 500 to 20000.",
+            ),
+            optional(
+                "error_control",
+                "string",
+                "A new policy for error control: `auto`, `required` or `off`.",
+            ),
+            optional(
+                "compression",
+                "boolean",
+                "Whether V.42bis is asked for and agreed to.",
+            ),
+            optional(
+                "guard_tone",
+                "string",
+                "A new guard tone: `off`, `1800` or `550`.",
             ),
         ],
     },
@@ -1346,6 +1542,13 @@ pub const TYPES: &[TypeDoc] = &[
                 "MediaInfo",
                 "The RTP of the call: what was agreed and what has happened. Absent for a \
                  call with no media.",
+            ),
+            optional(
+                "modem",
+                "ModemInfo",
+                "The modem of the call as it last reported itself: its retrains and what \
+                 its data link counted. Absent when the line's engine was not a modem, \
+                 or the call had no media.",
             ),
         ],
     },

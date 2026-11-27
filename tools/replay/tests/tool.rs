@@ -177,6 +177,8 @@ fn what_cannot_be_done_is_said_and_the_exit_code_says_which() {
         &["a.rmcap", "--law"],
         &["a.rmcap", "--modulations", "v32"],
         &["a.rmcap", "--modulations", "v21,v21"],
+        &["a.rmcap", "--error-control", "some"],
+        &["a.rmcap", "--error-control"],
         &["a.rmcap", "--fast"],
     ] {
         let refused = run(arguments);
@@ -208,4 +210,48 @@ fn what_cannot_be_done_is_said_and_the_exit_code_says_which() {
     assert_eq!(no_file.status.code(), Some(1));
     assert!(text(&no_file.stderr).contains("no.expect: "));
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+/// A call with error control: the program says what the link did, shows
+/// its frames when asked, and compares an expectation without them. Told
+/// that the modem had no error control, it replays another call.
+#[test]
+fn the_program_shows_the_data_link_and_its_frames() {
+    let capture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../modem/engine/tests/corpus/answer-v8-v22bis-lapm-v42bis.rmcap");
+    let expectation = capture.with_extension("expect");
+    let (capture, expectation) = (capture.to_str().unwrap(), expectation.to_str().unwrap());
+    let plain = run(&[capture, "--expect", expectation]);
+    assert_eq!(plain.status.code(), Some(0), "{}", text(&plain.stderr));
+    let printed = text(&plain.stdout);
+    assert!(
+        printed.contains(" link lapm window 15 compression both\n"),
+        "{printed}"
+    );
+    assert!(
+        printed.contains(" connect 2400 V.22bis LAPM V.42bis\n"),
+        "{printed}"
+    );
+    assert!(printed.contains(" xid rx command n401 128/128 k 15/15 compression both "));
+    assert!(!printed.contains(" frame "), "{printed}");
+
+    let frames = run(&[capture, "--frames", "--expect", expectation]);
+    assert_eq!(frames.status.code(), Some(0), "{}", text(&frames.stderr));
+    let shown = text(&frames.stdout);
+    assert!(shown.contains(" frame rx SABME command p=1\n"), "{shown}");
+    assert!(shown.contains(" frame tx UA response f=1\n"), "{shown}");
+    assert!(shown.len() > printed.len());
+
+    let without = run(&[capture, "--no-compression", "--expect", expectation]);
+    assert_eq!(without.status.code(), Some(1));
+    assert!(
+        text(&without.stdout).contains(" compression none\n"),
+        "{}",
+        text(&without.stdout)
+    );
+    let off = run(&[capture, "--error-control", "off"]);
+    assert_eq!(off.status.code(), Some(0));
+    let said = text(&off.stdout);
+    assert!(said.contains(" link async\n"), "{said}");
+    assert!(!said.contains(" link lapm "), "{said}");
 }

@@ -334,7 +334,7 @@ fn the_call_history_shows_the_codec_and_marks_a_call_that_lost_packets() {
     // Newest first: the call with no RTP, the slipped, the lossy, the
     // clean.
     let cells = |row: usize| -> Vec<String> {
-        (8..11)
+        (11..14)
             .map(|column| history.cell(row, column, &Utc))
             .collect()
     };

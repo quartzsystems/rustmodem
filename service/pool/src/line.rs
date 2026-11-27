@@ -73,6 +73,7 @@ impl ActiveCall {
             bytes_tx: self.bytes_tx,
             bytes_rx: self.bytes_rx,
             media: self.media.map(Box::new),
+            modem: self.modem,
         }
     }
 }
@@ -189,6 +190,9 @@ impl Line {
             ("modulations", own.modulations.is_some()),
             ("v8", own.v8.is_some()),
             ("tx_level_dbm0", own.tx_level_dbm0.is_some()),
+            ("error_control", own.error_control.is_some()),
+            ("compression", own.compression.is_some()),
+            ("guard_tone", own.guard_tone.is_some()),
         ] {
             if set {
                 keys.push(key.to_string());
@@ -202,6 +206,9 @@ impl Line {
                 .collect(),
             v8: resolved.v8,
             tx_level_dbm0: i32::from(resolved.tx_level_dbm0),
+            error_control: resolved.error_control.as_str().to_string(),
+            compression: resolved.compression,
+            guard_tone: resolved.guard_tone.as_str().to_string(),
             own: keys,
         }
     }

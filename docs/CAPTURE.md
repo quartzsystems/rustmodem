@@ -150,18 +150,61 @@ sent-as-captured 554 of 1054
 
 Each line with a time is something the engine did, at that many
 milliseconds of the call's own samples: a state it entered
-(`docs/MODEM.md` lists them), or `connect` with the rate and the carrier,
-`carrier-lost` or `retrain`. `data` is how many characters the engine
-received and a hash of them, which is the same when the same characters
-were received.
+(`docs/MODEM.md` lists them), or `connect` with the rate, the carrier and
+where there is any the error control and the compression, `carrier-lost`
+or `retrain`. `data` is how many characters the engine received and a hash
+of them, which is the same when the same characters were received.
+
+A call at 1200 or 2400 bit/s has a data link, and the replay says what it
+did:
+
+```
+6400 link detection
+6400 state link
+6720 link setup
+6910 xid rx command n401 128/128 k 15/15 compression both codewords 2048 string 32
+6910 xid tx response n401 128/128 k 15/15 compression both codewords 2048 string 32
+7170 link lapm window 15 compression both
+7170 state data
+7170 connect 2400 V.22bis LAPM V.42bis
+```
+
+| Line | What it says |
+|---|---|
+| `link detection` | The detection phase of V.42 began |
+| `link setup` | Both ends have error control: flags, XID and SABME follow |
+| `link lapm window <k> compression <ways>` | The error-corrected connection is up, with the window this end sends in and V.42bis `both` ways, `out`, `in` or `none` |
+| `link async` | No error control: start-stop characters |
+| `link down <why>` | The link ended: `required`, `no-protocol`, `no-response`, `refused`, `remote`, `local`, `timed-out`, `protocol` or `compression`. The link has no re-establishment, so a fault that would reset one ends it, with `protocol` |
+| `xid tx` or `rx`, `command` or `response` | An XID frame: the longest information field and the window, each as initiator/responder, and the compression asked for or agreed |
+| `retransmissions <n>` | I frames sent again in the call so far, when the count changes |
+| `frame-errors <n>` | Frames received that failed their check, when the count changes |
+
+`--frames` adds every frame of LAPM the link sent and received, each where
+it came:
+
+```
+7160 frame rx SABME command p=1
+7160 frame tx UA response f=1
+7170 link lapm window 15 compression both
+7500 frame rx I command ns=0 nr=0 p=0 len=61
+7500 frame tx RR response nr=1 f=0
+```
+
+A frame is its kind, whether it is a command or a response, N(S) and N(R)
+where it has them, its poll or final bit, and the length of its
+information field.
 
 | Option | What it does |
 |---|---|
 | `--answer` | The engine answered the call. This is the default |
 | `--originate` | The engine made the call |
 | `--law ulaw` or `alaw` | The law of the call, when it is not the capture's |
-| `--modulations <list>` | The modulations the modem may use, the first by choice: `v21`, `bell103`, or both with a comma |
+| `--modulations <list>` | The modulations the modem may use, the first by choice: `v22bis`, `v22`, `bell212a`, `v21` and `bell103`, with commas between. All of them by default |
 | `--no-v8` | The modem does not use V.8 |
+| `--error-control auto`, `required` or `off` | The modem's error control. `auto` by default |
+| `--no-compression` | The modem does not ask for V.42bis |
+| `--frames` | Prints the frames of LAPM too. An expectation is compared without them |
 | `--expect <file>` | Compares what the engine does with the file, which has what the program prints. Lines that begin with `#` are skipped. The program exits with 1 if they differ, and says where |
 | `--tx-out <file.wav>` | Writes what the engine sends in the replay as sound |
 
@@ -182,7 +225,12 @@ worth seeing and is not what a call would be.
 start the engine sent exactly what the capture says was sent. The data the
 line's host sent is not in a capture, so a replayed engine sends none, and
 in a capture of a call that carried data from the host the count stops
-where that data began. What was received does not depend on it.
+where that data began. Without error control, what was received does not
+depend on it. With error control it does: the far end acknowledges the
+frames the host's data went in, the replayed engine never sent them, and
+to LAPM an acknowledgement of a frame that was not sent ends the
+connection. Such a call replays as it went as far as the host's first
+octet, and `link down protocol` is where it stops being the call.
 
 The program is a developer's tool, built with `cargo build -p replay`, and
 is not installed with the service.

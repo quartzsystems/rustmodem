@@ -30,8 +30,8 @@ pub use model::{
     Stats, Tally,
 };
 pub use modem::{
-    LineDiag, LineModem, LineModemSpec, ModemChange, ModemInfo, ModemSettings, ModemStateChange,
-    SelfTest, SelfTestResult,
+    LineDiag, LineModem, LineModemSpec, LinkInfo, ModemChange, ModemInfo, ModemSettings,
+    ModemStateChange, SelfTest, SelfTestResult,
 };
 pub use telephony::{
     HuntGroupInfo, HuntGroupList, LineSip, ListenerState, MediaInfo, Registration,

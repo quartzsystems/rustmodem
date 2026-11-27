@@ -61,6 +61,14 @@ async fn a_line_takes_modem_settings_of_its_own_and_gives_them_up() {
         ["v22bis", "v22", "bell212a", "v21", "bell103"]
     );
     assert_eq!((line.modem.v8, line.modem.tx_level_dbm0), (true, -12));
+    assert_eq!(
+        (
+            line.modem.error_control.as_str(),
+            line.modem.compression,
+            line.modem.guard_tone.as_str()
+        ),
+        ("auto", true, "off")
+    );
     assert!(line.modem.own.is_empty());
 
     let added: LineInfo = client
@@ -78,6 +86,7 @@ async fn a_line_takes_modem_settings_of_its_own_and_gives_them_up() {
                 modulations: Some(vec!["bell103".to_string()]),
                 v8: Some(false),
                 tx_level_dbm0: Some(-15),
+                ..LineModemSpec::default()
             }),
         }))
         .await;
@@ -124,6 +133,62 @@ async fn a_line_takes_modem_settings_of_its_own_and_gives_them_up() {
     assert!(edited.modem.own.is_empty());
     assert_eq!(edited.modem.tx_level_dbm0, -12);
     assert!(!fixture.config_text().contains("modem ="));
+
+    // The error control, the compression and the guard tone are a line's
+    // own in the same way.
+    let mut link = change(2);
+    link.modem = Some(LineModemSpec {
+        error_control: Some("required".to_string()),
+        compression: Some(false),
+        guard_tone: Some("1800".to_string()),
+        ..LineModemSpec::default()
+    });
+    let edited: LineInfo = client.ok(Call::LinesEdit(link)).await;
+    assert_eq!(
+        (
+            edited.modem.error_control.as_str(),
+            edited.modem.compression,
+            edited.modem.guard_tone.as_str()
+        ),
+        ("required", false, "1800")
+    );
+    assert_eq!(
+        edited.modem.own,
+        ["error_control", "compression", "guard_tone"]
+    );
+    assert!(
+        fixture.config_text().contains(
+            r#"modem = { error_control = "required", compression = false, guard_tone = "1800" }"#
+        ),
+        "{}",
+        fixture.config_text()
+    );
+    assert_eq!(client.line(2).await.modem, edited.modem);
+    // A policy or a tone there is none of is refused.
+    for bad in [
+        LineModemSpec {
+            error_control: Some("sometimes".to_string()),
+            ..LineModemSpec::default()
+        },
+        LineModemSpec {
+            guard_tone: Some("2100".to_string()),
+            ..LineModemSpec::default()
+        },
+    ] {
+        let mut edit = change(2);
+        edit.modem = Some(bad.clone());
+        assert_eq!(
+            client.err(Call::LinesEdit(edit)).await,
+            "RMD0014",
+            "{bad:?}"
+        );
+    }
+    assert_eq!(client.line(2).await.modem, edited.modem);
+    let mut none = change(2);
+    none.modem = Some(LineModemSpec::default());
+    let edited: LineInfo = client.ok(Call::LinesEdit(none)).await;
+    assert!(edited.modem.own.is_empty());
+    assert_eq!(edited.modem.error_control, "auto");
 
     // What the configuration would refuse is refused, and nothing is
     // changed.
@@ -191,6 +256,7 @@ async fn the_modem_table_is_reported_and_changed_and_the_lines_follow() {
             tx_level_dbm0: Some(-10),
             answer_delay_ms: Some(500),
             fallback_ms: Some(2000),
+            ..ModemChange::default()
         }))
         .await;
     // It is in force for the calls that follow, with no restart.
@@ -212,6 +278,61 @@ async fn the_modem_table_is_reported_and_changed_and_the_lines_follow() {
     let line = client.line(1).await;
     assert_eq!(line.modem.modulations, ["bell103", "v21"]);
     assert_eq!((line.modem.v8, line.modem.tx_level_dbm0), (false, -10));
+
+    // The error control, the compression and the guard tone of every
+    // line that has none of its own.
+    assert_eq!(
+        (
+            settings.modem.error_control.as_str(),
+            settings.modem.compression,
+            settings.modem.guard_tone.as_str()
+        ),
+        ("auto", true, "off")
+    );
+    let result: SettingsResult = client
+        .ok(set(ModemChange {
+            error_control: Some("off".to_string()),
+            compression: Some(false),
+            guard_tone: Some("550".to_string()),
+            ..ModemChange::default()
+        }))
+        .await;
+    assert!(!result.restart_required);
+    assert_eq!(
+        (
+            result.config.modem.error_control.as_str(),
+            result.config.modem.compression,
+            result.config.modem.guard_tone.as_str()
+        ),
+        ("off", false, "550")
+    );
+    // The rest is as it was.
+    assert_eq!(result.config.modem.tx_level_dbm0, -10);
+    let text = fixture.config_text();
+    assert!(text.contains("error_control = \"off\"\n"), "{text}");
+    assert!(text.contains("compression = false\n"), "{text}");
+    assert!(text.contains("guard_tone = \"550\"\n"), "{text}");
+    let line = client.line(2).await;
+    assert_eq!(
+        (
+            line.modem.error_control.as_str(),
+            line.modem.compression,
+            line.modem.guard_tone.as_str()
+        ),
+        ("off", false, "550")
+    );
+    for bad in [
+        ModemChange {
+            error_control: Some("on".to_string()),
+            ..ModemChange::default()
+        },
+        ModemChange {
+            guard_tone: Some("none".to_string()),
+            ..ModemChange::default()
+        },
+    ] {
+        assert_eq!(client.err(set(bad.clone())).await, "RMD0014", "{bad:?}");
+    }
 
     // One key changes one key.
     let result: SettingsResult = client
@@ -426,6 +547,7 @@ async fn the_self_test_runs_two_modems_and_holds_their_lines_meanwhile() {
         modulations: Some(vec!["bell103".to_string()]),
         v8: Some(false),
         tx_level_dbm0: None,
+        ..LineModemSpec::default()
     });
     client.ok::<LineInfo>(Call::LinesEdit(bell)).await;
     let mut v21 = change(1);

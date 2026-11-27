@@ -38,7 +38,8 @@ pub use echo::{ECHO_CARRIER, EchoEngine};
 pub use g711::Law;
 pub use info::ConnectInfo;
 pub use link::{
-    CODEWORDS, Compression, ErrorControl, LinkEnd, LinkStage, LinkStats, STRING_LENGTH,
+    CODEWORDS, Compression, ErrorControl, LinkEnd, LinkStage, LinkStats, STRING_LENGTH, TAP_OCTETS,
+    TappedFrame,
 };
 pub use modem::{
     COMPRESSION_V42BIS, COMPRESSION_V42BIS_RECEIVE, COMPRESSION_V42BIS_TRANSMIT, CallSettings,

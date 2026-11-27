@@ -550,6 +550,7 @@ fn every_kind_of_event_has_a_line() {
                 bytes_tx: 12,
                 bytes_rx: 34,
                 media: None,
+                modem: None,
             }),
             "line 1 call 7 ended: no_answer, 12 bytes sent, 34 received",
         ),
@@ -956,7 +957,7 @@ fn selftest_runs_two_modems_and_its_exit_code_says_whether_they_passed() {
     assert!(
         out.contains(
             "Modem:              v22bis then v22 then bell212a then v21 then bell103, V.8 on, \
-             -12 dBm0\n"
+             -12 dBm0, error control auto, compression on, guard tone off\n"
         ),
         "{out}"
     );
@@ -966,7 +967,7 @@ fn selftest_runs_two_modems_and_its_exit_code_says_whether_they_passed() {
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines[0], "Self-test:  line 1 calls line 2");
     assert!(
-        lines[1].starts_with("Connect:    2400 bit/s V.22bis after "),
+        lines[1].starts_with("Connect:    2400 bit/s V.22bis, LAPM, V.42bis after "),
         "{out}"
     );
     assert_eq!(
@@ -986,6 +987,7 @@ fn selftest_runs_two_modems_and_its_exit_code_says_whether_they_passed() {
         modulations: Some(vec!["bell103".to_string()]),
         v8: Some(false),
         tx_level_dbm0: Some(-10),
+        ..ctlproto::LineModemSpec::default()
     });
     client
         .call::<LineInfo>(&ctlproto::Call::LinesEdit(bell))
@@ -1000,7 +1002,10 @@ fn selftest_runs_two_modems_and_its_exit_code_says_whether_they_passed() {
         .unwrap();
     let (_, out, _) = service.ctl(&["line", "2"]);
     assert!(
-        out.contains("Modem:              bell103 (line), V.8 off (line), -10 dBm0 (line)\n"),
+        out.contains(
+            "Modem:              bell103 (line), V.8 off (line), -10 dBm0 (line), error control \
+             auto, compression on, guard tone off\n"
+        ),
         "{out}"
     );
     let (code, out, errors) = service.ctl(&["selftest", "1", "2"]);
@@ -1031,6 +1036,7 @@ fn the_modem_of_a_call_is_laid_out_for_people() {
         quality_percent: 71,
         framing_errors: 2,
         retrains: 0,
+        ..ModemInfo::default()
     };
     let diag = LineDiag {
         line: 3,
@@ -1047,6 +1053,7 @@ fn the_modem_of_a_call_is_laid_out_for_people() {
         ],
         scope_kind: "discriminator".to_string(),
         scope: vec![-127, -64, 0, 64, 127],
+        ..LineDiag::default()
     };
     assert_eq!(
         output::diag(&diag),
@@ -1075,6 +1082,52 @@ fn the_modem_of_a_call_is_laid_out_for_people() {
         scope: Vec::new(),
         ..diag.clone()
     };
+    // A modem at 2400 bit/s with its data link, and its constellation
+    // where the scope was: three points, of which one is 0.3 of a unit
+    // out.
+    let fast = LineDiag {
+        modem: Some(ModemInfo {
+            snr_tenth_db: Some(312),
+            equalizer_error_tenth_db: Some(-305),
+            timing_offset_ppm: Some(-12),
+            link: Some(Box::new(ctlproto::LinkInfo {
+                stage: "lapm".to_string(),
+                frames_tx: 162,
+                frames_rx: 161,
+                retransmissions: 3,
+                frame_errors: 2,
+                window: 1,
+                window_size: 15,
+                compression_tx: "compressed".to_string(),
+                compression_rx: "transparent".to_string(),
+                tx_octets_in: 20_000,
+                tx_octets_out: 8000,
+                rx_octets_in: 10_100,
+                rx_octets_out: 10_000,
+                ..ctlproto::LinkInfo::default()
+            })),
+            ..modem.clone()
+        }),
+        history: Vec::new(),
+        scope_kind: "none".to_string(),
+        scope: Vec::new(),
+        constellation_bits: 4,
+        constellation_unit: 30,
+        constellation: vec![30, 30, -90, 90, 99, -30],
+        ..diag.clone()
+    };
+    let text = output::diag(&fast);
+    assert!(
+        text.ends_with(
+            "Signal to noise:  31.2 dB\n\
+             Equaliser error:  -30.5 dB\n\
+             Timing offset:    -12 ppm\n\
+             Link:             lapm, frames 162 out and 161 in, 2 bad, 3 sent again, window 1 of \
+             15, compression out compressed 2.5:1, in transparent 1.0:1\n\
+             Constellation:    3 points of sixteen, the farthest 0.30 of a unit from its place\n"
+        ),
+        "{text}"
+    );
     let text = output::diag(&silent);
     assert!(text.contains("Receive level:    none\n"), "{text}");
     assert!(text.contains("Carrier:          absent\n"), "{text}");

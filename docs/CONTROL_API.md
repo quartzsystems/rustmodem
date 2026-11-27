@@ -747,10 +747,13 @@ The modem settings a line's calls use: those of `[modem]` with the line's own ov
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `modulations` | array of string | yes | The modulations the modem may use, the preferred one first: `v21`, `bell103`. |
+| `modulations` | array of string | yes | The modulations the modem may use, the preferred one first: `v22bis`, `v22`, `bell212a`, `v21`, `bell103`. |
 | `v8` | boolean | yes | Whether the modem uses V.8. |
 | `tx_level_dbm0` | integer | yes | The level the modem sends at, in dBm0. |
-| `own` | array of string | yes | The keys the line sets for itself: `modulations`, `v8`, `tx_level_dbm0`. The others are those of `[modem]`. |
+| `error_control` | string | yes | The policy for error control at 1200 and 2400 bit/s: `auto`, LAPM if the far end has it; `required`, LAPM or the call is cleared; `off`. |
+| `compression` | boolean | yes | Whether V.42bis is asked for and agreed to, where there is LAPM. |
+| `guard_tone` | string | yes | The guard tone sent when answering at 1200 and 2400 bit/s: `off`, `1800` or `550`. |
+| `own` | array of string | yes | The keys the line sets for itself: `modulations`, `v8`, `tx_level_dbm0`, `error_control`, `compression`, `guard_tone`. The others are those of `[modem]`. |
 
 ### LineModemSpec
 
@@ -758,9 +761,12 @@ The `modem` part of `lines.add` and `lines.edit`: the line's own modem settings,
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `modulations` | array of string | no | The modulations the line's modem may use, the preferred one first: `v21`, `bell103`. |
+| `modulations` | array of string | no | The modulations the line's modem may use, the preferred one first: `v22bis`, `v22`, `bell212a`, `v21`, `bell103`. |
 | `v8` | boolean | no | Whether the line's modem uses V.8. |
 | `tx_level_dbm0` | integer | no | The level the line's modem sends at, in dBm0: -20 to -9. |
+| `error_control` | string | no | The line's policy for error control: `auto`, `required` or `off`. |
+| `compression` | boolean | no | Whether the line's modem asks for and agrees to V.42bis. |
+| `guard_tone` | string | no | The guard tone the line's modem sends: `off`, `1800` or `550`. |
 
 ### ModemInfo
 
@@ -768,14 +774,42 @@ The modem of a call, as it last reported itself: ten times a second while the ca
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `state` | string | yes | What the modem is doing: `answer-silence`, `answer-tone`, `v8-jm`, `gap`, `fallback`, `listening`, `v8-te`, `v8-cm`, `v8-cj`, `training`, `data`, `ended` or `idle`. `docs/MODEM.md` says what each is. |
+| `state` | string | yes | What the modem is doing: `answer-silence`, `answer-tone`, `v8-jm`, `gap`, `fallback`, `listening`, `v8-te`, `v8-cm`, `v8-cj`, `training`, `link`, `data`, `retrain`, `ended` or `idle`. `docs/MODEM.md` says what each is. |
 | `rx_level_tenth_dbm0` | integer | no | The level received in the band the modem listens to, in tenths of a dBm0. Absent when nothing is received. |
 | `tx_level_tenth_dbm0` | integer | no | The level the modem sends, in tenths of a dBm0. Absent when it sends nothing. |
 | `carrier` | boolean | yes | Whether the far end's carrier is detected. |
 | `frequency_error_mhz` | integer | yes | How far the far end's carrier is from its nominal frequency, in millihertz. |
-| `quality_percent` | integer | yes | How good the received signal is, 0 to 100. For the 300 bit/s modems it is the opening of the eye where the bits are sampled, which on a clean line is about 70. |
-| `framing_errors` | integer | yes | Characters lost to a wrong stop bit in this call. |
+| `quality_percent` | integer | yes | How good the received signal is, 0 to 100. For the 300 bit/s modems it is the opening of the eye where the bits are sampled, which on a clean line is about 70. For the others it is 100 less the error of the decisions as a part of the distance to a wrong one at 2400 bit/s, which on a clean line is about 90. |
+| `framing_errors` | integer | yes | Start-stop characters lost to a wrong stop bit or a wrong parity in this call. |
 | `retrains` | integer | yes | Retrains in this call. The 300 bit/s modems have none. |
+| `snr_tenth_db` | integer | no | The signal-to-noise ratio of the receiver's decisions, in tenths of a decibel. Absent but at 1200 and 2400 bit/s, once connected. |
+| `equalizer_error_tenth_db` | integer | no | The equaliser's mean-squared error against the signal, in tenths of a decibel: the more negative the better. Absent as `snr_tenth_db` is. |
+| `timing_offset_ppm` | integer | no | The far end's symbol clock against this end's, in parts in a million. Absent as `snr_tenth_db` is. |
+| `link` | LinkInfo | no | The data link, at 1200 and 2400 bit/s once the modems have connected. |
+
+### LinkInfo
+
+The data link of a call at 1200 or 2400 bit/s: the detection phase of V.42, and then LAPM with or without V.42bis, or start-stop characters.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `stage` | string | yes | Where the link is: `detection`, finding out whether the far end has error control; `setup`, making the LAPM connection; `lapm`; `async`, start-stop characters with no error control; `down`. |
+| `end` | string | no | How the link ended, if it has: `required`, error control was required and the far end has none; `no-protocol` and `no-response`, the far end did not go on with it; `refused`; `remote`, the far end released it; `local`; `timed-out`, the far end stopped answering; `protocol` and `compression`, the far end sent what V.42 or V.42bis does not allow. |
+| `frames_tx` | integer | yes | Frames sent. |
+| `frames_rx` | integer | yes | Frames received whole. |
+| `retransmissions` | integer | yes | I frames sent again. |
+| `frame_errors` | integer | yes | Frames received with a check sequence that failed, too short, too long or aborted. |
+| `window` | integer | yes | I frames sent and not yet acknowledged. |
+| `window_size` | integer | yes | The window agreed for what this end sends; 0 without LAPM. |
+| `peer_busy` | boolean | yes | Whether the far end has said it cannot take more. |
+| `own_busy` | boolean | yes | Whether this end has said it cannot take more: its host is not reading. |
+| `compression_tx` | string | yes | The compression of what this end sends: `none`, or with V.42bis agreed `transparent` or `compressed`, which is the mode it is in now. |
+| `compression_rx` | string | yes | The compression of what this end receives, the same way. |
+| `tx_octets_in` | integer | yes | The host's octets into the compressor. |
+| `tx_octets_out` | integer | yes | The octets out of the compressor, to the line. |
+| `rx_octets_in` | integer | yes | The octets into the decompressor, from the line. |
+| `rx_octets_out` | integer | yes | The octets out of the decompressor, to the host. |
+| `breaks` | integer | yes | Breaks received from the far end. |
 
 ### ModemStateChange
 
@@ -797,6 +831,9 @@ The diagnostics of a line: the result of `lines.diag` and the data of `line.diag
 | `history` | array of ModemStateChange | yes | The modem's last changes of state, the oldest first: eight at the most. |
 | `scope_kind` | string | yes | What the scope's samples are: `none`, or `discriminator`, the output of the demodulator, where 127 is all mark and -127 all space, one sample for every four of the line's. |
 | `scope` | array of integer | yes | The scope: the most recent samples, the oldest first, each from -127 to 127. Empty when there is none. |
+| `constellation_bits` | integer | yes | The bits a symbol carries, which says what the ideal points are: 2 for the four of 1200 bit/s, 4 for the sixteen of 2400 bit/s, 0 when there is no constellation. |
+| `constellation_unit` | integer | yes | What a unit of the constellation's grid is in a point. The ideal points are at 1 and 3 units each way. |
+| `constellation` | array of integer | yes | The constellation: the most recent received points, the oldest first, 64 at the most, two numbers for each: its real part and then its imaginary part, from -127 to 127. Empty when there is none. |
 
 ### SelfTestResult
 
@@ -822,11 +859,14 @@ The `[modem]` settings.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `modulations` | array of string | yes | The modulations a modem may use, the preferred one first: `v21`, `bell103`. |
+| `modulations` | array of string | yes | The modulations a modem may use, the preferred one first: `v22bis`, `v22`, `bell212a`, `v21`, `bell103`. |
 | `v8` | boolean | yes | Whether a modem uses V.8. |
 | `tx_level_dbm0` | integer | yes | The level a modem sends at, in dBm0. |
 | `answer_delay_ms` | integer | yes | Silence before an answering modem begins, in milliseconds. |
-| `fallback_ms` | integer | yes | How long an answering modem offers each modulation, in milliseconds. |
+| `fallback_ms` | integer | yes | How long an answering modem gives each kind of modem, in milliseconds. |
+| `error_control` | string | yes | The policy for error control at 1200 and 2400 bit/s: `auto`, `required` or `off`. |
+| `compression` | boolean | yes | Whether V.42bis is asked for and agreed to. |
+| `guard_tone` | string | yes | The guard tone sent when answering at 1200 and 2400 bit/s: `off`, `1800` or `550`. |
 
 ### ModemChange
 
@@ -834,11 +874,14 @@ The `modem` part of `config.set`: the keys of `[modem]` to change.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `modulations` | array of string | no | The modulations, all of them, the preferred one first: `v21`, `bell103`. |
+| `modulations` | array of string | no | The modulations, all of them, the preferred one first: `v22bis`, `v22`, `bell212a`, `v21`, `bell103`. |
 | `v8` | boolean | no | Whether a modem uses V.8. |
 | `tx_level_dbm0` | integer | no | A new level to send at, in dBm0: -20 to -9. |
 | `answer_delay_ms` | integer | no | A new silence before answering, in milliseconds: 0 to 10000. |
 | `fallback_ms` | integer | no | A new time for each modulation offered, in milliseconds: 500 to 20000. |
+| `error_control` | string | no | A new policy for error control: `auto`, `required` or `off`. |
+| `compression` | boolean | no | Whether V.42bis is asked for and agreed to. |
+| `guard_tone` | string | no | A new guard tone: `off`, `1800` or `550`. |
 
 ### LineSip
 
@@ -939,6 +982,7 @@ A call that has ended. The same object is written, one a line, to `calls.jsonl` 
 | `bytes_tx` | integer | yes | Data bytes from the host to the far end. |
 | `bytes_rx` | integer | yes | Data bytes from the far end to the host. |
 | `media` | MediaInfo | no | The RTP of the call: what was agreed and what has happened. Absent for a call with no media. |
+| `modem` | ModemInfo | no | The modem of the call as it last reported itself: its retrains and what its data link counted. Absent when the line's engine was not a modem, or the call had no media. |
 
 ### ConnectInfo
 

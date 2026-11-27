@@ -656,7 +656,7 @@ fn the_statistics_panels_show_what_the_service_reports() {
         carrier,
         [
             ("Retrains / renegotiations", EMPTY),
-            ("Error correction", EMPTY),
+            ("Error correction", "None"),
             ("Softmodem engine", "null"),
             ("RTP codec / ptime", EMPTY),
             ("Jitter (avg / max)", EMPTY),
@@ -751,7 +751,7 @@ fn later_engines_fill_in_retrains_and_error_correction() {
     };
     let view = StatsView::new(&stats, &info, "null", START_MS, &Utc);
     assert_eq!(view.carrier[0].1, "1,234");
-    assert_eq!(view.carrier[1].1, "LAPM (and 1 more)");
+    assert_eq!(view.carrier[1].1, "LAPM (and 1 more) on 100% of calls");
     let one = Stats {
         protocols: vec![Tally {
             name: "LAPM".to_string(),
@@ -761,7 +761,16 @@ fn later_engines_fill_in_retrains_and_error_correction() {
     };
     assert_eq!(
         StatsView::new(&one, &info, "null", START_MS, &Utc).carrier[1].1,
-        "LAPM"
+        "LAPM on 100% of calls"
+    );
+    // Four calls with LAPM of ten that connected.
+    let some = Stats {
+        calls_connected: 10,
+        ..one
+    };
+    assert_eq!(
+        StatsView::new(&some, &info, "null", START_MS, &Utc).carrier[1].1,
+        "LAPM on 40% of calls"
     );
 }
 
@@ -969,8 +978,17 @@ fn every_cell_of_the_call_history() {
     connected_call.connect = Some(ctlproto::ConnectInfo {
         rate: 2400,
         carrier: Some("V.22bis".to_string()),
-        protocol: None,
-        compression: None,
+        protocol: Some("LAPM".to_string()),
+        compression: Some("V.42bis".to_string()),
+    });
+    connected_call.modem = Some(ctlproto::ModemInfo {
+        retrains: 2,
+        link: Some(Box::new(ctlproto::LinkInfo {
+            frame_errors: 7,
+            retransmissions: 9,
+            ..ctlproto::LinkInfo::default()
+        })),
+        ..ctlproto::ModemInfo::default()
     });
     connected_call.bytes_tx = 48_000;
     connected_call.bytes_rx = 16_000;
@@ -991,6 +1009,9 @@ fn every_cell_of_the_call_history() {
             "12:07",
             "Host dropped DTR",
             "2400 V.22bis",
+            "LAPM",
+            "V.42bis",
+            "2",
             "48,000 / 16,000",
             EMPTY,
             EMPTY,
@@ -1006,6 +1027,9 @@ fn every_cell_of_the_call_history() {
             "5550100",
             EMPTY,
             "Caller gave up",
+            EMPTY,
+            EMPTY,
+            EMPTY,
             EMPTY,
             "0 / 0",
             EMPTY,
@@ -1026,6 +1050,9 @@ fn every_cell_of_the_call_history() {
             "Duration",
             "Reason",
             "Rate",
+            "Protocol",
+            "Compression",
+            "Retr.",
             "Bytes TX/RX",
             "Codec",
             "Lost",
@@ -1043,16 +1070,17 @@ fn every_cell_of_the_call_history() {
     let lines: Vec<&str> = csv.split("\r\n").collect();
     assert_eq!(
         lines[0],
-        "Time,Line,Direction,Number,Connected seconds,Reason,Rate,Carrier,Bytes TX,Bytes RX,\
-         Codec,Lost,Late,Duplicate,Resync,Slips"
+        "Time,Line,Direction,Number,Connected seconds,Reason,Rate,Carrier,Protocol,Compression,\
+         Retrains,Frame errors,Frames sent again,Bytes TX,Bytes RX,Codec,Lost,Late,Duplicate,\
+         Resync,Slips"
     );
     assert_eq!(
         lines[1],
-        "2027-01-15 08:02:00,3,outgoing,2,727,dtr,2400,V.22bis,48000,16000,,,,,,"
+        "2027-01-15 08:02:00,3,outgoing,2,727,dtr,2400,V.22bis,LAPM,V.42bis,2,7,9,48000,16000,,,,,,"
     );
     assert_eq!(
         lines[2],
-        "2027-01-15 08:01:00,1,incoming,5550100,,abandoned,,,0,0,,,,,,"
+        "2027-01-15 08:01:00,1,incoming,5550100,,abandoned,,,,,,,,0,0,,,,,,"
     );
     assert_eq!(lines.len(), 4);
 }

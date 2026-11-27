@@ -14,7 +14,7 @@ use crate::format::{EMPTY, TimeZone, csv_row, duration, grouped};
 pub const CALL_LIMIT: usize = 1000;
 
 /// The columns of the call history, in order.
-pub const CALL_COLUMNS: [(&str, i32, bool); 11] = [
+pub const CALL_COLUMNS: [(&str, i32, bool); 14] = [
     ("Time", 130, false),
     ("Line", 40, true),
     ("Direction", 70, false),
@@ -22,6 +22,9 @@ pub const CALL_COLUMNS: [(&str, i32, bool); 11] = [
     ("Duration", 60, true),
     ("Reason", 130, false),
     ("Rate", 100, false),
+    ("Protocol", 60, false),
+    ("Compression", 90, false),
+    ("Retr.", 40, true),
     ("Bytes TX/RX", 110, true),
     ("Codec", 50, false),
     ("Lost", 45, true),
@@ -148,17 +151,34 @@ impl CallHistory {
                 },
                 None => EMPTY.to_string(),
             },
-            7 => format!("{} / {}", grouped(call.bytes_tx), grouped(call.bytes_rx)),
+            // What the modems agreed over the modulation: a call that
+            // connected with neither has a dash for each.
+            7 => call
+                .connect
+                .as_ref()
+                .and_then(|connect| connect.protocol.clone())
+                .unwrap_or_else(|| EMPTY.to_string()),
+            8 => call
+                .connect
+                .as_ref()
+                .and_then(|connect| connect.compression.clone())
+                .unwrap_or_else(|| EMPTY.to_string()),
+            // A call whose engine was no modem has no retrains to count.
+            9 => match &call.modem {
+                Some(modem) => grouped(u64::from(modem.retrains)),
+                None => EMPTY.to_string(),
+            },
+            10 => format!("{} / {}", grouped(call.bytes_tx), grouped(call.bytes_rx)),
             // A call with no RTP has nothing in the last three.
-            8 => match &call.media {
+            11 => match &call.media {
                 Some(media) => media.codec.clone(),
                 None => EMPTY.to_string(),
             },
-            9 => match &call.media {
+            12 => match &call.media {
                 Some(media) => grouped(media.lost),
                 None => EMPTY.to_string(),
             },
-            10 => match &call.media {
+            13 => match &call.media {
                 Some(media) => grouped(media.slips),
                 None => EMPTY.to_string(),
             },
@@ -178,6 +198,11 @@ impl CallHistory {
             "Reason",
             "Rate",
             "Carrier",
+            "Protocol",
+            "Compression",
+            "Retrains",
+            "Frame errors",
+            "Frames sent again",
             "Bytes TX",
             "Bytes RX",
             "Codec",
@@ -192,12 +217,28 @@ impl CallHistory {
                 .connected_ms
                 .map(|connected| (call.ended_ms.saturating_sub(connected) / 1000).to_string())
                 .unwrap_or_default();
-            let (rate, carrier) = match &call.connect {
+            let (rate, carrier, protocol, compression) = match &call.connect {
                 Some(connect) => (
                     connect.rate.to_string(),
                     connect.carrier.clone().unwrap_or_default(),
+                    connect.protocol.clone().unwrap_or_default(),
+                    connect.compression.clone().unwrap_or_default(),
                 ),
-                None => (String::new(), String::new()),
+                None => Default::default(),
+            };
+            // A call whose engine was no modem leaves these empty, and one
+            // with no data link the last two.
+            let retrains = call
+                .modem
+                .as_ref()
+                .map(|modem| modem.retrains.to_string())
+                .unwrap_or_default();
+            let link = |pick: &dyn Fn(&ctlproto::LinkInfo) -> u32| {
+                call.modem
+                    .as_ref()
+                    .and_then(|modem| modem.link.as_deref())
+                    .map(|link| pick(link).to_string())
+                    .unwrap_or_default()
             };
             // A call with no RTP leaves these empty.
             let media = |pick: &dyn Fn(&ctlproto::MediaInfo) -> String| {
@@ -212,6 +253,11 @@ impl CallHistory {
                 call.reason.as_str(),
                 &rate,
                 &carrier,
+                &protocol,
+                &compression,
+                &retrains,
+                &link(&|link| link.frame_errors),
+                &link(&|link| link.retransmissions),
                 &call.bytes_tx.to_string(),
                 &call.bytes_rx.to_string(),
                 &media(&|media| media.codec.clone()),

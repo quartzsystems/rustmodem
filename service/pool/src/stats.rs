@@ -242,6 +242,7 @@ mod tests {
             bytes_tx: 0,
             bytes_rx: 0,
             media: None,
+            modem: None,
         }
     }
 

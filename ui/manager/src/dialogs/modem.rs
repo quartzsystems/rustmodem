@@ -8,7 +8,9 @@
 //! ones that are checked, and prefers them in the order of the list,
 //! which Move up and Move down change. An answering modem that cannot
 //! agree a modulation by V.8 offers them in that order. With them are
-//! whether the modems use V.8 and the level they send at.
+//! whether the modems use V.8, the level they send at, and what a call at
+//! 1200 or 2400 bit/s has over the modem: error control, compression and
+//! the guard tone.
 //!
 //! The same dialog, with less in it, is a line's own settings: it is
 //! opened from the line's dialog, and what it holds is sent with the
@@ -51,14 +53,43 @@ pub mod ids {
     pub const FALLBACK_ARROWS: u16 = 308;
     /// A line has settings of its own.
     pub const OWN: u16 = 309;
+    /// The policy for error control.
+    pub const ERROR_CONTROL: u16 = 310;
+    /// Compression.
+    pub const COMPRESSION: u16 = 311;
+    /// The guard tone.
+    pub const GUARD_TONE: u16 = 312;
 }
 
 /// The modulations there are: what the service calls each, its name and
 /// its rate.
-pub const MODULATIONS: [(&str, &str, &str); 2] = [
+pub const MODULATIONS: [(&str, &str, &str); 5] = [
+    ("v22bis", "V.22bis", "2400 bit/s"),
+    ("v22", "V.22", "1200 bit/s"),
+    ("bell212a", "Bell 212A", "1200 bit/s"),
     ("v21", "V.21", "300 bit/s"),
     ("bell103", "Bell 103", "300 bit/s"),
 ];
+
+/// The policies for error control: what the service calls each, and what
+/// the list says.
+pub const ERROR_CONTROLS: [(&str, &str); 3] = [
+    ("auto", "Auto: if the far end has it"),
+    ("required", "Required: or the call is cleared"),
+    ("off", "Off"),
+];
+
+/// The guard tones: what the service calls each, and what the list says.
+pub const GUARD_TONES: [(&str, &str); 3] = [("off", "Off"), ("1800", "1800 Hz"), ("550", "550 Hz")];
+
+/// Where a name of the service's is in a list of them; the first, which
+/// is the default, for one this manager does not know.
+fn place(names: &[(&str, &str)], name: &str) -> usize {
+    names
+        .iter()
+        .position(|(known, _)| *known == name)
+        .unwrap_or(0)
+}
 
 /// The levels a modem can send at, in dBm0.
 pub const LEVELS: (i32, i32) = (-20, -9);
@@ -84,8 +115,8 @@ enum Kind {
 fn template(kind: Kind, title: &str) -> DialogTemplate {
     // A line's dialog has a box at the top and no times at the bottom.
     let (top, height) = match kind {
-        Kind::Service => (0, 170),
-        Kind::Line => (16, 150),
+        Kind::Service => (0, 242),
+        Kind::Line => (16, 222),
     };
     let mut dialog = DialogTemplate::new(title, 236, height);
     if kind == Kind::Line {
@@ -106,26 +137,38 @@ fn template(kind: Kind, title: &str) -> DialogTemplate {
             8,
             "&Modulations a modem may use, the one it prefers first:",
         )
-        .check_list(ids::LIST, 7, top + 19, 168, 46)
+        .check_list(ids::LIST, 7, top + 19, 168, 70)
         .button(ids::UP, 179, top + 19, 50, 14, "Move &up")
         .button(ids::DOWN, 179, top + 37, 50, 14, "Move &down")
         .check_box(
             ids::V8,
             7,
-            top + 71,
+            top + 95,
             222,
             10,
             "Agree the modulation with &V.8",
         )
-        .label(7, top + 89, 90, 8, "Transmit &level:")
-        .combo(ids::LEVEL, 100, top + 87, 70, 130);
+        .label(7, top + 113, 90, 8, "Transmit &level:")
+        .combo(ids::LEVEL, 100, top + 111, 70, 130)
+        .label(7, top + 131, 90, 8, "&Error control:")
+        .combo(ids::ERROR_CONTROL, 100, top + 129, 129, 60)
+        .check_box(
+            ids::COMPRESSION,
+            7,
+            top + 147,
+            222,
+            10,
+            "&Compress data with V.42bis where there is error control",
+        )
+        .label(7, top + 165, 90, 8, "&Guard tone:")
+        .combo(ids::GUARD_TONE, 100, top + 163, 70, 60);
     if kind == Kind::Service {
         dialog = dialog
-            .label(7, 107, 90, 8, "&Answer delay (ms):")
-            .number(ids::DELAY, 100, 105, 50, 14)
+            .label(7, 183, 90, 8, "&Answer delay (ms):")
+            .number(ids::DELAY, 100, 181, 50, 14)
             .up_down(ids::DELAY_ARROWS)
-            .label(7, 125, 90, 8, "&Time for each (ms):")
-            .number(ids::FALLBACK, 100, 123, 50, 14)
+            .label(7, 201, 90, 8, "&Time for each (ms):")
+            .number(ids::FALLBACK, 100, 199, 50, 14)
             .up_down(ids::FALLBACK_ARROWS);
     }
     dialog.ok_cancel()
@@ -146,6 +189,12 @@ pub struct Form {
     pub v8: bool,
     /// The level they send at, in dBm0.
     pub level: i32,
+    /// The policy for error control, as the service calls it.
+    pub error_control: String,
+    /// Whether V.42bis is asked for and agreed to.
+    pub compression: bool,
+    /// The guard tone, as the service calls it.
+    pub guard_tone: String,
     /// The answer delay, as it was typed.
     pub delay: String,
     /// The time for each modulation, as it was typed.
@@ -177,6 +226,9 @@ impl Form {
             order: ordered(&settings.modulations),
             v8: settings.v8,
             level: settings.tx_level_dbm0,
+            error_control: settings.error_control.clone(),
+            compression: settings.compression,
+            guard_tone: settings.guard_tone.clone(),
             delay: settings.answer_delay_ms.to_string(),
             fallback: settings.fallback_ms.to_string(),
             own: true,
@@ -190,6 +242,9 @@ impl Form {
             order: ordered(&line.modulations),
             v8: line.v8,
             level: line.tx_level_dbm0,
+            error_control: line.error_control.clone(),
+            compression: line.compression,
+            guard_tone: line.guard_tone.clone(),
             delay: String::new(),
             fallback: String::new(),
             own: !line.own.is_empty(),
@@ -228,6 +283,10 @@ impl Form {
             tx_level_dbm0: (self.level != current.tx_level_dbm0).then_some(self.level),
             answer_delay_ms: (delay != current.answer_delay_ms).then_some(delay),
             fallback_ms: (fallback != current.fallback_ms).then_some(fallback),
+            error_control: (self.error_control != current.error_control)
+                .then(|| self.error_control.clone()),
+            compression: (self.compression != current.compression).then_some(self.compression),
+            guard_tone: (self.guard_tone != current.guard_tone).then(|| self.guard_tone.clone()),
         };
         Ok((change != ModemChange::default()).then_some(change))
     }
@@ -242,6 +301,9 @@ impl Form {
             modulations: Some(self.chosen()?),
             v8: Some(self.v8),
             tx_level_dbm0: Some(self.level),
+            error_control: Some(self.error_control.clone()),
+            compression: Some(self.compression),
+            guard_tone: Some(self.guard_tone.clone()),
         })
     }
 }
@@ -255,6 +317,9 @@ pub fn line_modem_of(spec: &LineModemSpec, current: &LineModem) -> LineModem {
         ("modulations", spec.modulations.is_some()),
         ("v8", spec.v8.is_some()),
         ("tx_level_dbm0", spec.tx_level_dbm0.is_some()),
+        ("error_control", spec.error_control.is_some()),
+        ("compression", spec.compression.is_some()),
+        ("guard_tone", spec.guard_tone.is_some()),
     ] {
         if set {
             own.push(key.to_string());
@@ -267,6 +332,15 @@ pub fn line_modem_of(spec: &LineModemSpec, current: &LineModem) -> LineModem {
             .unwrap_or_else(|| current.modulations.clone()),
         v8: spec.v8.unwrap_or(current.v8),
         tx_level_dbm0: spec.tx_level_dbm0.unwrap_or(current.tx_level_dbm0),
+        error_control: spec
+            .error_control
+            .clone()
+            .unwrap_or_else(|| current.error_control.clone()),
+        compression: spec.compression.unwrap_or(current.compression),
+        guard_tone: spec
+            .guard_tone
+            .clone()
+            .unwrap_or_else(|| current.guard_tone.clone()),
         own,
     }
 }
@@ -354,7 +428,14 @@ impl ModemDialog {
             return;
         }
         let own = controls::checked(dialog.item(ids::OWN));
-        for control in [ids::LIST, ids::V8, ids::LEVEL] {
+        for control in [
+            ids::LIST,
+            ids::V8,
+            ids::LEVEL,
+            ids::ERROR_CONTROL,
+            ids::COMPRESSION,
+            ids::GUARD_TONE,
+        ] {
             dialog.item(control).set_enabled(own);
         }
         Self::show_moves(dialog);
@@ -375,6 +456,17 @@ impl ModemDialog {
             level.add(&level_text(value));
         }
         level.select(usize::try_from(LEVELS.1 - self.start.level).ok());
+        let error_control = Combo::of(dialog.item(ids::ERROR_CONTROL));
+        for (_, text) in ERROR_CONTROLS {
+            error_control.add(text);
+        }
+        error_control.select(Some(place(&ERROR_CONTROLS, &self.start.error_control)));
+        controls::set_checked(dialog.item(ids::COMPRESSION), self.start.compression);
+        let guard_tone = Combo::of(dialog.item(ids::GUARD_TONE));
+        for (_, text) in GUARD_TONES {
+            guard_tone.add(text);
+        }
+        guard_tone.select(Some(place(&GUARD_TONES, &self.start.guard_tone)));
         match self.kind {
             Kind::Service => {
                 let delay = dialog.item(ids::DELAY);
@@ -411,6 +503,21 @@ impl ModemDialog {
             level: Combo::of(dialog.item(ids::LEVEL))
                 .selected()
                 .map_or(self.start.level, |index| LEVELS.1 - index as i32),
+            error_control: Combo::of(dialog.item(ids::ERROR_CONTROL))
+                .selected()
+                .and_then(|index| ERROR_CONTROLS.get(index))
+                .map_or_else(
+                    || self.start.error_control.clone(),
+                    |(name, _)| name.to_string(),
+                ),
+            compression: controls::checked(dialog.item(ids::COMPRESSION)),
+            guard_tone: Combo::of(dialog.item(ids::GUARD_TONE))
+                .selected()
+                .and_then(|index| GUARD_TONES.get(index))
+                .map_or_else(
+                    || self.start.guard_tone.clone(),
+                    |(name, _)| name.to_string(),
+                ),
             delay: text(ids::DELAY),
             fallback: text(ids::FALLBACK),
             own: match self.kind {
@@ -550,33 +657,59 @@ mod tests {
             tx_level_dbm0: -12,
             answer_delay_ms: 0,
             fallback_ms: 3000,
+            error_control: "auto".to_string(),
+            compression: true,
+            guard_tone: "off".to_string(),
         }
+    }
+
+    /// The names of the rows in their order.
+    fn names(form: &Form) -> Vec<(&str, bool)> {
+        form.order
+            .iter()
+            .map(|(name, checked)| (name.as_str(), *checked))
+            .collect()
     }
 
     #[test]
     fn the_list_has_every_modulation_with_the_allowed_ones_first() {
         let form = Form::of_service(&settings());
         assert_eq!(
-            form.order,
-            [("v21".to_string(), true), ("bell103".to_string(), true)]
+            names(&form),
+            [
+                ("v21", true),
+                ("bell103", true),
+                ("v22bis", false),
+                ("v22", false),
+                ("bell212a", false)
+            ]
         );
-        let bell_only = ModemSettings {
-            modulations: vec!["bell103".to_string()],
+        let bell_first = ModemSettings {
+            modulations: vec!["bell103".to_string(), "v22bis".to_string()],
             ..settings()
         };
         assert_eq!(
-            Form::of_service(&bell_only).order,
-            [("bell103".to_string(), true), ("v21".to_string(), false)]
+            names(&Form::of_service(&bell_first)),
+            [
+                ("bell103", true),
+                ("v22bis", true),
+                ("v22", false),
+                ("bell212a", false),
+                ("v21", false)
+            ]
         );
         // A modulation this manager does not know is not shown.
         let newer = ModemSettings {
-            modulations: vec!["v22bis".to_string(), "v21".to_string()],
+            modulations: vec!["v34".to_string(), "v21".to_string()],
             ..settings()
         };
-        assert_eq!(
-            Form::of_service(&newer).order,
-            [("v21".to_string(), true), ("bell103".to_string(), false)]
-        );
+        assert_eq!(names(&Form::of_service(&newer))[0], ("v21", true));
+        assert_eq!(Form::of_service(&newer).order.len(), 5);
+        // Nor is a policy or a guard tone it does not know: the first of
+        // each list stands for it.
+        assert_eq!(place(&ERROR_CONTROLS, "required"), 1);
+        assert_eq!(place(&ERROR_CONTROLS, "sometimes"), 0);
+        assert_eq!(place(&GUARD_TONES, "550"), 2);
     }
 
     #[test]
@@ -603,6 +736,9 @@ mod tests {
         unchecked.v8 = false;
         unchecked.delay = " 1500 ".to_string();
         unchecked.fallback = "2000".to_string();
+        unchecked.error_control = "required".to_string();
+        unchecked.compression = false;
+        unchecked.guard_tone = "1800".to_string();
         assert_eq!(
             unchecked.change(&current).unwrap().unwrap(),
             ModemChange {
@@ -611,6 +747,9 @@ mod tests {
                 tx_level_dbm0: None,
                 answer_delay_ms: Some(1500),
                 fallback_ms: Some(2000),
+                error_control: Some("required".to_string()),
+                compression: Some(false),
+                guard_tone: Some("1800".to_string()),
             }
         );
     }
@@ -647,6 +786,9 @@ mod tests {
             modulations: vec!["bell103".to_string()],
             v8: false,
             tx_level_dbm0: -15,
+            error_control: "required".to_string(),
+            compression: false,
+            guard_tone: "550".to_string(),
             own: vec!["v8".to_string()],
         };
         let form = Form::of_line(&line);
@@ -658,11 +800,32 @@ mod tests {
                 modulations: Some(vec!["bell103".to_string()]),
                 v8: Some(false),
                 tx_level_dbm0: Some(-15),
+                error_control: Some("required".to_string()),
+                compression: Some(false),
+                guard_tone: Some("550".to_string()),
             }
         );
         // As the line's dialog holds it until it is sent.
         let held = line_modem_of(&spec, &line);
-        assert_eq!(held.own, ["modulations", "v8", "tx_level_dbm0"]);
+        assert_eq!(
+            held.own,
+            [
+                "modulations",
+                "v8",
+                "tx_level_dbm0",
+                "error_control",
+                "compression",
+                "guard_tone"
+            ]
+        );
+        assert_eq!(
+            (
+                held.error_control.as_str(),
+                held.compression,
+                held.guard_tone.as_str()
+            ),
+            ("required", false, "550")
+        );
         assert_eq!(held.modulations, ["bell103"]);
 
         let mut none = form.clone();
@@ -695,6 +858,9 @@ mod tests {
             let at = |id: u16| ids.iter().position(|other| *other == id).unwrap();
             assert!(at(ids::LIST) < at(ids::UP) && at(ids::UP) < at(ids::DOWN));
             assert!(at(ids::DOWN) < at(ids::V8) && at(ids::V8) < at(ids::LEVEL));
+            assert!(at(ids::LEVEL) < at(ids::ERROR_CONTROL));
+            assert!(at(ids::ERROR_CONTROL) < at(ids::COMPRESSION));
+            assert!(at(ids::COMPRESSION) < at(ids::GUARD_TONE));
         }
         assert_eq!(level_text(-12), "-12 dBm0");
     }

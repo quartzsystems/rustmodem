@@ -14,8 +14,8 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::process::ExitCode;
 
-use engine::Law;
-use replay::{Options, Role, compare, modulation, render, replay, write_wav};
+use engine::{ErrorControl, Law};
+use replay::{Options, Role, compare, modulation, render, render_with_frames, replay, write_wav};
 use rtp::capture::Reader;
 
 const USAGE: &str = "\
@@ -36,6 +36,11 @@ Options:
                         choice: v22bis, v22, bell212a, v21 and bell103,
                         with commas between; all of them by default
   --no-v8               the modem does not use V.8
+  --error-control auto|required|off
+                        the modem's error control; auto by default
+  --no-compression      the modem does not ask for V.42bis
+  --frames              prints every frame of LAPM the data link sends and
+                        receives, each where it comes
   --expect <file>       compares what the engine does with the file, which
                         has what this program prints; lines that begin
                         with # are skipped. Exits with 1 if they differ
@@ -46,7 +51,9 @@ end of the captured call answered what the engine of that day sent; once
 the engine of today sends something else, the frames that follow are the
 answer to a call that is no longer being made. The line `sent-as-captured`
 says for how many frames the engine sent what the capture has. The data
-the host sent is not in a capture, so the engine sends none.
+the host sent is not in a capture, so the engine sends none; in a call
+with error control the far end then acknowledges frames that were never
+sent, and the link ends there.
 
 ";
 
@@ -62,6 +69,7 @@ struct Asked {
     options: Options,
     expect: Option<String>,
     tx_out: Option<String>,
+    frames: bool,
 }
 
 /// Reads the command line; `None` when it is not understood.
@@ -70,12 +78,23 @@ fn asked(arguments: &[String]) -> Option<Asked> {
     let mut options = Options::default();
     let mut expect = None;
     let mut tx_out = None;
+    let mut frames = false;
     let mut rest = arguments.iter();
     while let Some(argument) = rest.next() {
         match argument.as_str() {
             "--answer" => options.role = Role::Answer,
             "--originate" => options.role = Role::Originate,
             "--no-v8" => options.modem.v8 = false,
+            "--no-compression" => options.modem.compression = false,
+            "--frames" => frames = true,
+            "--error-control" => {
+                options.modem.error_control = match rest.next()?.as_str() {
+                    "auto" => ErrorControl::Auto,
+                    "required" => ErrorControl::Required,
+                    "off" => ErrorControl::Off,
+                    _ => return None,
+                };
+            }
             "--law" => {
                 options.law = Some(match rest.next()?.as_str() {
                     "ulaw" => Law::Ulaw,
@@ -105,6 +124,7 @@ fn asked(arguments: &[String]) -> Option<Asked> {
         options,
         expect,
         tx_out,
+        frames,
     })
 }
 
@@ -117,8 +137,13 @@ fn run(asked: &Asked) -> Result<bool, String> {
         Reader::new(BufReader::new(file)).map_err(|error| format!("{path}: {error}"))?;
     let outcome =
         replay(&mut reader, &asked.options).map_err(|error| format!("{path}: {error}"))?;
+    // An expectation has no frames in it, whatever is printed.
     let rendered = render(&outcome);
-    print!("{rendered}");
+    if asked.frames {
+        print!("{}", render_with_frames(&outcome));
+    } else {
+        print!("{rendered}");
+    }
     if let Some(path) = &asked.tx_out {
         let file = File::create(path).map_err(|error| format!("{path}: {error}"))?;
         write_wav(&mut BufWriter::new(file), &outcome.sent, outcome.alaw)

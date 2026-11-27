@@ -411,9 +411,40 @@ fn two_lines_connect_at_2400_with_error_control_and_compression() {
         assert!(modem.carrier);
         assert!(modem.quality_percent > 80, "{modem:?}");
         assert_eq!((modem.framing_errors, modem.retrains), (0, 0));
-        // There is a constellation, and no scope.
+        // The receiver's figures, with nothing between the two modems.
+        assert!(modem.snr_tenth_db.unwrap() > 200, "{modem:?}");
+        assert!(modem.equalizer_error_tenth_db.unwrap() < -200, "{modem:?}");
+        assert!(modem.timing_offset_ppm.unwrap().abs() < 50, "{modem:?}");
+        // The data link: LAPM with the window of 15, V.42bis both ways,
+        // and so far the frames that set it up.
+        let link = modem.link.as_deref().expect("the call has a data link");
+        assert_eq!((link.stage.as_str(), link.end.as_deref()), ("lapm", None));
+        assert_eq!(link.window_size, 15);
+        assert!(link.frames_tx >= 2 && link.frames_rx >= 2, "{link:?}");
+        assert_eq!((link.retransmissions, link.frame_errors), (0, 0));
+        assert!(!link.peer_busy && !link.own_busy, "{link:?}");
+        assert_ne!(link.compression_tx, "none");
+        assert_ne!(link.compression_rx, "none");
+        // There is a constellation, and no scope: 64 points, each near
+        // one of the sixteen, which are at 1 and 3 units each way.
         let diag = h.pool.line_diag(id).unwrap();
         assert_eq!(diag.scope_kind, "none");
+        assert!(diag.scope.is_empty());
+        assert_eq!(diag.constellation_bits, 4);
+        assert_eq!(
+            diag.constellation_unit,
+            i32::from(engine::CONSTELLATION_UNIT)
+        );
+        assert_eq!(diag.constellation.len(), 2 * engine::CONSTELLATION_POINTS);
+        let unit = diag.constellation_unit;
+        for part in &diag.constellation {
+            let part = i32::from(*part).abs();
+            let off = (part - unit).abs().min((part - 3 * unit).abs());
+            assert!(
+                off * 3 < unit,
+                "{part} is no part of a point of the sixteen"
+            );
+        }
         let states: Vec<&str> = diag.history.iter().map(|c| c.state.as_str()).collect();
         assert!(
             states.ends_with(&["training", "link", "data"]),
@@ -453,6 +484,35 @@ fn two_lines_connect_at_2400_with_error_control_and_compression() {
     assert!(h.host(2).read() == text, "what line 1's host sent");
     assert!(h.host(1).read() == octets, "what line 2's host sent");
     assert_eq!(h.state(1), LineState::Online);
+    // The link has counted it: the text went out in less than half of
+    // what it was, and came in at the other end as what it was.
+    let link_of = |h: &Harness, id: u16| {
+        let call = h.pool.line(id).unwrap().call.unwrap();
+        *call.modem.unwrap().link.unwrap()
+    };
+    let (first, second) = (link_of(&h, 1), link_of(&h, 2));
+    assert_eq!(first.tx_octets_in, 3000);
+    assert!(first.tx_octets_out * 2 < 3000, "{first:?}");
+    assert_eq!(
+        (second.rx_octets_in, second.rx_octets_out),
+        (first.tx_octets_out, 3000)
+    );
+    // What cannot be compressed went as it was, or near it.
+    assert_eq!(second.tx_octets_in, 3000);
+    assert!(second.tx_octets_out >= 3000, "{second:?}");
+    assert!(first.frames_rx > 20 && second.frames_rx > 5, "{first:?}");
+
+    // The call over, its record has the modem as it last was, with what
+    // the link counted.
+    h.host(1).set_dtr(false);
+    h.advance(3000);
+    let records = h.pool.calls(None);
+    let record = records.iter().find(|record| record.line == 1).unwrap();
+    let modem = record.modem.as_ref().expect("the record has the modem");
+    let link = modem.link.as_deref().expect("and its data link");
+    assert_eq!((link.tx_octets_in, link.rx_octets_out), (3000, 3000));
+    assert!(link.frames_tx >= first.frames_tx, "{link:?}");
+    assert_eq!(modem.retrains, 0);
 }
 
 #[test]

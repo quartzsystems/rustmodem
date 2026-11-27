@@ -83,7 +83,7 @@ use crate::diag::{
     CONSTELLATION_POINTS, CONSTELLATION_UNIT, Diagnostics, EngineState, SCOPE_SAMPLES,
     STATE_HISTORY, ScopeKind, StateChange,
 };
-use crate::link::{Compression, DataLink, ErrorControl, LinkEvent, LinkSettings};
+use crate::link::{Compression, DataLink, ErrorControl, LinkEvent, LinkSettings, TappedFrame};
 use crate::modulation::{MODULATIONS, Modulation};
 use crate::{ConnectInfo, ModemEngine, ModemEvent};
 
@@ -463,6 +463,20 @@ impl Modem {
             points_at: 0,
             points_len: 0,
         }
+    }
+
+    /// Turns on or off the keeping of the frames the data link sends and
+    /// receives, for a tool that shows them ([`Modem::poll_frame`]). It
+    /// is off in a new modem.
+    pub fn tap_frames(&mut self, on: bool) {
+        self.link.set_tap(on);
+    }
+
+    /// The next frame of the data link, of those kept since
+    /// [`Modem::tap_frames`] turned the keeping on. They are to be taken
+    /// after every frame of samples: no more than a few are held.
+    pub fn poll_frame(&mut self) -> Option<TappedFrame> {
+        self.link.poll_frame()
     }
 
     /// The settings the modem was made with.

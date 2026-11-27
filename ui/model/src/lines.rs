@@ -464,16 +464,29 @@ fn cell_text(line: &LineInfo, column: Column, now_ms: u64) -> String {
             Some(modem) => grouped(u64::from(modem.retrains)),
             None => empty(),
         },
-        // What went wrong with the RTP of the call in progress: packets
-        // lost and late, and streams started again.
-        // BLOCKED(phase4): the errors the error-control protocol counts
-        // are added to these.
-        Column::Errors => match line.call.as_ref().and_then(|call| call.media.as_ref()) {
-            Some(media) => grouped(media.lost + media.late + media.resync),
-            None => empty(),
+        // What went wrong with the call in progress: of its RTP, packets
+        // lost and late and streams started again; and of its data link,
+        // frames that failed their check and frames sent again.
+        Column::Errors => match &line.call {
+            Some(call) if call.media.is_some() || link_of(call).is_some() => {
+                let media = call
+                    .media
+                    .as_ref()
+                    .map_or(0, |media| media.lost + media.late + media.resync);
+                let link = link_of(call).map_or(0, |link| {
+                    u64::from(link.frame_errors) + u64::from(link.retransmissions)
+                });
+                grouped(media + link)
+            }
+            _ => empty(),
         },
         Column::Binding => line.binding.clone().unwrap_or_else(empty),
     }
+}
+
+/// The data link of a call's modem, if it has one.
+fn link_of(call: &ctlproto::CallInfo) -> Option<&ctlproto::LinkInfo> {
+    call.modem.as_ref().and_then(|modem| modem.link.as_deref())
 }
 
 /// The order of two lines by a column. Numbers compare as numbers; text

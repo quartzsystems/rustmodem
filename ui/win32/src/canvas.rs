@@ -116,6 +116,25 @@ impl Canvas {
         }
     }
 
+    /// Fills a rectangle with a colour: from `left` and `top` up to, and
+    /// not with, `right` and `bottom`.
+    pub fn rect(&mut self, left: i32, top: i32, right: i32, bottom: i32, colour: Colour) {
+        let area = RECT {
+            left,
+            top,
+            right,
+            bottom,
+        };
+        // SAFETY: the memory context is this canvas's own; the brush is
+        // made, used and deleted here. A rectangle that is partly or
+        // wholly outside the bitmap is clipped by the system.
+        unsafe {
+            let brush = CreateSolidBrush(colour.colorref());
+            FillRect(self.memory, &area, brush);
+            let _ = DeleteObject(brush.into());
+        }
+    }
+
     /// Draws a line one pixel wide through the points, in order.
     pub fn polyline(&mut self, points: &[(i32, i32)], colour: Colour) {
         if points.len() < 2 {

@@ -30,7 +30,7 @@ fn every_capture_of_the_corpus_replays_as_its_expectation_says() {
         .filter(|path| path.extension().is_some_and(|e| e == "rmcap"))
         .collect();
     captures.sort();
-    assert!(captures.len() >= 3, "the corpus has {captures:?}");
+    assert!(captures.len() >= 7, "the corpus has {captures:?}");
     for capture in captures {
         let name = capture.file_name().unwrap().to_string_lossy().into_owned();
         let expected = std::fs::read_to_string(capture.with_extension("expect"))
@@ -46,7 +46,7 @@ fn every_capture_of_the_corpus_replays_as_its_expectation_says() {
         let connected = outcome
             .steps
             .iter()
-            .find(|step| matches!(step.what, What::Connect { rate: 300, .. }))
+            .find(|step| matches!(step.what, What::Connect { .. }))
             .unwrap_or_else(|| panic!("{name} does not connect"));
         assert!(!outcome.data.is_empty(), "{name} carries no data");
         assert!(
@@ -54,6 +54,33 @@ fn every_capture_of_the_corpus_replays_as_its_expectation_says() {
             "{name}: the engine sends what the capture has for {} frames only",
             outcome.sent_as_captured
         );
+        // A call with error control is one whose host sent nothing, and
+        // its replay is exact to the end: the link is up when the capture
+        // stops, and every frame sent is the frame the call sent.
+        let stages: Vec<&str> = outcome
+            .steps
+            .iter()
+            .filter_map(|step| match &step.what {
+                What::Link(line) => Some(line.as_str()),
+                _ => None,
+            })
+            .collect();
+        if stages.iter().any(|line| line.starts_with("lapm")) {
+            assert!(
+                stages.last().unwrap().starts_with("lapm"),
+                "{name}: {stages:?}"
+            );
+            assert_eq!(
+                outcome.sent_as_captured, outcome.captured_sent,
+                "{name}: the replay is not the call to its end"
+            );
+            let xids = outcome
+                .steps
+                .iter()
+                .filter(|step| matches!(step.what, What::Xid(_)))
+                .count();
+            assert_eq!(xids, 2, "{name}: an XID each way");
+        }
     }
 }
 
@@ -85,4 +112,51 @@ fn a_capture_replayed_as_the_wrong_end_does_not_connect() {
         render(&outcome)
     );
     assert!(render(&outcome).starts_with("role originate\nlaw ulaw\n"));
+}
+
+/// The frames of LAPM are kept by every replay and are in the report
+/// only when asked for: the negotiation, the set-up, and the data with
+/// its acknowledgements, in the order they came.
+#[test]
+fn the_frames_of_a_call_with_error_control_can_be_shown() {
+    let outcome = replayed(&corpus().join("answer-v8-v22bis-lapm-v42bis.rmcap"));
+    let plain = render(&outcome);
+    assert!(!plain.contains(" frame "), "{plain}");
+    let shown = replay::render_with_frames(&outcome);
+    let frames: Vec<&str> = shown
+        .lines()
+        .filter_map(|line| line.split_once(" frame ").map(|(_, frame)| frame))
+        .collect();
+    assert!(
+        frames[..4]
+            .iter()
+            .zip([
+                "rx XID command",
+                "tx XID response",
+                "rx SABME command p=1",
+                "tx UA response f=1"
+            ])
+            .all(|(frame, start)| frame.starts_with(start)),
+        "{frames:?}"
+    );
+    // The far end's data, compressed, in I frames numbered from 0, each
+    // acknowledged.
+    let data: Vec<&&str> = frames
+        .iter()
+        .filter(|frame| frame.starts_with("rx I command"))
+        .collect();
+    assert!(data[0].starts_with("rx I command ns=0 nr=0 "), "{frames:?}");
+    assert!(
+        frames
+            .iter()
+            .any(|frame| frame.starts_with("tx RR response nr=1 ")),
+        "{frames:?}"
+    );
+    // Without the frames, the two reports are the same.
+    let without: String = shown
+        .lines()
+        .filter(|line| !line.contains(" frame "))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert_eq!(without, plain);
 }

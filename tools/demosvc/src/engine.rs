@@ -13,25 +13,27 @@
 use std::sync::{Arc, Mutex};
 
 use engine::{
-    ConnectInfo, Diagnostics, EngineState, ModemEngine, ModemEvent, NullConfig, NullEngine,
-    SCOPE_SAMPLES, ScopeKind, StateChange,
+    CONSTELLATION_POINTS, CONSTELLATION_UNIT, ConnectInfo, Diagnostics, EngineState, LinkStage,
+    LinkStats, ModemEngine, ModemEvent, NullConfig, NullEngine, SCOPE_SAMPLES, ScopeKind,
+    StateChange,
 };
 
 /// How long the demo engine takes to connect, in 20 ms ticks: a second and
 /// a half of handshaking for the manager to show.
 pub const CONNECT_DELAY_TICKS: u32 = 75;
 
-/// What the calls say they negotiated, in turn: rate in bit/s and carrier.
-/// Mostly the fastest, as a pool of real modems would be.
-const ROTA: [(u32, &str); 8] = [
-    (2400, "V.22bis"),
-    (2400, "V.22bis"),
-    (1200, "V.22"),
-    (2400, "V.22bis"),
-    (300, "V.21"),
-    (2400, "V.22bis"),
-    (1200, "V.22"),
-    (2400, "V.22bis"),
+/// What the calls say they negotiated, in turn: rate in bit/s, carrier,
+/// and whether with error control and with compression. Mostly the
+/// fastest and with both, as a pool of real modems would be.
+const ROTA: [(u32, &str, bool, bool); 8] = [
+    (2400, "V.22bis", true, true),
+    (2400, "V.22bis", true, true),
+    (1200, "V.22", true, false),
+    (2400, "V.22bis", true, true),
+    (300, "V.21", false, false),
+    (2400, "V.22bis", false, false),
+    (1200, "V.22", true, true),
+    (2400, "V.22bis", true, true),
 ];
 
 /// What the engines of one pool share, so that the two ends of a call say
@@ -48,13 +50,13 @@ pub struct Negotiation {
 impl Negotiation {
     /// The originating end starts: the call takes the next turn.
     fn originate(&mut self) -> ConnectInfo {
-        let (rate, carrier) = ROTA[self.calls % ROTA.len()];
+        let (rate, carrier, lapm, compressed) = ROTA[self.calls % ROTA.len()];
         self.calls += 1;
         let info = ConnectInfo {
             rate,
             carrier: Some(carrier.to_string()),
-            protocol: None,
-            compression: None,
+            protocol: lapm.then(|| engine::PROTOCOL_LAPM.to_string()),
+            compression: compressed.then(|| engine::COMPRESSION_V42BIS.to_string()),
         };
         self.offered = Some(info.clone());
         info
@@ -186,15 +188,76 @@ impl ModemEngine for DemoEngine {
                 at_ms: at * TICK_MS,
             };
             snapshot.changes = 2;
-            // A square wave that moves along: marks and spaces of a few
-            // samples each.
-            snapshot.scope_kind = ScopeKind::Discriminator;
-            for (n, sample) in snapshot.scope.iter_mut().enumerate() {
-                let place = (n as u32 + self.ticks) % 16;
-                *sample = if place < 9 { 90 } else { -90 };
+            if self.info.rate > 300 {
+                self.synchronous(&mut snapshot, self.ticks.saturating_sub(at));
+            } else {
+                // A square wave that moves along: marks and spaces of a
+                // few samples each.
+                snapshot.scope_kind = ScopeKind::Discriminator;
+                for (n, sample) in snapshot.scope.iter_mut().enumerate() {
+                    let place = (n as u32 + self.ticks) % 16;
+                    *sample = if place < 9 { 90 } else { -90 };
+                }
             }
         }
         Some(snapshot)
+    }
+}
+
+impl DemoEngine {
+    /// What a modem at 1200 or 2400 bit/s shows that one at 300 bit/s
+    /// does not: its constellation, the receiver's figures and its data
+    /// link, `since` ticks after it connected.
+    fn synchronous(&self, snapshot: &mut Diagnostics, since: u32) {
+        let sixteen = self.info.rate == 2400;
+        snapshot.quality = 0.9;
+        snapshot.snr_db = 31.5;
+        snapshot.equalizer_mse = 0.0007;
+        snapshot.timing_offset_ppm = -12.0;
+        snapshot.constellation_bits = if sixteen { 4 } else { 2 };
+        snapshot.constellation_len = CONSTELLATION_POINTS as u8;
+        let unit = i32::from(CONSTELLATION_UNIT);
+        for (n, point) in snapshot.constellation.iter_mut().enumerate() {
+            // A point for each symbol in turn, a little off its place, by
+            // numbers that are the same for the same tick.
+            let turn = n as u32 + self.ticks;
+            let mixed = turn.wrapping_mul(0x9E37_79B9) >> 16;
+            let (x, y) = if sixteen {
+                let places = [-3, -1, 1, 3];
+                (
+                    places[(mixed % 4) as usize],
+                    places[(mixed / 4 % 4) as usize],
+                )
+            } else {
+                [(3, 1), (-1, 3), (-3, -1), (1, -3)][(mixed % 4) as usize]
+            };
+            let off = |shift: u32| ((mixed >> shift) % 9) as i32 - 4;
+            *point = [(x * unit + off(4)) as i8, (y * unit + off(8)) as i8];
+        }
+        let lapm = self.info.protocol.is_some();
+        let compressed = self.info.compression.is_some();
+        // A frame each way every few ticks, and now and then one again.
+        let frames = since / 4;
+        snapshot.link = LinkStats {
+            stage: if lapm {
+                LinkStage::Lapm
+            } else {
+                LinkStage::Async
+            },
+            frames_sent: if lapm { frames + 2 } else { 0 },
+            frames_received: if lapm { frames + 2 } else { 0 },
+            frame_errors: if lapm { frames / 400 } else { 0 },
+            retransmissions: if lapm { frames / 300 } else { 0 },
+            window: u8::from(lapm),
+            window_size: if lapm { 15 } else { 0 },
+            compression: (compressed, compressed),
+            compressed_mode: (compressed, false),
+            compress_in: if compressed { frames * 120 } else { 0 },
+            compress_out: if compressed { frames * 48 } else { 0 },
+            decompress_in: if compressed { frames * 101 } else { 0 },
+            decompress_out: if compressed { frames * 100 } else { 0 },
+            ..LinkStats::default()
+        };
     }
 }
 
@@ -239,14 +302,21 @@ mod tests {
         for _ in 0..ROTA.len() + 1 {
             let (caller, callee) = connect(&mut one, &mut two);
             assert_eq!(caller, callee);
-            seen.push((caller.rate, caller.carrier.clone().unwrap()));
+            seen.push((
+                caller.rate,
+                caller.carrier.clone().unwrap(),
+                caller.protocol.is_some(),
+                caller.compression.is_some(),
+            ));
             one.hangup();
             two.hangup();
         }
-        let expected: Vec<(u32, String)> = ROTA
+        let expected: Vec<(u32, String, bool, bool)> = ROTA
             .iter()
             .chain(&ROTA[..1])
-            .map(|(rate, carrier)| (*rate, carrier.to_string()))
+            .map(|(rate, carrier, lapm, compressed)| {
+                (*rate, carrier.to_string(), *lapm, *compressed)
+            })
             .collect();
         assert_eq!(seen, expected);
     }
