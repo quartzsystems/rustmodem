@@ -113,6 +113,7 @@ modem/engine        ModemEngine trait, events, the Modem (V.8, V.21 and
                     EchoEngine
 link/v14            V.14: start-stop characters over a synchronous line, and
                     the character formats (pure)
+link/v42            V.42: the detection phase and HDLC framing (pure)
 dte/at              Hayes interpreter (pure)
 dte/serial          SerialBackend trait, memory backend, com0com backend
 voip/sdp            session descriptions, offer/answer for G.711 (pure)
@@ -149,7 +150,7 @@ tools/fuzz          cargo-fuzz targets (own lockfile, outside the workspace)
 ```
 
 Pure crates (no OS calls, must pass on Linux): `g711`, `dspkit`, `tones`,
-`chansim`, `fsk`, `v22`, `v8`, `engine`, `v14`, `at`, `sdp`, `rtp`,
+`chansim`, `fsk`, `v22`, `v8`, `engine`, `v14`, `v42`, `at`, `sdp`, `rtp`,
 `sip`, `msg`, `config`, `ctlproto`, `pool`, `glyph`, `model`, and the trait
 and memory backend of `serial`. `media`, `telephony`, `sippeer` and `replay` use
 sockets and threads and nothing of Windows that has no counterpart: they
@@ -238,8 +239,8 @@ The pure crates on Linux (CI does this; WSL works locally):
 
 ```
 cargo fmt --check
-cargo clippy -p g711 -p dspkit -p tones -p chansim -p fsk -p v22 -p v8 -p engine -p v14 -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model --all-targets -- -D warnings
-cargo test -p g711 -p dspkit -p tones -p chansim -p fsk -p v22 -p v8 -p engine -p v14 -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model
+cargo clippy -p g711 -p dspkit -p tones -p chansim -p fsk -p v22 -p v8 -p engine -p v14 -p v42 -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model --all-targets -- -D warnings
+cargo test -p g711 -p dspkit -p tones -p chansim -p fsk -p v22 -p v8 -p engine -p v14 -p v42 -p at -p serial -p sdp -p rtp -p sip -p msg -p config -p ctlproto -p pool -p media -p telephony -p sippeer -p alloccount -p replay -p glyph -p model
 cargo clippy -p ctlsrv --all-targets -- -D warnings
 cargo clippy -p svc --lib --test '*' -- -D warnings
 cargo test -p ctlsrv
@@ -275,7 +276,7 @@ machine at hand as goldens, `RM_SCREENSHOTS=strict` fails on a difference
 anywhere, and `RM_SCREENSHOTS=skip` takes no pictures.
 
 The fuzz targets, `at_input`, `sdp_parse`, `rtp_packet`, `sip_message`,
-`fsk_demod`, `v8_decode` and `v22_demod`
+`fsk_demod`, `v8_decode`, `v22_demod` and `hdlc_deframe`
 (nightly toolchain and cargo-fuzz, on Linux or WSL):
 
 ```

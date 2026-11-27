@@ -29,6 +29,7 @@ g711 = { path = "../../dsp/g711" }
 fsk = { path = "../../modem/fsk" }
 v22 = { path = "../../modem/v22" }
 v8 = { path = "../../modem/v8" }
+v42 = { path = "../../link/v42" }
 alloccount = { path = "../alloccount" }
 
 [[bin]]
@@ -76,6 +77,13 @@ bench = false
 [[bin]]
 name = "v8_decode"
 path = "fuzz_targets/v8_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hdlc_deframe"
+path = "fuzz_targets/hdlc_deframe.rs"
 test = false
 doc = false
 bench = false
