@@ -14,6 +14,7 @@ publish.workspace = true
 [dependencies]
 dspkit.workspace = true
 fsk.workspace = true
+v14.workspace = true
 g711.workspace = true
 tones.workspace = true
 v8.workspace = true

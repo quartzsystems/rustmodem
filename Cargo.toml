@@ -16,6 +16,8 @@ members = [
     "modem/v22",
     "modem/v8",
     "modem/engine",
+    # Link: error control and compression.
+    "link/v14",
     # DTE: what the host sees on the COM port.
     "dte/at",
     "dte/serial",
@@ -96,6 +98,7 @@ fsk = { path = "modem/fsk" }
 v8 = { path = "modem/v8" }
 alloccount = { path = "tools/alloccount" }
 engine = { path = "modem/engine" }
+v14 = { path = "link/v14" }
 at = { path = "dte/at" }
 serial = { path = "dte/serial" }
 sdp = { path = "voip/sdp" }

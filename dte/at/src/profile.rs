@@ -34,6 +34,13 @@ pub(crate) const RANGE_MS: &str = "(V21,B103),(0,1),(0,300),(0,300),(0,300),(0,3
 pub(crate) const RANGE_ES: &str = "(0-4),(0-4),(0-6)";
 pub(crate) const RANGE_DS: &str = "(0-3),(0),(512-2048),(6-250)";
 
+/// The factory value of `+ICF` (V.250 clause 6.2.11: the recommended
+/// defaults, format 3, eight data bits and one stop bit, and parity 3).
+pub(crate) const FACTORY_ICF: &str = "3,3";
+/// What `+ICF=?` reports: the formats this modem has, 3 and 5 of Table
+/// 5/V.250, and the parities the command takes.
+pub(crate) const RANGE_ICF: &str = "(3,5),(0-3)";
+
 /// The longest value an extended-syntax parameter may be set to.
 const MAX_EXTENDED_VALUE: usize = 64;
 
@@ -68,6 +75,8 @@ pub struct Profile {
     pub es: String,
     /// `+DS`: stored as given.
     pub ds: String,
+    /// `+ICF`: the format and the parity.
+    pub icf: String,
     registers: [u8; 11],
 }
 
@@ -89,6 +98,7 @@ impl Profile {
             ms: FACTORY_MS.to_string(),
             es: FACTORY_ES.to_string(),
             ds: FACTORY_DS.to_string(),
+            icf: FACTORY_ICF.to_string(),
             registers,
         }
     }
@@ -152,6 +162,9 @@ impl Profile {
         if !acceptable_parameter(self.ds.as_bytes()) {
             return Err("+DS");
         }
+        if CharacterFraming::parse(self.icf.as_bytes(), None).is_none() {
+            return Err("+ICF");
+        }
         Ok(())
     }
 
@@ -207,6 +220,13 @@ impl Profile {
     /// (V.250 clause 6.3.12).
     pub fn carrier_loss_ms(&self) -> u32 {
         u32::from(self.register(10).unwrap_or(14)) * 100
+    }
+
+    /// What `+ICF` selects: the character format of the line where the
+    /// host's characters go as start-stop characters.
+    pub fn character_format(&self) -> CharacterFormat {
+        CharacterFraming::parse(self.icf.as_bytes(), None)
+            .map_or(CharacterFormat::N81, CharacterFraming::format)
     }
 
     /// S12: the escape guard time, in milliseconds.
@@ -327,6 +347,75 @@ impl std::fmt::Display for ModulationSelection {
             self.carrier.as_str(),
             u8::from(self.automode)
         )
+    }
+}
+
+/// A start-stop character format the modem has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CharacterFormat {
+    /// Eight data bits, no parity, one stop bit.
+    N81,
+    /// Seven data bits, even parity, one stop bit.
+    E71,
+    /// Seven data bits, odd parity, one stop bit.
+    O71,
+}
+
+/// The value of `+ICF` (V.250 clause 6.2.11).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CharacterFraming {
+    /// `<format>` of Table 5/V.250: 3 is eight data bits and one stop
+    /// bit, 5 is seven data bits, a parity bit and one stop bit. The
+    /// modem has no others.
+    pub format: u8,
+    /// `<parity>`: 0 odd, 1 even, 2 mark, 3 space. With format 5 it is
+    /// odd or even; with format 3 there is no parity bit and it is kept
+    /// and means nothing.
+    pub parity: u8,
+}
+
+impl CharacterFraming {
+    /// Reads a value. A subparameter left out is taken from `current`,
+    /// or is the default if there is none. `None` if a subparameter is
+    /// not a number, is one the modem has not got, or there are too many.
+    pub fn parse(value: &[u8], current: Option<CharacterFraming>) -> Option<CharacterFraming> {
+        let mut framing = current.unwrap_or(CharacterFraming {
+            format: 3,
+            parity: 3,
+        });
+        let text = std::str::from_utf8(value).ok()?;
+        for (n, field) in text.split(',').enumerate() {
+            if field.is_empty() {
+                continue;
+            }
+            let number: u8 = field.parse().ok()?;
+            match n {
+                0 => framing.format = number,
+                1 => framing.parity = number,
+                _ => return None,
+            }
+        }
+        let sound = match framing.format {
+            3 => framing.parity <= 3,
+            5 => framing.parity <= 1,
+            _ => false,
+        };
+        sound.then_some(framing)
+    }
+
+    /// The character format this selects.
+    pub fn format(self) -> CharacterFormat {
+        match (self.format, self.parity) {
+            (5, 0) => CharacterFormat::O71,
+            (5, _) => CharacterFormat::E71,
+            _ => CharacterFormat::N81,
+        }
+    }
+}
+
+impl std::fmt::Display for CharacterFraming {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{},{}", self.format, self.parity)
     }
 }
 

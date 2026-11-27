@@ -8,8 +8,8 @@
 
 use crate::interp::{AtInterpreter, State};
 use crate::profile::{
-    Carrier, FACTORY_DS, FACTORY_ES, FACTORY_MS, ModulationSelection, RANGE_DS, RANGE_ES, RANGE_MS,
-    acceptable_parameter,
+    Carrier, CharacterFraming, FACTORY_DS, FACTORY_ES, FACTORY_ICF, FACTORY_MS,
+    ModulationSelection, RANGE_DS, RANGE_ES, RANGE_ICF, RANGE_MS, acceptable_parameter,
 };
 use crate::{Action, HangupCause, Output, Profile, ResultCode, Trace, UnknownCommand};
 
@@ -34,6 +34,7 @@ enum Next {
 #[derive(Clone, Copy)]
 enum Stored {
     Ms,
+    Icf,
     Es,
     Ds,
 }
@@ -423,7 +424,7 @@ impl AtInterpreter {
     /// `&V`: the current settings and registers.
     fn view(&mut self, out: &mut Vec<Output>) {
         /// The lines that describe one profile.
-        fn lines(p: &Profile) -> [String; 5] {
+        fn lines(p: &Profile) -> [String; 6] {
             let settings = format!(
                 "E{} Q{} V{} X{} L{} M{} &C{} &D{} &K{}",
                 u8::from(p.echo),
@@ -447,6 +448,7 @@ impl AtInterpreter {
                 format!("+MS: {}", p.ms),
                 format!("+ES: {}", p.es),
                 format!("+DS: {}", p.ds),
+                format!("+ICF: {}", p.icf),
             ]
         }
         let mut text = vec!["ACTIVE PROFILE:".to_string()];
@@ -498,6 +500,7 @@ impl AtInterpreter {
             b"MS" => (Stored::Ms, "+MS: ", FACTORY_MS, RANGE_MS),
             b"ES" => (Stored::Es, "+ES: ", FACTORY_ES, RANGE_ES),
             b"DS" => (Stored::Ds, "+DS: ", FACTORY_DS, RANGE_DS),
+            b"ICF" => (Stored::Icf, "+ICF: ", FACTORY_ICF, RANGE_ICF),
             _ => return self.unknown(),
         };
         if !junk.is_empty() {
@@ -519,6 +522,14 @@ impl AtInterpreter {
                     let current = self.profile.modulation();
                     match ModulationSelection::parse(value, Some(current)) {
                         Some(selection) => selection.to_string(),
+                        None => return Next::Fail,
+                    }
+                } else if matches!(stored, Stored::Icf) {
+                    // +ICF has an effect too: a format this modem has
+                    // not got is an error (V.250 clause 6.2.11).
+                    let current = CharacterFraming::parse(self.profile.icf.as_bytes(), None);
+                    match CharacterFraming::parse(value, current) {
+                        Some(framing) => framing.to_string(),
                         None => return Next::Fail,
                     }
                 } else {
@@ -546,6 +557,7 @@ impl AtInterpreter {
             Stored::Ms => &mut self.profile.ms,
             Stored::Es => &mut self.profile.es,
             Stored::Ds => &mut self.profile.ds,
+            Stored::Icf => &mut self.profile.icf,
         }
     }
 }

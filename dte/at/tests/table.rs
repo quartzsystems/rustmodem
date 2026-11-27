@@ -162,7 +162,7 @@ $ONLINE_COMMAND
 > AT&V\\r
 < \\r\\nACTIVE PROFILE:\\r\\nE0 Q0 V1 X4 L3 M2 &C1 &D2 &K3\\r\\n
 < S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S09:006 S10:014 S12:050\\r\\n
-< +MS: V21,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,6\\r\\n\\r\\nOK\\r\\n
+< +MS: V21,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,6\\r\\n+ICF: 3,3\\r\\n\\r\\nOK\\r\\n
 > ATL4\\r
 < \\r\\nERROR\\r\\n
 > ATM4\\r
@@ -496,7 +496,7 @@ $ONLINE_COMMAND
 > AT&V\\r
 < \\r\\nACTIVE PROFILE:\\r\\nE0 Q0 V1 X4 L0 M0 &C1 &D2 &K0\\r\\n
 < S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S09:006 S10:014 S12:050\\r\\n
-< +MS: V21,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,6\\r\\n\\r\\nOK\\r\\n
+< +MS: V21,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,6\\r\\n+ICF: 3,3\\r\\n\\r\\nOK\\r\\n
 > AT&K3\\r
 < \\r\\nOK\\r\\n
 > AT&K\\r
@@ -517,7 +517,7 @@ $ONLINE_COMMAND
 > AT&V\\r
 < \\r\\nACTIVE PROFILE:\\r\\nE0 Q0 V1 X3 L0 M0 &C0 &D1 &K3\\r\\n
 < S00:002 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:045 S09:006 S10:014 S12:050\\r\\n
-< +MS: B103,0,300,300,0,0\\r\\n+ES: 1,0,2\\r\\n+DS: 0,0,512,6\\r\\n\\r\\nOK\\r\\n
+< +MS: B103,0,300,300,0,0\\r\\n+ES: 1,0,2\\r\\n+DS: 0,0,512,6\\r\\n+ICF: 3,3\\r\\n\\r\\nOK\\r\\n
 > AT&V1\\r
 < \\r\\nERROR\\r\\n
 ",
@@ -572,6 +572,31 @@ $ONLINE_COMMAND
 ",
     },
     Row {
+        row: "+ICF: character framing",
+        script: "\
+> AT+ICF?;+ICF=?\\r
+< \\r\\n+ICF: 3,3\\r\\n\\r\\n+ICF: (3,5),(0-3)\\r\\n\\r\\nOK\\r\\n
+> AT+ICF=5,1;+ICF?\\r
+< \\r\\n+ICF: 5,1\\r\\n\\r\\nOK\\r\\n
+> AT+ICF=,0;+ICF?\\r
+< \\r\\n+ICF: 5,0\\r\\n\\r\\nOK\\r\\n
+> AT+ICF=3;+ICF?\\r
+< \\r\\n+ICF: 3,0\\r\\n\\r\\nOK\\r\\n
+> AT+ICF=5,2\\r
+< \\r\\nERROR\\r\\n
+> AT+ICF=4\\r
+< \\r\\nERROR\\r\\n
+> AT+ICF=0\\r
+< \\r\\nERROR\\r\\n
+> AT+ICF=3,3,1\\r
+< \\r\\nERROR\\r\\n
+> AT+ICF?\\r
+< \\r\\n+ICF: 3,0\\r\\n\\r\\nOK\\r\\n
+> AT+ICF=;+ICF?\\r
+< \\r\\n+ICF: 3,3\\r\\n\\r\\nOK\\r\\n
+",
+    },
+    Row {
         row: "anything else, unknown_command = ok",
         script: "\
 > ATB0N1\\\\N3%C1*Q2#CID=1-K0$B5)M1@M3:E0W2Y0\\r
@@ -600,7 +625,7 @@ const UNKNOWN_IS_ERROR: &[Row] = &[Row {
 > AT&V\\r
 < \\r\\nACTIVE PROFILE:\\r\\nE0 Q0 V1 X1 L0 M0 &C1 &D2 &K3\\r\\n
 < S00:000 S01:000 S02:043 S03:013 S04:010 S05:008 S06:002 S07:050 S09:006 S10:014 S12:050\\r\\n
-< +MS: V21,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,6\\r\\n\\r\\nOK\\r\\n
+< +MS: V21,1,0,0,0,0\\r\\n+ES: 3,0,2\\r\\n+DS: 3,0,2048,6\\r\\n+ICF: 3,3\\r\\n\\r\\nOK\\r\\n
 > AT\\\\N3\\r
 < \\r\\nERROR\\r\\n
 > AT&Q5\\r

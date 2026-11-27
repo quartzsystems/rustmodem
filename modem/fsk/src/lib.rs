@@ -24,8 +24,9 @@
 //! publication on the desk: the Bell 103 frequencies are the well-known
 //! ones, as the phase 3 handoff lists them.
 //!
-//! Only the 8N1 data format is built: a start bit, eight data bits and one
-//! stop bit. `BLOCKED(phase4)`: 7E1 and the other formats.
+//! A character is ten bits on the line: a start bit, eight units and one
+//! stop bit. The units are eight data bits, or seven and a parity bit:
+//! the three formats of [`Format`], which is `link/v14`'s.
 
 #![forbid(unsafe_code)]
 
@@ -36,6 +37,7 @@ mod modulator;
 pub use demodulator::{Demodulated, Demodulator};
 pub use framing::{Framed, StartStopReceiver, StartStopTransmitter, TX_CAPACITY};
 pub use modulator::{Modulator, TRANSMIT_DELAY_SAMPLES};
+pub use v14::{Format, Parity};
 
 use g711::Law;
 
@@ -232,11 +234,24 @@ impl Receiver {
         self.framer.framing_errors()
     }
 
+    /// The characters whose parity was wrong since the receiver was made
+    /// or reset.
+    pub fn parity_errors(&self) -> u32 {
+        self.framer.parity_errors()
+    }
+
+    /// The character format, from the next character.
+    pub fn set_format(&mut self, format: Format) {
+        self.framer.set_format(format);
+    }
+
     /// Forgets the signal: no carrier, no character in progress. The
-    /// count of framing errors is cleared too.
+    /// counts of errors are cleared too; the character format is kept.
     pub fn reset(&mut self) {
+        let format = self.framer.format();
         self.demodulator.reset();
         self.framer = StartStopReceiver::new();
+        self.framer.set_format(format);
         self.eye = 0.0;
     }
 }

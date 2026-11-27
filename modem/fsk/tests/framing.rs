@@ -297,3 +297,63 @@ fn noise_cannot_make_the_bits_come_faster_than_the_line_rate() {
         assert!(characters * 10 <= bits, "line {which}");
     }
 }
+
+#[test]
+fn seven_data_bits_and_parity_go_round_and_a_wrong_parity_is_counted() {
+    use fsk::Format;
+    for (format, parity_of_c) in [(Format::E71, true), (Format::O71, false)] {
+        let mut transmitter = StartStopTransmitter::new();
+        transmitter.set_format(format);
+        // The frame of "C", 100 0011 with three ones: start, the seven
+        // data bits from the least significant, the parity bit, stop.
+        transmitter.write(b"C");
+        let sent: Vec<bool> = (0..10).map(|_| transmitter.next_bit()).collect();
+        let mut expected = vec![false, true, true, false, false, false, false, true];
+        expected.push(parity_of_c);
+        expected.push(true);
+        assert_eq!(sent, expected, "{format:?}");
+
+        // Every character of seven bits, back to back.
+        let characters: Vec<u8> = (0..128).collect();
+        let mut bits = Vec::new();
+        for chunk in characters.chunks(32) {
+            transmitter.write(chunk);
+            while !transmitter.is_idle() {
+                bits.push(transmitter.next_bit());
+            }
+        }
+        bits.extend([true; 4]);
+        let mut receiver = StartStopReceiver::new();
+        receiver.set_format(format);
+        let got = receive(&mut receiver, &line(&bits, 80.0 / 3.0));
+        assert_eq!(got.characters, characters, "{format:?}");
+        assert_eq!(receiver.parity_errors(), 0);
+        assert_eq!(receiver.format(), format);
+
+        // The eighth bit of what the host gives is not carried.
+        transmitter.write(&[0xC3]);
+        let high: Vec<bool> = (0..10).map(|_| transmitter.next_bit()).collect();
+        assert_eq!(high, expected, "{format:?}");
+    }
+    // Read with the other parity, each character is given and counted.
+    let mut transmitter = StartStopTransmitter::new();
+    transmitter.set_format(Format::E71);
+    transmitter.write(b"parity");
+    let mut bits = Vec::new();
+    while !transmitter.is_idle() {
+        bits.push(transmitter.next_bit());
+    }
+    bits.extend([true; 4]);
+    let mut receiver = StartStopReceiver::new();
+    receiver.set_format(Format::O71);
+    let mut wrong = 0;
+    let mut characters = Vec::new();
+    for level in line(&bits, 80.0 / 3.0) {
+        let out = receiver.process(level);
+        wrong += u32::from(out.parity_error);
+        characters.extend(out.character);
+    }
+    assert_eq!(characters, b"parity");
+    assert_eq!((wrong, receiver.parity_errors()), (6, 6));
+    assert_eq!(receiver.framing_errors(), 0);
+}

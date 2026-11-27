@@ -82,9 +82,10 @@ with its own; if no carrier it knows comes within a second it sends the
 carrier of the first modulation it may use (V.25 clause 3.10).
 
 Connected, the modem carries the host's characters as start-stop
-characters of eight data bits, no parity and one stop bit, the least
-significant bit first. The carrier lost for the time in `S10` ends the
-call. Formats other than 8N1 are not in this phase.
+characters, the least significant bit first: of eight data bits, no
+parity and one stop bit, or of seven data bits with even or odd parity,
+as `AT+ICF` says (`docs/AT.md`). The carrier lost for the time in `S10`
+ends the call.
 
 A modem that gives up before it connects is logged with RMD7001, which
 names the state it was in.
@@ -156,6 +157,6 @@ seconds, and the two lines are busy meanwhile.
 
 ## What is not here
 
-One character format, 8N1. No error control and no compression: V.42 and
-V.42bis come with V.22bis. No equaliser and no echo canceller, which
+No error control and no compression: V.42 and V.42bis come with
+V.22bis. No equaliser and no echo canceller, which
 300 bit/s does without. No V.23, no fax, no DTMF.

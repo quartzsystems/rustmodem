@@ -4,9 +4,11 @@
 
 //! Start-stop framing: characters into bits and bits into characters.
 //!
-//! A character is a start bit, which is space; eight data bits, the least
+//! A character is a start bit, which is space; eight units, the least
 //! significant first; and a stop bit, which is mark. Between characters
-//! the line is at mark.
+//! the line is at mark. The eight units are eight data bits, or seven
+//! and a parity bit: the character format is `link/v14`'s, which the
+//! faster modems use too.
 //!
 //! The receiver works on the demodulator's decision at every sample, not
 //! on bits someone else has timed, because a start-stop character brings
@@ -16,6 +18,7 @@
 //! taken from.
 
 use dspkit::SAMPLE_RATE;
+use v14::Format;
 
 use crate::BIT_RATE;
 
@@ -33,10 +36,12 @@ pub struct StartStopTransmitter {
     // its bits are left.
     shift: u16,
     left: u8,
+    format: Format,
 }
 
 impl StartStopTransmitter {
-    /// A transmitter with nothing to send.
+    /// A transmitter with nothing to send, of eight data bits and no
+    /// parity.
     pub fn new() -> StartStopTransmitter {
         StartStopTransmitter {
             queue: [0; TX_CAPACITY],
@@ -44,7 +49,13 @@ impl StartStopTransmitter {
             len: 0,
             shift: 0,
             left: 0,
+            format: Format::N81,
         }
+    }
+
+    /// The character format, from the next character.
+    pub fn set_format(&mut self, format: Format) {
+        self.format = format;
     }
 
     /// Takes characters to send. Returns how many were taken, which is
@@ -80,8 +91,8 @@ impl StartStopTransmitter {
             self.head = (self.head + 1) % TX_CAPACITY;
             self.len -= 1;
             // From the lowest bit up: the start bit, which is 0, the
-            // eight data bits, and the stop bit, which is 1.
-            self.shift = (u16::from(byte) << 1) | 0x200;
+            // eight units of the format, and the stop bit, which is 1.
+            self.shift = (self.format.payload(byte) << 1) | 0x200;
             self.left = 10;
         }
         let bit = self.shift & 1 != 0;
@@ -117,6 +128,8 @@ pub struct Framed {
     pub character: Option<u8>,
     /// A character was dropped because its stop bit was space.
     pub framing_error: bool,
+    /// The character's parity was wrong. It is given all the same.
+    pub parity_error: bool,
     /// The line has been at space for a whole frame and more: a break.
     /// Reported once, when it is recognised.
     pub line_break: bool,
@@ -211,10 +224,12 @@ pub struct StartStopReceiver {
     nudged: bool,
     last: bool,
     framing_errors: u32,
+    parity_errors: u32,
+    format: Format,
 }
 
 impl StartStopReceiver {
-    /// A receiver on an idle line.
+    /// A receiver on an idle line, of eight data bits and no parity.
     pub fn new() -> StartStopReceiver {
         StartStopReceiver {
             state: State::Idle,
@@ -223,7 +238,24 @@ impl StartStopReceiver {
             nudged: false,
             last: true,
             framing_errors: 0,
+            parity_errors: 0,
+            format: Format::N81,
         }
+    }
+
+    /// The character format, from the next character.
+    pub fn set_format(&mut self, format: Format) {
+        self.format = format;
+    }
+
+    /// The character format.
+    pub fn format(&self) -> Format {
+        self.format
+    }
+
+    /// The characters whose parity was wrong so far.
+    pub fn parity_errors(&self) -> u32 {
+        self.parity_errors
     }
 
     /// Takes the decision at one sample: `true` is mark.
@@ -290,7 +322,12 @@ impl StartStopReceiver {
                             State::Frame { bit: bit + 1, data }
                         }
                         _ if mark => {
-                            out.character = Some(data);
+                            let (character, parity_ok) = self.format.character(u16::from(data));
+                            if !parity_ok {
+                                out.parity_error = true;
+                                self.parity_errors = self.parity_errors.saturating_add(1);
+                            }
+                            out.character = Some(character);
                             State::Idle
                         }
                         // The stop bit is space. With every data bit

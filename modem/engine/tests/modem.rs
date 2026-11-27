@@ -333,3 +333,27 @@ fn a_stopped_engine_is_silent_and_takes_no_data() {
     none.answer();
     assert_eq!(none.poll_event(), Some(ModemEvent::CarrierLost));
 }
+
+#[test]
+fn the_character_format_of_the_call_is_the_lines() {
+    use engine::Format;
+    // +ICF=5,1 at both ends: seven data bits and even parity. What the
+    // hosts give is carried in seven bits, and nothing is counted wrong.
+    for format in [Format::E71, Format::O71] {
+        let settings = CallSettings {
+            format,
+            ..CallSettings::default()
+        };
+        let mut call = Call::place(default_config(), default_config(), &clean(), settings);
+        assert!(call.connect(40), "{format:?}");
+        let from_a = random_bytes(3, 4096);
+        let from_b = random_bytes(4, 4096);
+        let (at_a, at_b) = call.exchange(&from_a, &from_b);
+        let seven = |data: &[u8]| data.iter().map(|b| b & 0x7F).collect::<Vec<u8>>();
+        assert_eq!(at_a, seven(&from_b), "{format:?}");
+        assert_eq!(at_b, seven(&from_a), "{format:?}");
+        for end in [&call.duplex.a, &call.duplex.b] {
+            assert_eq!(end.engine.diagnostics().unwrap().framing_errors, 0);
+        }
+    }
+}

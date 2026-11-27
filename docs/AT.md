@@ -128,6 +128,7 @@ reports 1.
 | `+MS` | Modulation selection. See "Modulation selection" | 6.4.1 |
 | `+ES` | Error control selection. Stored, no effect | 6.5.1 |
 | `+DS` | Data compression. Stored, no effect | 6.6.1 |
+| `+ICF` | Character framing. See "Character framing" | 6.2.11 |
 | anything else | `OK` or `ERROR`, as the line's `unknown_command` setting says | |
 
 A known command with a number outside its range is always an error, whatever
@@ -166,11 +167,11 @@ is off and the setting is not `&D0`, the modem does not auto-answer.
 
 ### Extended parameters
 
-`+MS`, `+ES` and `+DS` each take three forms:
+`+MS`, `+ES`, `+DS` and `+ICF` each take three forms:
 
 | Form | Example | Effect |
 |---|---|---|
-| Set | `AT+ES=1,0,2` | Stores the value. Letters, digits, `,` and `.`, up to 64 characters. An empty value restores the default. `+MS` is checked: see below |
+| Set | `AT+ES=1,0,2` | Stores the value. Letters, digits, `,` and `.`, up to 64 characters. An empty value restores the default. `+MS` and `+ICF` are checked: see below |
 | Read | `AT+MS?` | Prints `+MS: <value>` |
 | Test | `AT+MS=?` | Prints `+MS: <ranges>` |
 
@@ -181,6 +182,7 @@ The name alone, with no `=` or `?`, is an error.
 | `+MS` | `V21,1,0,0,0,0` | `(V21,B103),(0,1),(0,300),(0,300),(0,300),(0,300)` |
 | `+ES` | `3,0,2` | `(0-4),(0-4),(0-6)` |
 | `+DS` | `3,0,2048,6` | `(0-3),(0),(512-2048),(6-250)` |
+| `+ICF` | `3,3` | `(3,5),(0-3)` |
 
 There is no error control or compression yet. The values of `+ES` and
 `+DS` are stored and reported and nothing reads them; their defaults and
@@ -211,6 +213,32 @@ Bell 103 is `B103` here because V.250 keeps the names that begin with `V`
 for ITU-T modulations (Table 13); the `CONNECT` report and the control API
 call it `BELL103`.
 
+### Character framing
+
+`+ICF=<format>,<parity>` (V.250 clause 6.2.11) is the format of the
+characters on the line, where the line carries them as start-stop
+characters: on a V.21 or Bell 103 call, and on a faster call that has no
+error control (`docs/MODEM.md`). Under error control the line carries
+octets and this changes nothing. The port itself has no format: it is not
+a wire.
+
+| `+ICF` | Format | A character on the line |
+|---|---|---|
+| `3` with any parity | 8N1 | A start bit, eight data bits, a stop bit |
+| `5,1` | 7E1 | A start bit, seven data bits, a parity bit that makes the ones even, a stop bit |
+| `5,0` | 7O1 | The same with the ones odd |
+
+With seven data bits the eighth bit of what the host sends is not
+carried, and what it receives has it clear. A character received with
+the wrong parity is given all the same, and counted with the framing
+errors.
+
+A subparameter left out stays as it is: `AT+ICF=,0` changes the parity
+alone. The other formats of Table 5/V.250, automatic detection (0), two
+stop bits (1 and 4), eight data bits with parity (2) and seven with none
+(6), and mark and space parity with format 5, are `ERROR`, and `+ICF`
+stays as it was. The value takes effect at the line's next call.
+
 ### Unknown commands
 
 Each line has an `unknown_command` setting, `ok` or `error`.
@@ -234,7 +262,8 @@ A register that the interpreter does not have is treated the same way: with
 ## Stored profiles
 
 A profile is every setting the commands above change (`E`, `Q`, `V`, `X`,
-`L`, `M`, `&C`, `&D`, `&K`, `+MS`, `+ES`, `+DS`) and every S-register.
+`L`, `M`, `&C`, `&D`, `&K`, `+MS`, `+ES`, `+DS`, `+ICF`) and every
+S-register.
 Each line has an active profile, which the commands change, and may have a
 stored one.
 

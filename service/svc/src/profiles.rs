@@ -22,6 +22,7 @@
 //! ms = "V21,1,0,0,0,0"
 //! es = "3,0,2"
 //! ds = "3,0,2048,6"
+//! icf = "3,3"
 //! s0 = 2
 //! s2 = 43
 //! ```
@@ -148,6 +149,7 @@ fn render(profiles: &BTreeMap<LineId, Profile>) -> String {
         table["ms"] = value(profile.ms.as_str());
         table["es"] = value(profile.es.as_str());
         table["ds"] = value(profile.ds.as_str());
+        table["icf"] = value(profile.icf.as_str());
         for (number, register) in profile.registers() {
             // S1 counts the rings of a call in progress; it is not kept.
             if number != 1 {
@@ -232,6 +234,7 @@ fn profile(item: &Item) -> Result<Profile, String> {
             "ms" => profile.ms = string()?,
             "es" => profile.es = string()?,
             "ds" => profile.ds = string()?,
+            "icf" => profile.icf = string()?,
             register => {
                 // `s0`, `s2` and so on: the registers a profile has, as
                 // the file spells them. S1 is not a setting.

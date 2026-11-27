@@ -33,6 +33,7 @@ pub use g711::Law;
 pub use info::ConnectInfo;
 pub use modem::{CallSettings, Modem, ModemConfig};
 pub use null::{IDLE_OCTET, NullConfig, NullEngine, SILENCE_OCTET};
+pub use v14::Format;
 
 /// The octets in a 20 ms tick at 8000 octets a second.
 pub const FRAME_20MS: usize = 160;

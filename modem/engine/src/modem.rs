@@ -49,6 +49,7 @@ use tones::{
     POST_TONE_SILENCE_MS,
 };
 use v8::{Answerer, Caller, Capabilities, Modulation, Modulations, Outcome, Sending};
+use v14::Format;
 
 use crate::diag::{Diagnostics, EngineState, SCOPE_SAMPLES, STATE_HISTORY, ScopeKind, StateChange};
 use crate::{ConnectInfo, ModemEngine, ModemEvent};
@@ -137,6 +138,9 @@ pub struct CallSettings {
     pub modulations: Option<[Option<Standard>; 2]>,
     /// Whether the host allows V.8 for this call, if it has said.
     pub v8: Option<bool>,
+    /// The character format of the line where characters go as
+    /// start-stop characters: `+ICF`.
+    pub format: Format,
 }
 
 impl Default for CallSettings {
@@ -147,6 +151,7 @@ impl Default for CallSettings {
             carrier_loss_ms: 1400,
             modulations: None,
             v8: None,
+            format: Format::N81,
         }
     }
 }
@@ -329,6 +334,12 @@ impl Modem {
         self.tx =
             STANDARDS.map(|standard| Modulator::new(Tones::of(standard, tx_band), level, law));
         self.rx = STANDARDS.map(|standard| Receiver::new(standard, rx_band, DETECT_MS, law));
+        // V.8 reads the bits of the line for itself and is not touched by
+        // the format: it is the data's.
+        for receiver in &mut self.rx {
+            receiver.set_format(self.call.format);
+        }
+        self.transmitter.set_format(self.call.format);
         self.steady = [0; 2];
         // With V.8 the tone is ANSam; without, ANS. Either has the phase
         // reversals that disable echo cancellers: V.25's Corrigendum 1
@@ -549,7 +560,7 @@ impl Modem {
                     }
                     self.transmitter.clear();
                     self.carrier_gone = 0;
-                    self.framing_base = self.rx[n].framing_errors();
+                    self.framing_base = self.rx[n].framing_errors() + self.rx[n].parity_errors();
                     self.enter(Phase::Data, EngineState::Data);
                 } else if Modem::ms(self.in_phase) >= TRAINING_TIMEOUT_MS {
                     self.fail();
@@ -846,7 +857,8 @@ impl ModemEngine for Modem {
             },
             quality: if in_data { receiver.eye_opening() } else { 0.0 },
             framing_errors: if in_data {
-                receiver.framing_errors().saturating_sub(self.framing_base)
+                (receiver.framing_errors() + receiver.parity_errors())
+                    .saturating_sub(self.framing_base)
             } else {
                 0
             },

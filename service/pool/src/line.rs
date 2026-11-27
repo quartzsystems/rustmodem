@@ -331,5 +331,10 @@ pub(crate) fn call_settings(
         } else {
             Some(false)
         },
+        format: match profile.character_format() {
+            at::CharacterFormat::N81 => engine::Format::N81,
+            at::CharacterFormat::E71 => engine::Format::E71,
+            at::CharacterFormat::O71 => engine::Format::O71,
+        },
     }
 }
