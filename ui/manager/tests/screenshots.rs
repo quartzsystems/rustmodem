@@ -452,6 +452,8 @@ mod shots {
             Command::HuntGroups,
             Command::Routes,
             Command::CallCapture,
+            Command::RateCap,
+            Command::LoopbackTest,
             Command::AtConsole,
             Command::SipTrace,
         ] {
@@ -467,6 +469,49 @@ mod shots {
                 "{command:?} showed nothing"
             );
         }
+
+        // The diagnostics of a line that is in a call: line 1.
+        list.select(Some(0));
+        bench.pump();
+        let before = camera.taken.borrow().len();
+        bench.choose(Command::LineDiagnostics);
+        bench.run_until(Duration::from_secs(20), |_| {
+            camera.taken.borrow().len() > before
+        });
+        assert!(
+            camera.taken.borrow().len() > before,
+            "the diagnostics showed nothing"
+        );
+        list.select(Some(4));
+        bench.pump();
+
+        // A line's own modem settings, from the line's dialog.
+        *with_dialog.borrow_mut() = Some(Box::new({
+            let camera = Rc::clone(camera);
+            let asked = Cell::new(false);
+            move |name, dialog| {
+                if name == "line-modem" {
+                    camera.take(name, dialog);
+                    close(name, dialog);
+                } else if asked.replace(true) {
+                    // The settings have been shown and closed: the
+                    // line's dialog says that it is up again.
+                    close(name, dialog);
+                } else {
+                    dialog.command(line_ids::MODEM);
+                }
+            }
+        }));
+        bench.choose(Command::EditLine);
+        *with_dialog.borrow_mut() = None;
+        assert!(
+            camera
+                .taken
+                .borrow()
+                .iter()
+                .any(|(name, _)| name == "line-modem"),
+            "the line's modem settings showed nothing"
+        );
 
         // Remove line asks first.
         bench.choose(Command::RemoveLine);

@@ -39,7 +39,7 @@ const CONNECT: Duration = Duration::from_secs(30);
 
 /// The dialogs, by the commands that open them and the names they are
 /// known to the test by.
-const DIALOGS: [(Command, &str); 11] = [
+const DIALOGS: [(Command, &str); 13] = [
     (Command::Connect, "connect"),
     (Command::NewLine, "new-line"),
     (Command::EditLine, "edit-line"),
@@ -51,6 +51,8 @@ const DIALOGS: [(Command, &str); 11] = [
     (Command::HuntGroups, "hunt-groups"),
     (Command::Routes, "routes"),
     (Command::CallCapture, "capture"),
+    (Command::RateCap, "modem"),
+    (Command::LoopbackTest, "selftest"),
 ];
 
 /// What of a line stays put between one moment and the next while calls
@@ -111,6 +113,25 @@ fn round(bench: &Bench, list: ListView, opened: &RefCell<Vec<String>>) {
     bench.pump();
     assert!(!trace.exists());
 
+    // And the diagnostics of a line, whose scope is painted while they
+    // are up.
+    list.select(Some(0));
+    bench.pump();
+    bench.choose(Command::LineDiagnostics);
+    let diagnostics = bench
+        .opened
+        .manager
+        .diagnostics_window()
+        .expect("the diagnostics are open");
+    bench.run_for(Duration::from_millis(350));
+    assert_eq!(
+        opened.borrow().last().map(String::as_str),
+        Some("diagnostics")
+    );
+    diagnostics.end_dialog(id::CANCEL);
+    bench.pump();
+    assert!(!diagnostics.exists());
+
     // Remove line asks first; the answer is no.
     bench.choose(Command::RemoveLine);
     // The exports ask where to; the answer is nowhere.
@@ -170,9 +191,9 @@ fn a_minute_of_everything_leaks_nothing_and_ends_with_the_model_right() {
             let opened = Rc::clone(&opened);
             move |name: &str, window: Hwnd| {
                 opened.borrow_mut().push(name.to_string());
-                // The console is closed by the round, once it has been
-                // seen to stay open.
-                if name != "console" {
+                // The console and the diagnostics are closed by the
+                // round, once they have been seen to stay open.
+                if name != "console" && name != "diagnostics" {
                     close(name, window);
                 }
             }

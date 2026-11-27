@@ -30,11 +30,12 @@ use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, W
 use windows::Win32::Graphics::Gdi::{COLOR_BTNFACE, HBRUSH, InvalidateRect, UpdateWindow};
 use windows::Win32::UI::Controls::{
     CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDDS_SUBITEM, CDRF_DODEFAULT, CDRF_NEWFONT,
-    CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW, CLR_DEFAULT, LVIF_IMAGE, LVIF_STATE, LVIF_TEXT,
-    LVIS_SELECTED, LVIS_STATEIMAGEMASK, LVN_COLUMNCLICK, LVN_GETDISPINFOW, LVN_GETINFOTIPW,
-    LVN_ITEMCHANGED, LVN_KEYDOWN, NM_CUSTOMDRAW, NM_DBLCLK, NM_RETURN, NMHDR, NMITEMACTIVATE,
-    NMLISTVIEW, NMLVCUSTOMDRAW, NMLVDISPINFOW, NMLVGETINFOTIPW, NMLVKEYDOWN, NMTBGETINFOTIPW,
-    PROPSHEETPAGEW, PSN_APPLY, PSNRET_INVALID, PSNRET_NOERROR, TBN_GETINFOTIPW, TCN_SELCHANGE,
+    CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW, CLR_DEFAULT, DRAWITEMSTRUCT, LVIF_IMAGE,
+    LVIF_STATE, LVIF_TEXT, LVIS_SELECTED, LVIS_STATEIMAGEMASK, LVN_COLUMNCLICK, LVN_GETDISPINFOW,
+    LVN_GETINFOTIPW, LVN_ITEMCHANGED, LVN_KEYDOWN, NM_CUSTOMDRAW, NM_DBLCLK, NM_RETURN, NMHDR,
+    NMITEMACTIVATE, NMLISTVIEW, NMLVCUSTOMDRAW, NMLVDISPINFOW, NMLVGETINFOTIPW, NMLVKEYDOWN,
+    NMTBGETINFOTIPW, PROPSHEETPAGEW, PSN_APPLY, PSNRET_INVALID, PSNRET_NOERROR, TBN_GETINFOTIPW,
+    TCN_SELCHANGE,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -50,12 +51,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetMenu, SetTimer, SetWindowLongPtrW,
     SetWindowPlacement, SetWindowPos, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE,
     WINDOW_LONG_PTR_INDEX, WINDOW_STYLE, WINDOWPLACEMENT, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU,
-    WM_CREATE, WM_DESTROY, WM_DPICHANGED, WM_GETMINMAXINFO, WM_INITDIALOG, WM_MENUSELECT,
-    WM_NCCREATE, WM_NCDESTROY, WM_NOTIFY, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCOLORCHANGE,
-    WM_THEMECHANGED, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    WM_CREATE, WM_DESTROY, WM_DPICHANGED, WM_DRAWITEM, WM_GETMINMAXINFO, WM_INITDIALOG,
+    WM_MENUSELECT, WM_NCCREATE, WM_NCDESTROY, WM_NOTIFY, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE,
+    WM_SYSCOLORCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_OVERLAPPEDWINDOW,
+    WS_VISIBLE,
 };
 use windows::core::{BOOL, PCWSTR, w};
 
+use crate::canvas::Canvas;
 use crate::font::Font;
 use crate::menu::Menu;
 use crate::util::{copy_to_buffer, from_wide, hiword, instance, loword, pcwstr, wide};
@@ -337,6 +340,14 @@ pub enum Event<'a> {
         id: u16,
         /// What to fill in.
         text: &'a mut String,
+    },
+    /// A control made with [`crate::DialogTemplate::canvas`] is to be
+    /// painted. What the handler paints shows when it returns.
+    Draw {
+        /// The id of the control.
+        id: u16,
+        /// What to paint on.
+        canvas: &'a mut Canvas,
     },
     /// The tab of a tab control changed.
     TabChanged {
@@ -1132,6 +1143,19 @@ fn dispatch(
             result(handler.event(hwnd, event), 0)
         }
         WM_TIMER => result(handler.event(hwnd, Event::Timer { id: wparam.0 }), 0),
+        WM_DRAWITEM => {
+            // SAFETY: for this message `lparam` points at the
+            // DRAWITEMSTRUCT of the control to be painted, valid until
+            // the message is answered.
+            let item = unsafe { &*(lparam.0 as *const DRAWITEMSTRUCT) };
+            let mut canvas = Canvas::of(item)?;
+            let event = Event::Draw {
+                id: item.CtlID as u16,
+                canvas: &mut canvas,
+            };
+            // The canvas is copied to the screen as it goes.
+            result(handler.event(hwnd, event), 1)
+        }
         WM_MENUSELECT => {
             let flags = u32::from(hiword(wparam.0));
             let highlight = if flags == 0xFFFF && lparam.0 == 0 {

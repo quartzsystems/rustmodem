@@ -65,10 +65,16 @@ fn starting_config(options: &Options) -> Config {
     let lines = (1..=options.lines)
         .map(|id| {
             let mut line = LineConfig::new(id, &port_of_line(id));
-            // The scripts play the far end of every call themselves: the
-            // lines have the null engine, and the `sip` script gives some
-            // the echo engine.
-            line.engine = config::EngineKind::Null;
+            // The lines are modem lines, so that what the manager has for
+            // modems has something to work on; their calls are played by
+            // the demo engine, which modulates nothing. The `sip` script,
+            // whose calls are real ones from test peers that are no
+            // modems, has the null engine and the echo engine instead.
+            line.engine = if options.script == Script::Sip {
+                config::EngineKind::Null
+            } else {
+                config::EngineKind::Modem
+            };
             if options.script == Script::Frozen && id == frozen::DISABLED_LINE {
                 line.enabled = false;
             }

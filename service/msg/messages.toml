@@ -647,6 +647,13 @@ text = "Folder &1 could not be opened: &2"
 cause = "The folder does not exist yet, because no call has been captured, or it is on another computer than the one the manager runs on."
 recovery = "Turn capture on for a line and wait for a call on it. The folder is on the computer the service runs on."
 
+[RMD4015]
+severity = "error"
+vars = 0
+text = "A modem must be allowed at least one modulation."
+cause = "No modulation is checked in the list. A modem with none could make no call and answer none."
+recovery = "Check at least one modulation."
+
 # ---------------------------------------------------------------------------
 # 5000-5999: telephony
 # ---------------------------------------------------------------------------

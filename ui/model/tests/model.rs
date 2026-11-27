@@ -255,7 +255,7 @@ const ALWAYS: [Command; 15] = [
 ];
 
 /// The commands that need the service and nothing more.
-const WITH_SERVICE: [Command; 13] = [
+const WITH_SERVICE: [Command; 14] = [
     Command::Disconnect,
     Command::ReloadConfig,
     Command::ExportStatistics,
@@ -269,6 +269,7 @@ const WITH_SERVICE: [Command; 13] = [
     Command::Refresh,
     Command::Settings,
     Command::PortsAndDrivers,
+    Command::RateCap,
 ];
 
 fn sorted(mut commands: Vec<Command>) -> Vec<Command> {
@@ -317,6 +318,7 @@ fn every_command_in_every_state_of_the_connection() {
         Command::Disable,
         Command::EditLine,
         Command::RemoveLine,
+        Command::LineDiagnostics,
     ] {
         assert_eq!(
             model.availability(command).reason(),
@@ -324,6 +326,37 @@ fn every_command_in_every_state_of_the_connection() {
             "{command:?}"
         );
     }
+    // The modem's commands: its settings need the service and nothing
+    // more; its diagnostics a line whose engine it is; the self-test two
+    // of those.
+    assert!(model.availability(Command::RateCap).is_enabled());
+    assert_eq!(
+        model.availability(Command::LoopbackTest).reason(),
+        Some("A self-test takes two lines whose engine is the modem.")
+    );
+    let modem = |id: u16| ctlproto::LineInfo {
+        engine: "modem".to_string(),
+        ..line(id, LineState::Idle)
+    };
+    let mut modems = connected_model(vec![modem(1), modem(2), line(3, LineState::Idle)]);
+    assert!(modems.availability(Command::LoopbackTest).is_enabled());
+    modems.lines.select(Some(1));
+    assert!(modems.availability(Command::LineDiagnostics).is_enabled());
+    modems.lines.select(Some(3));
+    assert_eq!(
+        modems.availability(Command::LineDiagnostics).reason(),
+        Some("Line 3 has the null engine, which has no modem to show.")
+    );
+    // The engine of those lines is rustmodem's own, named with the
+    // version of the service that runs it.
+    modems.stats_received(ctlproto::Stats::default());
+    let view = modems.stats_view(START_MS, &Utc);
+    let engine = view
+        .carrier
+        .iter()
+        .find(|(label, _)| *label == "Softmodem engine")
+        .unwrap();
+    assert!(engine.1.starts_with("null, rustmodem "), "{}", engine.1);
     // The log has nothing in it yet.
     assert_eq!(
         model.availability(Command::ExportLog).reason(),
@@ -467,9 +500,18 @@ fn the_status_bar_describes_a_command_or_says_why_it_cannot_be_chosen() {
         model.help(Command::Reregister),
         "Line 1 does not register to a PBX."
     );
+    // The line has the null engine, which has no modem.
     assert_eq!(
         model.help(Command::LineDiagnostics),
-        "Not available yet: this comes with the first modulation, in phase 3."
+        "Line 1 has the null engine, which has no modem to show."
+    );
+    assert_eq!(
+        model.help(Command::LoopbackTest),
+        "A self-test takes two lines whose engine is the modem."
+    );
+    assert_eq!(
+        model.help(Command::RateCap),
+        "Sets the modulations the modems offer, V.8 and the level they send at."
     );
     for command in Command::ALL {
         assert!(!model.help(command).is_empty());

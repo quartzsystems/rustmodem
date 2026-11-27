@@ -459,8 +459,11 @@ fn cell_text(line: &LineInfo, column: Column, now_ms: u64) -> String {
             grouped(line.counters.bytes_tx),
             grouped(line.counters.bytes_rx)
         ),
-        // BLOCKED(phase3): retrains are counted by a real modem engine.
-        Column::Retrains => empty(),
+        // What the modem of the call in progress has counted.
+        Column::Retrains => match line.call.as_ref().and_then(|call| call.modem.as_ref()) {
+            Some(modem) => grouped(u64::from(modem.retrains)),
+            None => empty(),
+        },
         // What went wrong with the RTP of the call in progress: packets
         // lost and late, and streams started again.
         // BLOCKED(phase4): the errors the error-control protocol counts

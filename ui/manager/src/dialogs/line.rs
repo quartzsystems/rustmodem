@@ -9,16 +9,17 @@
 //! was typed is a line: when it refuses, its message is shown and the
 //! dialog stays open with everything as it was typed.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use ctlproto::{
-    Call, ErrorInfo, LineChange, LineInfo, LineSpec, PortInfo, PortKind, PortList, RegisterChange,
-    RegisterSpec, SipMode,
+    Call, ErrorInfo, LineChange, LineInfo, LineModem, LineModemSpec, LineSpec, PortInfo, PortKind,
+    PortList, RegisterChange, RegisterSpec, SipMode,
 };
 use win32::controls::{self, Combo, UpDown};
 use win32::{DialogTemplate, Event, Handler, Hwnd, Reply, id};
 
-use super::{must_not_be_empty, number_in, watch, watched};
+use super::{modem, must_not_be_empty, number_in, watch, watched};
 use crate::window::Manager;
 
 /// The ids of the dialog's controls.
@@ -45,6 +46,8 @@ pub mod ids {
     pub const ANSWER_ERROR: u16 = 309;
     /// The modem engine.
     pub const ENGINE: u16 = 310;
+    /// The modem's settings.
+    pub const MODEM: u16 = 322;
     /// SIP: the line is reached by the trunk, or with no SIP not at all.
     pub const SIP_TRUNK: u16 = 311;
     /// SIP: the line registers to a PBX.
@@ -77,7 +80,8 @@ const LINE_IDS: (u32, u32) = (1, 999);
 
 /// The engines, in the order the combo box lists them: what the
 /// service calls each, and what the user is shown.
-pub const ENGINES: [(&str, &str); 2] = [
+pub const ENGINES: [(&str, &str); 3] = [
+    ("modem", "Modem: V.21 and Bell 103, with V.8"),
     ("null", "Null: data straight into the samples"),
     ("echo", "Echo: sends back what it receives"),
 ];
@@ -89,7 +93,7 @@ const EXPIRES: (u32, u32) = (60, 86_400);
 const DEFAULT_EXPIRES: u32 = 300;
 
 fn template(title: &str) -> DialogTemplate {
-    DialogTemplate::new(title, 250, 318)
+    DialogTemplate::new(title, 250, 336)
         .label(7, 9, 80, 8, "Line &id:")
         .number(ID_NUMBER, 90, 7, 40, 14)
         .up_down(ID_NUMBER_ARROWS)
@@ -106,29 +110,30 @@ fn template(title: &str) -> DialogTemplate {
         .group(7, 112, 236, 28, "Unknown AT commands")
         .radio_button(ID_ANSWER_OK, 14, 124, 80, 10, "Answer &OK", true)
         .radio_button(ID_ANSWER_ERROR, 100, 124, 90, 10, "Answer E&RROR", false)
-        .label(7, 149, 80, 8, "Modem en&gine:")
-        .combo(ids::ENGINE, 90, 147, 153, 50)
-        .group(7, 166, 236, 120, "SIP")
-        .radio_button(ids::SIP_TRUNK, 14, 178, 222, 10, "&Trunk", true)
+        .label(7, 149, 80, 8, "&Modem engine:")
+        .combo(ids::ENGINE, 90, 147, 153, 60)
+        .button(ids::MODEM, 90, 165, 80, 14, "Modem settin&gs\u{2026}")
+        .group(7, 184, 236, 120, "SIP")
+        .radio_button(ids::SIP_TRUNK, 14, 196, 222, 10, "&Trunk", true)
         .radio_button(
             ids::SIP_REGISTER,
             14,
-            191,
+            209,
             222,
             10,
             "Register to a PB&X",
             false,
         )
-        .label(26, 207, 62, 8, "&Server:")
-        .edit(ids::SERVER, 90, 205, 146, 14)
-        .label(26, 223, 62, 8, "E&xtension:")
-        .edit(ids::USER, 90, 221, 80, 14)
-        .label(26, 239, 62, 8, "Pass&word:")
-        .password(ids::PASSWORD, 90, 237, 146, 14)
-        .label(26, 255, 62, 8, "Authenticate a&s:")
-        .edit(ids::AUTH_USER, 90, 253, 80, 14)
-        .label(26, 271, 62, 8, "Expir&y (seconds):")
-        .number(ids::EXPIRES, 90, 269, 40, 14)
+        .label(26, 225, 62, 8, "&Server:")
+        .edit(ids::SERVER, 90, 223, 146, 14)
+        .label(26, 241, 62, 8, "E&xtension:")
+        .edit(ids::USER, 90, 239, 80, 14)
+        .label(26, 257, 62, 8, "Pass&word:")
+        .password(ids::PASSWORD, 90, 255, 146, 14)
+        .label(26, 273, 62, 8, "Authenticate a&s:")
+        .edit(ids::AUTH_USER, 90, 271, 80, 14)
+        .label(26, 289, 62, 8, "Expir&y (seconds):")
+        .number(ids::EXPIRES, 90, 287, 40, 14)
         .up_down(ids::EXPIRES_ARROWS)
         .ok_cancel()
 }
@@ -151,6 +156,10 @@ pub struct Form {
     pub answer_ok: bool,
     /// The modem engine, as the service calls it.
     pub engine: String,
+    /// The line's own modem settings, if the Settings dialog changed
+    /// them: all of them, and none for a line that is to have the
+    /// service's.
+    pub modem: Option<LineModemSpec>,
     /// Whether the line registers to a PBX.
     pub register: bool,
     /// The registrar.
@@ -176,6 +185,7 @@ impl Form {
             enabled: true,
             answer_ok: true,
             engine: ENGINES[0].0.to_string(),
+            modem: None,
             register: false,
             server: String::new(),
             user: String::new(),
@@ -195,6 +205,7 @@ impl Form {
             enabled: line.enabled,
             answer_ok: line.unknown_command != "error",
             engine: line.engine.clone(),
+            modem: None,
             register: line.sip.mode == SipMode::Registered,
             server: line.sip.server.clone().unwrap_or_default(),
             user: line.sip.extension.clone().unwrap_or_default(),
@@ -301,7 +312,11 @@ impl Form {
             unknown_command: Some(self.unknown_command()),
             engine: Some(self.engine.clone()),
             register: self.register_spec()?,
-            modem: None,
+            // A line with none of its own says nothing of them.
+            modem: self
+                .modem
+                .clone()
+                .filter(|modem| *modem != LineModemSpec::default()),
         })
     }
 
@@ -324,7 +339,7 @@ impl Form {
             unknown_command: (unknown_command != line.unknown_command).then_some(unknown_command),
             engine: (self.engine != line.engine).then(|| self.engine.clone()),
             register: self.register_change(line)?,
-            modem: None,
+            modem: self.modem.clone(),
         })
     }
 }
@@ -339,6 +354,7 @@ fn changes_something(change: &LineChange) -> bool {
         || change.unknown_command.is_some()
         || change.engine.is_some()
         || change.register.is_some()
+        || change.modem.is_some()
 }
 
 /// Whether a port has the name Windows gives a serial port: `COM` and a
@@ -411,9 +427,44 @@ struct LineDialog {
     /// The service speaks SIP: a line that does not register is reached
     /// by the trunk. Without SIP it is not reached at all.
     sip: bool,
+    /// The modem settings the Settings dialog starts with: the line's
+    /// as its calls use them, and then what that dialog was last closed
+    /// with.
+    modem: RefCell<LineModem>,
+    /// What the Settings dialog was last closed with, to be sent with
+    /// the line.
+    modem_change: RefCell<Option<LineModemSpec>>,
 }
 
 impl LineDialog {
+    /// The engine the combo box has chosen, as the service calls it.
+    fn engine(dialog: Hwnd) -> &'static str {
+        Combo::of(dialog.item(ids::ENGINE))
+            .selected()
+            .and_then(|index| ENGINES.get(index))
+            .map_or(ENGINES[0].0, |(name, _)| *name)
+    }
+
+    /// The modem's settings are for a line whose engine is the modem.
+    fn show_modem(dialog: Hwnd) {
+        dialog
+            .item(ids::MODEM)
+            .set_enabled(Self::engine(dialog) == model::MODEM_ENGINE);
+    }
+
+    /// The line's own modem settings, in a dialog of their own. What it
+    /// is closed with is kept until the line is sent.
+    fn modem_settings(&self, dialog: Hwnd) {
+        let start = self.modem.borrow().clone();
+        if let Some(spec) = modem::line_settings(&self.manager, dialog, &start) {
+            *self.modem.borrow_mut() = modem::line_modem_of(&spec, &start);
+            *self.modem_change.borrow_mut() = Some(spec);
+        }
+        // A test is told that the line's dialog is the one that is up
+        // again.
+        watch(&self.manager, dialog);
+    }
+
     /// The fields of the registration are for a line that registers.
     fn show_register(dialog: Hwnd) {
         let register = controls::checked(dialog.item(ids::SIP_REGISTER));
@@ -490,21 +541,19 @@ impl LineDialog {
         );
         expires.set_text(&self.start.expires);
         Self::show_register(dialog);
+        Self::show_modem(dialog);
     }
 
-    fn read(dialog: Hwnd) -> Form {
+    fn read(&self, dialog: Hwnd) -> Form {
         Form {
+            modem: self.modem_change.borrow().clone(),
             number: dialog.item(ID_NUMBER).text(),
             name: dialog.item(ID_NAME).text(),
             port: Combo::of(dialog.item(ID_PORT)).text(),
             rings: dialog.item(ID_RINGS).text(),
             enabled: controls::checked(dialog.item(ID_ENABLED)),
             answer_ok: controls::checked(dialog.item(ID_ANSWER_OK)),
-            engine: Combo::of(dialog.item(ids::ENGINE))
-                .selected()
-                .and_then(|index| ENGINES.get(index))
-                .map_or(ENGINES[0].0, |(name, _)| *name)
-                .to_string(),
+            engine: Self::engine(dialog).to_string(),
             register: controls::checked(dialog.item(ids::SIP_REGISTER)),
             server: dialog.item(ids::SERVER).text(),
             user: dialog.item(ids::USER).text(),
@@ -517,7 +566,7 @@ impl LineDialog {
     /// Sends what the dialog holds to the service. `Ok(true)` when the
     /// service took it.
     fn send(&self, dialog: Hwnd) -> Result<(), ErrorInfo> {
-        let form = Self::read(dialog);
+        let form = self.read(dialog);
         let call = match &self.kind {
             Kind::New => Call::LinesAdd(form.spec()?),
             Kind::Edit(line) => {
@@ -560,6 +609,17 @@ impl Handler for LineDialog {
                 Self::show_register(dialog);
                 Reply::Handled
             }
+            Event::Command {
+                id: ids::ENGINE, ..
+            } => {
+                Self::show_modem(dialog);
+                watch(&self.manager, dialog);
+                Reply::Handled
+            }
+            Event::Command { id: ids::MODEM, .. } => {
+                self.modem_settings(dialog);
+                Reply::Handled
+            }
             Event::Command { id: id::OK, .. } => {
                 match self.send(dialog) {
                     Ok(()) => dialog.end_dialog(id::OK),
@@ -591,6 +651,30 @@ fn ports(manager: &Manager, owner: Hwnd) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The modem settings a new line starts with: the service's, as a line
+/// that has none of its own shows them, or what a modem has when the
+/// service has no such line to show.
+fn service_modem(manager: &Manager) -> LineModem {
+    manager.with_model(|model| {
+        model
+            .lines
+            .lines()
+            .find(|line| line.modem.own.is_empty() && !line.modem.modulations.is_empty())
+            .map_or_else(
+                || LineModem {
+                    modulations: modem::MODULATIONS
+                        .iter()
+                        .map(|(name, _, _)| name.to_string())
+                        .collect(),
+                    v8: true,
+                    tx_level_dbm0: -12,
+                    own: Vec::new(),
+                },
+                |line| line.modem.clone(),
+            )
+    })
+}
+
 /// New line, with the lowest free id filled in.
 pub fn new_line(manager: &Rc<Manager>, owner: Hwnd) {
     let id = manager.with_model(|model| model.lines.lowest_free_id());
@@ -600,6 +684,8 @@ pub fn new_line(manager: &Rc<Manager>, owner: Hwnd) {
         start: Form::new_line(id),
         ports: ports(manager, owner),
         sip: sip_on(manager),
+        modem: RefCell::new(service_modem(manager)),
+        modem_change: RefCell::new(None),
     });
     template("New line").show_modal(Some(owner), handler);
 }
@@ -609,6 +695,8 @@ pub fn edit_line(manager: &Rc<Manager>, owner: Hwnd, line: LineInfo) {
     let handler = Rc::new(LineDialog {
         manager: Rc::clone(manager),
         start: Form::of(&line),
+        modem: RefCell::new(line.modem.clone()),
+        modem_change: RefCell::new(None),
         kind: Kind::Edit(Box::new(line)),
         ports: ports(manager, owner),
         sip: sip_on(manager),
@@ -821,8 +909,10 @@ mod tests {
             ..Form::new_line(5)
         };
         let spec = form.spec().unwrap();
-        assert_eq!(spec.engine.as_deref(), Some("null"));
+        // A new line has the modem, with the service's settings.
+        assert_eq!(spec.engine.as_deref(), Some("modem"));
         assert_eq!(spec.register, None);
+        assert_eq!(spec.modem, None);
 
         let form = Form {
             engine: "echo".to_string(),
@@ -969,6 +1059,42 @@ mod tests {
         let change = echo.change(&plain).unwrap();
         assert_eq!(change.engine.as_deref(), Some("echo"));
         assert!(changes_something(&change));
-        assert_eq!(ENGINES.map(|(name, _)| name), ["null", "echo"]);
+        assert_eq!(ENGINES.map(|(name, _)| name), ["modem", "null", "echo"]);
+
+        // The line's own modem settings are sent when the Settings dialog
+        // was closed with OK, whole: with none of its own they are sent
+        // as none, which is what gives them up.
+        assert_eq!(Form::of(&plain).change(&plain).unwrap().modem, None);
+        let own = LineModemSpec {
+            modulations: Some(vec!["bell103".to_string()]),
+            v8: Some(false),
+            tx_level_dbm0: Some(-15),
+        };
+        let with_own = Form {
+            modem: Some(own.clone()),
+            ..Form::of(&plain)
+        };
+        let change = with_own.change(&plain).unwrap();
+        assert_eq!(change.modem, Some(own.clone()));
+        assert!(changes_something(&change));
+        let given_up = Form {
+            modem: Some(LineModemSpec::default()),
+            ..Form::of(&plain)
+        };
+        let change = given_up.change(&plain).unwrap();
+        assert_eq!(change.modem, Some(LineModemSpec::default()));
+        assert!(changes_something(&change));
+        // A new line says nothing of settings it does not have.
+        let new = Form {
+            port: "CNCB4".to_string(),
+            modem: Some(LineModemSpec::default()),
+            ..Form::new_line(5)
+        };
+        assert_eq!(new.spec().unwrap().modem, None);
+        let new = Form {
+            modem: Some(own.clone()),
+            ..new
+        };
+        assert_eq!(new.spec().unwrap().modem, Some(own));
     }
 }

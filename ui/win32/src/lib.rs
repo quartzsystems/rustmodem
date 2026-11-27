@@ -53,6 +53,7 @@
 #![cfg(windows)]
 
 mod app;
+mod canvas;
 mod capture;
 pub mod controls;
 mod dialog;
@@ -79,6 +80,7 @@ mod util;
 mod window;
 
 pub use app::App;
+pub use canvas::Canvas;
 pub use capture::{Image, capture, gui_handles, move_pointer, pointer};
 pub use dialog::{DialogTemplate, ModelessDialog};
 

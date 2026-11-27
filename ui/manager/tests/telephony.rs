@@ -602,8 +602,11 @@ fn a_line_is_given_an_engine_and_a_registration() {
                 .contains("does not speak SIP")
         );
         assert!(!dialog.item(line_ids::SERVER).enabled());
+        // The line has the modem, the first of the engines; the echo
+        // engine is the last.
         assert_eq!(Combo::of(dialog.item(line_ids::ENGINE)).selected(), Some(0));
-        Combo::of(dialog.item(line_ids::ENGINE)).select(Some(1));
+        assert!(dialog.item(line_ids::MODEM).enabled());
+        Combo::of(dialog.item(line_ids::ENGINE)).select(Some(2));
         controls::set_checked(dialog.item(line_ids::SIP_TRUNK), false);
         controls::set_checked(dialog.item(line_ids::SIP_REGISTER), true);
         dialog.item(line_ids::SERVER).set_text("pbx.example.com");
@@ -632,7 +635,8 @@ fn a_line_is_given_an_engine_and_a_registration() {
         assert_eq!(dialog.item(line_ids::USER).text(), "205");
         assert_eq!(dialog.item(line_ids::PASSWORD).text(), "");
         assert_eq!(dialog.item(line_ids::EXPIRES).text(), "300");
-        assert_eq!(Combo::of(dialog.item(line_ids::ENGINE)).selected(), Some(1));
+        // The echo engine, which is the third in the list.
+        assert_eq!(Combo::of(dialog.item(line_ids::ENGINE)).selected(), Some(2));
         dialog.item(line_ids::EXPIRES).set_text("600");
         dialog.command(id::OK);
     });

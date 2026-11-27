@@ -19,6 +19,19 @@ use serde_json::Value;
 /// How long the manager waits for an answer.
 pub const TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long the self-test is given: it runs half an hour of a call
+/// between two modems, which takes the service some seconds and on a
+/// slow machine more.
+pub const SELFTEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How long a request is given for its answer.
+fn timeout_of(call: &Call) -> Duration {
+    match call {
+        Call::SelfTestRun(_) => SELFTEST_TIMEOUT,
+        _ => TIMEOUT,
+    }
+}
+
 /// What the answer to a request is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Purpose {
@@ -64,6 +77,8 @@ struct Pending {
     id: u64,
     method: &'static str,
     purpose: Purpose,
+    /// How long the request is given.
+    timeout: Duration,
     deadline: Instant,
 }
 
@@ -88,7 +103,8 @@ impl Requests {
             id: self.last_id,
             method: call.method(),
             purpose,
-            deadline: now + TIMEOUT,
+            timeout: timeout_of(call),
+            deadline: now + timeout_of(call),
         });
         encode(&ClientFrame::Request(call.request(self.last_id)))
     }
@@ -125,7 +141,7 @@ impl Requests {
             if request.deadline > now {
                 return true;
             }
-            expired.push((request.purpose, timed_out(request.method)));
+            expired.push((request.purpose, timed_out(request.method, request.timeout)));
             false
         });
         expired
@@ -142,8 +158,8 @@ impl Requests {
 }
 
 /// The message for a request that had no answer.
-pub fn timed_out(method: &str) -> ErrorInfo {
-    let seconds = TIMEOUT.as_secs().to_string();
+pub fn timed_out(method: &str, timeout: Duration) -> ErrorInfo {
+    let seconds = timeout.as_secs().to_string();
     ErrorInfo::from(message("RMD4001", &[method, &seconds]))
 }
 
@@ -195,6 +211,20 @@ mod tests {
         assert_eq!(requests.answered(first.id), None);
         assert_eq!(requests.answered(999), None);
         assert!(requests.is_empty());
+    }
+
+    #[test]
+    fn the_self_test_is_given_two_minutes() {
+        let start = Instant::now();
+        let mut requests = Requests::new();
+        let test = Call::SelfTestRun(ctlproto::SelfTest { a: 1, b: 2 });
+        requests.begin(&test, Purpose::Asked, start);
+        assert!(requests.expire(start + Duration::from_secs(119)).is_empty());
+        let expired = requests.expire(start + SELFTEST_TIMEOUT);
+        assert_eq!(
+            expired[0].1.text,
+            "The service did not answer selftest.run within 120 seconds."
+        );
     }
 
     #[test]

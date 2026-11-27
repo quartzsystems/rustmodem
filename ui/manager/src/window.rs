@@ -221,6 +221,10 @@ struct State {
     /// The SIP trace window is open: the service is asked for the
     /// messages, again each time the manager connects.
     tracing: bool,
+    /// The line whose diagnostics the diagnostics window shows, while it
+    /// is open: the service is asked for them, again each time the
+    /// manager connects.
+    diagnosing: Option<u16>,
 }
 
 impl State {
@@ -237,6 +241,7 @@ impl State {
             denied_shown: false,
             ticks: 0,
             tracing: false,
+            diagnosing: None,
         }
     }
 
@@ -301,6 +306,21 @@ impl State {
             Call::Subscribe(selection)
         } else {
             Call::Unsubscribe(selection)
+        };
+        self.request(call, Purpose::Subscribe);
+    }
+
+    /// Asks for the diagnostics of a line as they change, or with no
+    /// line asks for no more of them. They are events that have to be
+    /// named, with their line.
+    fn subscribe_diagnostics(&mut self, line: Option<u16>) {
+        let selection = EventSelection {
+            events: Some(vec!["line.diag".to_string()]),
+            line,
+        };
+        let call = match line {
+            Some(_) => Call::Subscribe(selection),
+            None => Call::Unsubscribe(selection),
         };
         self.request(call, Purpose::Subscribe);
     }
@@ -446,6 +466,9 @@ impl State {
                     if self.tracing {
                         self.subscribe_trace(true);
                     }
+                    if self.diagnosing.is_some() {
+                        self.subscribe_diagnostics(self.diagnosing);
+                    }
                     self.request(Call::LinesList, Purpose::Lines);
                     self.request(Call::StatsGet, Purpose::Stats);
                     self.request(Call::LogTail(LogTailQuery { last: None }), Purpose::LogTail);
@@ -532,6 +555,8 @@ pub struct Manager {
     console: RefCell<Option<ModelessDialog>>,
     /// The SIP trace, while it is open.
     trace: RefCell<Option<ModelessDialog>>,
+    /// The line diagnostics, while they are open.
+    diagnostics: RefCell<Option<ModelessDialog>>,
 }
 
 /// The main window, once it is open.
@@ -566,6 +591,7 @@ pub fn open(app: App, options: Options) -> Option<Opened> {
         tokens: Cell::new(0),
         console: RefCell::new(None),
         trace: RefCell::new(None),
+        diagnostics: RefCell::new(None),
     });
     let window = Window::create(
         WindowOptions {
@@ -683,11 +709,9 @@ fn action(command: Command) -> Option<Action> {
         Command::SipTrace => |manager, window, _| manager.open_trace(window),
         Command::CallCapture => |manager, window, _| dialogs::capture::show(manager, window),
 
-        // What later phases bring. The model never lets these be chosen,
-        // and says why in the status bar.
-        // BLOCKED(phase3): the rate cap, line diagnostics and the
-        // loopback self-test come with the first modulation.
-        Command::RateCap | Command::LineDiagnostics | Command::LoopbackTest => return None,
+        Command::RateCap => |manager, window, _| dialogs::modem::show(manager, window),
+        Command::LineDiagnostics => |manager, window, _| manager.open_diagnostics(window),
+        Command::LoopbackTest => |manager, window, _| dialogs::selftest::show(manager, window),
     };
     Some(action)
 }
@@ -732,6 +756,46 @@ impl Manager {
             .as_ref()
             .map(ModelessDialog::hwnd)
             .filter(|window| window.exists())
+    }
+
+    /// The window of the line diagnostics, while it is open.
+    pub fn diagnostics_window(&self) -> Option<Hwnd> {
+        self.diagnostics
+            .borrow()
+            .as_ref()
+            .map(ModelessDialog::hwnd)
+            .filter(|window| window.exists())
+    }
+
+    /// Reads the diagnostics the service last sent. For the diagnostics
+    /// window.
+    pub(crate) fn with_diag<R>(
+        &self,
+        read: impl FnOnce(Option<&ctlproto::LineDiag>) -> R,
+    ) -> Option<R> {
+        let state = self.state.try_borrow().ok()?;
+        Some(read(state.model.diag.as_ref()))
+    }
+
+    /// The line whose diagnostics the service is asked for.
+    pub(crate) fn diagnostics_line(&self) -> Option<u16> {
+        self.state.try_borrow().ok()?.diagnosing
+    }
+
+    /// Asks the service for the diagnostics of a line as they change, or
+    /// with no line to stop sending them. For the diagnostics window,
+    /// when it opens, shows another line and closes.
+    pub(crate) fn set_diagnostics(&self, line: Option<u16>) {
+        if let Ok(mut state) = self.state.try_borrow_mut() {
+            if state.diagnosing == line {
+                return;
+            }
+            state.diagnosing = line;
+            state.model.diag = None;
+            if state.model.connected() {
+                state.subscribe_diagnostics(line);
+            }
+        }
     }
 
     pub(crate) fn hooks(&self) -> &Hooks {
@@ -1205,6 +1269,25 @@ impl Manager {
         *self.trace.borrow_mut() = trace;
     }
 
+    /// Line diagnostics: opens them for the selected line, or shows that
+    /// line in the window that is open and brings it to the front.
+    fn open_diagnostics(self: &Rc<Self>, window: Hwnd) {
+        let Some(line) = self.with_model(|model| model.lines.selected().map(|line| line.id)) else {
+            return;
+        };
+        if let Some(open) = self.diagnostics_window() {
+            // The window sees that the line is another and shows it.
+            self.set_diagnostics(Some(line));
+            open.bring_to_front();
+            return;
+        }
+        // The one that was closed goes before the new one is made.
+        let closed = self.diagnostics.borrow_mut().take();
+        drop(closed);
+        let diagnostics = dialogs::diag::open(self, window, line);
+        *self.diagnostics.borrow_mut() = diagnostics;
+    }
+
     /// Shows or hides a bar and places everything again.
     fn toggle(&self, window: Hwnd, change: impl FnOnce(&View)) {
         if let Ok(view) = self.view.try_borrow()
@@ -1270,6 +1353,8 @@ impl Handler for Manager {
                 drop(console);
                 let trace = self.trace.borrow_mut().take();
                 drop(trace);
+                let diagnostics = self.diagnostics.borrow_mut().take();
+                drop(diagnostics);
                 if let Ok(mut state) = self.state.try_borrow_mut() {
                     state.link = None;
                 }

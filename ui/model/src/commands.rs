@@ -291,14 +291,16 @@ impl Command {
             Command::AtConsole => {
                 "Opens a terminal on a COM port of this computer, to talk to a line by hand."
             }
-            Command::RateCap => "Limits the rates and modulations the lines offer.",
+            Command::RateCap => {
+                "Sets the modulations the modems offer, V.8 and the level they send at."
+            }
             Command::ShowAll => "Shows every line.",
             Command::ShowOnCall => "Shows the lines that are ringing, handshaking or online.",
             Command::ShowIdle => "Shows the lines that are waiting for a call.",
             Command::ShowNotReady => "Shows the lines that are not ready or are disabled.",
             Command::CallHistory => "Lists the calls that have ended.",
             Command::LineDiagnostics => {
-                "Shows the signal of the selected line: levels, constellation and error counts."
+                "Shows the modem of the selected line's call: its state, levels, carrier and scope."
             }
             Command::ViewToolbar => "Shows or hides the toolbar.",
             Command::ViewStatusBar => "Shows or hides the status bar.",
@@ -307,7 +309,9 @@ impl Command {
             Command::PortsAndDrivers => {
                 "Lists the serial ports of the service's computer, with their pairs and modems."
             }
-            Command::LoopbackTest => "Calls one line from another and checks what comes through.",
+            Command::LoopbackTest => {
+                "Joins the modems of two idle lines and checks what goes between them."
+            }
             Command::CallCapture => {
                 "Records every RTP packet of the calls of chosen lines to files."
             }
@@ -319,24 +323,17 @@ impl Command {
     /// yet. Its place in the window is there, disabled, with this as the
     /// reason.
     pub fn blocked(self) -> Option<u8> {
-        match self {
-            // BLOCKED(phase3): the rate cap, line diagnostics and the
-            // loopback self-test come with the first modulation.
-            Command::RateCap | Command::LineDiagnostics | Command::LoopbackTest => Some(3),
-            _ => None,
-        }
+        // Every command there is has been built. A command a later phase
+        // brings is given its phase here when its place in the window is
+        // made.
+        let _ = self;
+        None
     }
 
     /// Why a command that is not built yet cannot be chosen.
     pub fn blocked_reason(self) -> Option<String> {
         let phase = self.blocked()?;
-        let what = match phase {
-            3 => "the first modulation",
-            _ => "a later phase",
-        };
-        Some(format!(
-            "Not available yet: this comes with {what}, in phase {phase}."
-        ))
+        Some(format!("Not available yet: this comes in phase {phase}."))
     }
 
     /// Whether the command needs administrator rights, and so carries the
@@ -722,17 +719,14 @@ mod tests {
             .iter()
             .filter_map(|command| Some((*command, command.blocked()?)))
             .collect();
-        assert_eq!(
-            blocked,
-            [
-                (Command::RateCap, 3),
-                (Command::LineDiagnostics, 3),
-                (Command::LoopbackTest, 3),
-            ]
-        );
-        for (command, phase) in blocked {
-            let reason = command.blocked_reason().unwrap();
-            assert!(reason.contains(&format!("phase {phase}")), "{reason}");
+        // The first modulation brought the last of them.
+        assert_eq!(blocked, []);
+        for command in [
+            Command::RateCap,
+            Command::LineDiagnostics,
+            Command::LoopbackTest,
+        ] {
+            assert_eq!(command.blocked_reason(), None);
         }
         assert_eq!(Command::Answer.blocked_reason(), None);
         // What came with telephony is built.

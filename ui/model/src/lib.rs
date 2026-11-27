@@ -47,6 +47,9 @@ pub use trace::{TRACE_LIMIT, TraceBuffer, entry as trace_entry};
 /// The title of the manager's window.
 pub const TITLE: &str = "RustModem Manager";
 
+/// The engine of a line that is a modem, as the control API names it.
+pub const MODEM_ENGINE: &str = "modem";
+
 /// The name of the file the service logs to, for the title of the event
 /// log.
 const LOG_FILE: &str = "rustmodem.log";
@@ -296,11 +299,20 @@ impl Model {
 
     /// The statistics panels. `now_ms` is the time now.
     pub fn stats_view(&self, now_ms: u64, zone: &dyn TimeZone) -> StatsView {
-        // The engines the lines run, each once, in order of name.
+        // The engines the lines run, each once, in order of name. The
+        // modem is rustmodem's own, and is named with the version of the
+        // service that runs it.
+        let modem = self
+            .service()
+            .map(|info| format!("rustmodem {}", info.version))
+            .unwrap_or_default();
         let mut engines: Vec<&str> = self
             .lines
             .lines()
-            .map(|line| line.engine.as_str())
+            .map(|line| match line.engine.as_str() {
+                MODEM_ENGINE => modem.as_str(),
+                other => other,
+            })
             .collect();
         engines.sort_unstable();
         engines.dedup();
@@ -429,6 +441,7 @@ impl Model {
             | Command::Routes
             | Command::SipTrace
             | Command::CallCapture
+            | Command::RateCap
             | Command::ExportStatistics => {
                 if self.connected() {
                     Enabled
@@ -504,9 +517,32 @@ impl Model {
                 }
             }
 
-            // The commands that are not built yet were answered above.
-            Command::RateCap | Command::LineDiagnostics | Command::LoopbackTest => {
-                Disabled("Not available yet.".to_string())
+            // The modem of the selected line's call.
+            Command::LineDiagnostics => on_line(&|line| {
+                if line.engine == MODEM_ENGINE {
+                    Enabled
+                } else {
+                    Disabled(format!(
+                        "Line {} has the {} engine, which has no modem to show.",
+                        line.id, line.engine
+                    ))
+                }
+            }),
+            // Two lines whose engine is the modem.
+            Command::LoopbackTest => {
+                if !self.connected() {
+                    return not_connected();
+                }
+                let modems = self
+                    .lines
+                    .lines()
+                    .filter(|line| line.engine == MODEM_ENGINE)
+                    .count();
+                if modems >= 2 {
+                    Enabled
+                } else {
+                    Disabled("A self-test takes two lines whose engine is the modem.".to_string())
+                }
             }
         }
     }

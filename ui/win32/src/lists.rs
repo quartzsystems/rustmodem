@@ -199,6 +199,11 @@ impl CheckList {
         ListView(self.0).selected()
     }
 
+    /// Selects a row, or with `None` clears the selection.
+    pub fn select(self, row: Option<usize>) {
+        ListView(self.0).select(row);
+    }
+
     /// What a cell shows.
     pub fn cell_text(self, row: usize, column: usize) -> String {
         ListView(self.0).cell_text(row, column)

@@ -32,8 +32,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CBS_AUTOHSCROLL, CBS_DROPDOWN, CBS_DROPDOWNLIST, CreateDialogIndirectParamW, DLGTEMPLATE,
     DS_CONTROL, DS_MODALFRAME, DS_SETFONT, DialogBoxIndirectParamW, ES_AUTOHSCROLL, ES_NUMBER,
     ES_READONLY, EndDialog, GW_OWNER, GetWindow, MapDialogRect, SWP_NOACTIVATE, SWP_NOSIZE,
-    SWP_NOZORDER, SetWindowPos, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE, WS_GROUP,
-    WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    SWP_NOZORDER, SetWindowPos, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE,
+    WS_EX_STATICEDGE, WS_GROUP, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 
 use crate::controls::UpDown;
@@ -77,6 +77,7 @@ const CLASS_COMBO: u16 = 0x0085;
 /// Static control styles; see `controls`.
 const SS_RIGHT: u32 = 0x0002;
 const SS_ICON: u32 = 0x0003;
+const SS_OWNERDRAW: u32 = 0x000D;
 const SS_NOPREFIX: u32 = 0x0080;
 const SS_ENDELLIPSIS: u32 = 0x4000;
 
@@ -446,6 +447,20 @@ impl DialogTemplate {
             "",
             RichEdit::STYLE,
             WS_EX_CLIENTEDGE.0,
+        )
+    }
+
+    /// A control the program paints, with a sunken edge: its handler is
+    /// sent [`crate::Event::Draw`] with the id whenever it is to be
+    /// painted, which [`Hwnd::redraw`] on the control asks for.
+    pub fn canvas(self, id: u16, x: i16, y: i16, w: i16, h: i16) -> DialogTemplate {
+        self.item(
+            Class::System(CLASS_STATIC),
+            id,
+            (x, y, w, h),
+            "",
+            SS_OWNERDRAW,
+            WS_EX_STATICEDGE.0,
         )
     }
 

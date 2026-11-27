@@ -12,7 +12,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use engine::{ConnectInfo, ModemEngine, ModemEvent, NullConfig, NullEngine};
+use engine::{
+    ConnectInfo, Diagnostics, EngineState, ModemEngine, ModemEvent, NullConfig, NullEngine,
+    SCOPE_SAMPLES, ScopeKind, StateChange,
+};
 
 /// How long the demo engine takes to connect, in 20 ms ticks: a second and
 /// a half of handshaking for the manager to show.
@@ -77,6 +80,11 @@ pub struct DemoEngine {
     shared: Arc<Mutex<Negotiation>>,
     /// What this engine reports when the null engine connects.
     info: ConnectInfo,
+    /// Ticks since the call began, and at which of them it connected.
+    ticks: u32,
+    connected_at: Option<u32>,
+    /// Whether there is a call.
+    running: bool,
 }
 
 impl DemoEngine {
@@ -90,7 +98,16 @@ impl DemoEngine {
             }),
             shared,
             info: ConnectInfo::unknown(),
+            ticks: 0,
+            connected_at: None,
+            running: false,
         }
+    }
+
+    fn begin(&mut self) {
+        self.ticks = 0;
+        self.connected_at = None;
+        self.running = true;
     }
 
     fn negotiate(&mut self, choose: impl FnOnce(&mut Negotiation) -> ConnectInfo) {
@@ -102,6 +119,7 @@ impl DemoEngine {
 impl ModemEngine for DemoEngine {
     fn process(&mut self, rx: &[u8], tx: &mut [u8]) {
         self.inner.process(rx, tx);
+        self.ticks = self.ticks.saturating_add(1);
     }
 
     fn dte_write(&mut self, data: &[u8]) -> usize {
@@ -113,26 +131,78 @@ impl ModemEngine for DemoEngine {
     }
 
     fn poll_event(&mut self) -> Option<ModemEvent> {
+        let connected_at = self.ticks;
         self.inner.poll_event().map(|event| match event {
-            ModemEvent::Connect(_) => ModemEvent::Connect(self.info.clone()),
+            ModemEvent::Connect(_) => {
+                self.connected_at = Some(connected_at);
+                ModemEvent::Connect(self.info.clone())
+            }
             other => other,
         })
     }
 
     fn answer(&mut self) {
         self.negotiate(Negotiation::answer);
+        self.begin();
         self.inner.answer();
     }
 
     fn originate(&mut self) {
         self.negotiate(Negotiation::originate);
+        self.begin();
         self.inner.originate();
     }
 
     fn hangup(&mut self) {
+        self.running = false;
         self.inner.hangup();
     }
+
+    /// What a modem would show of itself, made up as the rest is: the
+    /// same for the same tick of a call, so that a scripted call looks
+    /// the same on every run.
+    fn diagnostics(&self) -> Option<Diagnostics> {
+        if !self.running {
+            return None;
+        }
+        let mut snapshot = Diagnostics {
+            state: EngineState::Training,
+            tx_level_dbm0: -12.0,
+            ..Diagnostics::default()
+        };
+        snapshot.history[0] = StateChange {
+            state: EngineState::Training,
+            at_ms: 0,
+        };
+        snapshot.changes = 1;
+        if let Some(at) = self.connected_at {
+            snapshot.state = EngineState::Data;
+            snapshot.rx_level_dbm0 = -14.5;
+            snapshot.carrier = true;
+            snapshot.frequency_error_hz = 0.4;
+            snapshot.quality = 0.7;
+            snapshot.history[1] = StateChange {
+                state: EngineState::Data,
+                at_ms: at * TICK_MS,
+            };
+            snapshot.changes = 2;
+            // A square wave that moves along: marks and spaces of a few
+            // samples each.
+            snapshot.scope_kind = ScopeKind::Discriminator;
+            for (n, sample) in snapshot.scope.iter_mut().enumerate() {
+                let place = (n as u32 + self.ticks) % 16;
+                *sample = if place < 9 { 90 } else { -90 };
+            }
+        }
+        Some(snapshot)
+    }
 }
+
+/// The length of a tick, in milliseconds.
+const TICK_MS: u32 = 20;
+
+// The scope the snapshot fills is the size the engine crate gives it.
+const _: () = assert!(SCOPE_SAMPLES >= 16);
 
 #[cfg(test)]
 mod tests {

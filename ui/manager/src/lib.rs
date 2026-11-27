@@ -49,13 +49,19 @@ pub use clock::Clock;
 #[cfg(windows)]
 pub use dialogs::capture::ids as capture_ids;
 #[cfg(windows)]
+pub use dialogs::diag::ids as diag_ids;
+#[cfg(windows)]
 pub use dialogs::groups::{editor as group_ids, ids as groups_ids};
 #[cfg(windows)]
 pub use dialogs::line::ids as line_ids;
 #[cfg(windows)]
+pub use dialogs::modem::ids as modem_ids;
+#[cfg(windows)]
 pub use dialogs::peers::ids as peers_ids;
 #[cfg(windows)]
 pub use dialogs::routes::{editor as route_ids, ids as routes_ids};
+#[cfg(windows)]
+pub use dialogs::selftest::ids as selftest_ids;
 #[cfg(windows)]
 pub use dialogs::sheet::ids as settings_ids;
 #[cfg(windows)]

@@ -185,9 +185,13 @@ pub fn configure(config: &mut Config, listen: SocketAddrV4, peer: SocketAddrV4) 
     let last = config.lines.len();
     for (index, line) in config.lines.iter_mut().enumerate() {
         line.auto_answer_rings = 1;
-        if index % 2 == 0 {
-            line.engine = EngineKind::Echo;
-        }
+        // The peers that call are no modems: every other line echoes,
+        // and the rest carry the peers' data as the null engine does.
+        line.engine = if index % 2 == 0 {
+            EngineKind::Echo
+        } else {
+            EngineKind::Null
+        };
         if index + 1 == last && last > 1 {
             line.register = Some(RegisterConfig {
                 server: peer.to_string(),

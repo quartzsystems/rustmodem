@@ -283,7 +283,7 @@ pub(crate) fn at_config(config: &LineConfig) -> AtConfig {
         },
         auto_answer_rings: config.auto_answer_rings,
         engine: match config.engine {
-            EngineKind::Modem => "MODEM",
+            EngineKind::Modem => "SOFT",
             EngineKind::Null => "NULL",
             EngineKind::Echo => "ECHO",
         },

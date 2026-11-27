@@ -226,6 +226,13 @@ impl Progress {
         Progress(bar)
     }
 
+    /// The progress bar of a dialog template, given its range of 0 to
+    /// 100.
+    pub fn of(control: Hwnd) -> Progress {
+        control.send(PBM_SETRANGE32, 0, 100);
+        Progress(control)
+    }
+
     /// The control.
     pub fn hwnd(self) -> Hwnd {
         self.0
