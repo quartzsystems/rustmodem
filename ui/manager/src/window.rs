@@ -295,6 +295,7 @@ impl State {
     fn subscribe_trace(&mut self, on: bool) {
         let selection = EventSelection {
             events: Some(vec!["sip.trace".to_string()]),
+            line: None,
         };
         let call = if on {
             Call::Subscribe(selection)
@@ -439,7 +440,7 @@ impl State {
                     // The events first: what happens between the lists
                     // and the subscription would otherwise be missed.
                     self.request(
-                        Call::Subscribe(EventSelection { events: None }),
+                        Call::Subscribe(EventSelection::default()),
                         Purpose::Subscribe,
                     );
                     if self.tracing {

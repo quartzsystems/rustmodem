@@ -12,15 +12,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use config::{
     Backend, Config, ConfigFile, ControlConfig, EngineKind, HuntGroup, HuntGroupEdit, LineConfig,
-    LineEdit, MediaEdit, RegisterConfig, Route, RouteEdit, ServiceConfig, SettingsEdit, SipEdit,
-    Strategy, Target, UnknownCommand,
+    LineEdit, LineModem, LineModemEdit, MediaEdit, ModemEdit, ModulationName, RegisterConfig,
+    Route, RouteEdit, ServiceConfig, SettingsEdit, SipEdit, Strategy, Target, UnknownCommand,
 };
 use ctlproto::{
     Call, CallList, ClientFrame, ControlSettings, Done, EVENT_NAMES, EventSelection, Hello,
     HuntGroupInfo, HuntGroupList, LineChange, LineList, LineSpec, LogLevel, LogTail,
-    MAX_MESSAGE_BYTES, MediaSettings, PROTOCOL, PortInfo, PortList, Reloaded, RouteInfo, RouteList,
-    ServerFrame, ServiceInfo, ServiceMode, ServiceSettings, Settings, SettingsChange,
-    SettingsResult, SipSettings, Subscription, decode_client, encode,
+    MAX_MESSAGE_BYTES, MediaSettings, ModemSettings, PROTOCOL, PortInfo, PortList, Reloaded,
+    RouteInfo, RouteList, SelfTestResult, ServerFrame, ServiceInfo, ServiceMode, ServiceSettings,
+    Settings, SettingsChange, SettingsResult, SipSettings, Subscription, decode_client, encode,
 };
 use msg::{Message, Severity, message};
 use serde::Serialize;
@@ -527,6 +527,11 @@ impl Server {
                 value(&shared.pool.line(change.id).await?)
             }
             Call::LinesCapture(switch) => value(&shared.pool.capture(switch.id, switch.on).await?),
+            Call::LinesDiag(line) => {
+                let id = line.id;
+                value(&shared.pool.with(move |pool| pool.line_diag(id)).await??)
+            }
+            Call::SelfTestRun(test) => value(&self.self_test(test.a, test.b).await?),
             Call::SipStatus => value(&shared.pool.sip_status().await?),
             Call::SipReregister(query) => {
                 shared.pool.reregister(query.id).await?;
@@ -659,14 +664,50 @@ impl Server {
             }),
             Call::Subscribe(selection) => {
                 let names = event_names("subscribe", &selection)?;
+                // The diagnostics are one line's: which, has to be said,
+                // and the line has to be there.
+                let diagnostics = names
+                    .as_deref()
+                    .is_some_and(|names| names.contains(&"line.diag"));
+                match (diagnostics, selection.line) {
+                    (true, Some(id)) => {
+                        shared.pool.line(id).await?;
+                    }
+                    (true, None) => {
+                        return Err(message(
+                            "RMD2003",
+                            &["subscribe", "line.diag needs the line it is for"],
+                        ));
+                    }
+                    (false, Some(_)) => {
+                        return Err(message(
+                            "RMD2003",
+                            &["subscribe", "line is for line.diag, which is not asked for"],
+                        ));
+                    }
+                    (false, None) => {}
+                }
+                let events = queue.subscribe(names.as_deref());
+                if diagnostics {
+                    queue.watch_line(selection.line);
+                    self.watch_diagnostics().await?;
+                }
                 value(&Subscription {
-                    events: queue.subscribe(names.as_deref()),
+                    events,
+                    line: queue.watched_line(),
                 })
             }
             Call::Unsubscribe(selection) => {
                 let names = event_names("unsubscribe", &selection)?;
+                let events = queue.unsubscribe(names.as_deref());
+                if !events.iter().any(|name| name == "line.diag") && queue.watched_line().is_some()
+                {
+                    queue.watch_line(None);
+                    self.watch_diagnostics().await?;
+                }
                 value(&Subscription {
-                    events: queue.unsubscribe(names.as_deref()),
+                    events,
+                    line: queue.watched_line(),
                 })
             }
         }
@@ -732,6 +773,18 @@ impl Server {
                 rtp_ports: config.media.rtp_ports.to_string(),
                 rtp_timeout_s: config.media.rtp_timeout_s,
                 capture_dir: config.media.capture_dir.clone(),
+            },
+            modem: ModemSettings {
+                modulations: config
+                    .modem
+                    .modulations
+                    .iter()
+                    .map(|name| name.as_str().to_string())
+                    .collect(),
+                v8: config.modem.v8,
+                tx_level_dbm0: i32::from(config.modem.tx_level_dbm0),
+                answer_delay_ms: config.modem.answer_delay_ms,
+                fallback_ms: config.modem.fallback_ms,
             },
             path: self.shared.config_path.display().to_string(),
         }
@@ -799,8 +852,20 @@ impl Server {
                     rtp_timeout_s: media.rtp_timeout_s,
                     capture_dir: media.capture_dir,
                 }),
+            modem: change
+                .modem
+                .clone()
+                .map_or_else(ModemEdit::default, |modem| ModemEdit {
+                    modulations: modem.modulations,
+                    v8: modem.v8,
+                    tx_level_dbm0: modem.tx_level_dbm0.map(i64::from),
+                    answer_delay_ms: modem.answer_delay_ms,
+                    fallback_ms: modem.fallback_ms,
+                }),
         };
-        let telephony = !edit.sip.is_empty() || !edit.media.is_empty();
+        // The pool takes the modem settings as it takes the telephony's:
+        // for the calls that follow.
+        let telephony = !edit.sip.is_empty() || !edit.media.is_empty() || !edit.modem.is_empty();
         let mut current = self.config().await;
         let mut next = current.clone();
         next.edit_settings(&edit).map_err(first)?;
@@ -834,6 +899,35 @@ impl Server {
                 || AtStart::of(config) != self.shared.at_start,
             config: self.settings(config),
         })
+    }
+
+    /// Tells the pool which lines' diagnostics the clients there are
+    /// have asked for.
+    async fn watch_diagnostics(&self) -> Result<(), Message> {
+        let lines = self.hub().watched_lines();
+        self.shared
+            .pool
+            .with(move |pool| pool.watch_diagnostics(&lines))
+            .await
+    }
+
+    /// `selftest.run`: the two lines are held busy, their modems are run
+    /// against each other on a thread of their own, and the lines are let
+    /// go.
+    async fn self_test(&self, a: u16, b: u16) -> Result<SelfTestResult, Message> {
+        let pool = &self.shared.pool;
+        let job = pool.with(move |pool| pool.selftest_begin(a, b)).await??;
+        let began = std::time::Instant::now();
+        let ran = tokio::task::spawn_blocking(move || job.run()).await;
+        let elapsed_ms = began.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
+        // The lines are let go whatever became of the test.
+        pool.with(move |pool| pool.selftest_end(a, b)).await?;
+        let mut result = ran.map_err(|_| message("RMD2010", &[]))?;
+        result.elapsed_ms = elapsed_ms;
+        if let Some(error) = &result.error {
+            (self.shared.log)(LogLevel::Error, error.to_string());
+        }
+        Ok(result)
     }
 
     /// `ports.list`: the ports of the machine in name order, each with the
@@ -905,8 +999,28 @@ fn unknown_command(method: &str, name: &str) -> Result<UnknownCommand, Message> 
 }
 
 fn engine(method: &str, name: &str) -> Result<EngineKind, Message> {
-    EngineKind::parse(name)
-        .ok_or_else(|| message("RMD2003", &[method, "engine is not one of: null, echo"]))
+    EngineKind::parse(name).ok_or_else(|| {
+        message(
+            "RMD2003",
+            &[method, "engine is not one of: modem, null, echo"],
+        )
+    })
+}
+
+fn modulation(method: &str, name: &str) -> Result<ModulationName, Message> {
+    ModulationName::parse(name).ok_or_else(|| {
+        message(
+            "RMD2003",
+            &[method, "a modulation is not one of: v21, bell103"],
+        )
+    })
+}
+
+/// A level for a new line. Its range is checked by the configuration; here
+/// it has only to be a number the configuration can hold.
+fn tx_level(method: &str, level: i32) -> Result<i8, Message> {
+    i8::try_from(level)
+        .map_err(|_| message("RMD2003", &[method, "tx_level_dbm0 is not a level in dBm0"]))
 }
 
 fn hunt_group_info(group: &HuntGroup) -> HuntGroupInfo {
@@ -937,6 +1051,25 @@ fn new_line(spec: &LineSpec) -> Result<LineConfig, Message> {
     }
     if let Some(name) = &spec.engine {
         line.engine = engine("lines.add", name)?;
+    }
+    if let Some(modem) = &spec.modem {
+        line.modem = LineModem {
+            modulations: modem
+                .modulations
+                .as_ref()
+                .map(|names| {
+                    names
+                        .iter()
+                        .map(|name| modulation("lines.add", name))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?,
+            v8: modem.v8,
+            tx_level_dbm0: modem
+                .tx_level_dbm0
+                .map(|level| tx_level("lines.add", level))
+                .transpose()?,
+        };
     }
     if let Some(register) = &spec.register {
         line.register = Some(RegisterConfig {
@@ -996,6 +1129,11 @@ fn register_edit(
 /// The change `lines.edit` describes, to the line as it is now.
 fn line_edit(change: &LineChange, current: Option<&LineConfig>) -> Result<LineEdit, Message> {
     Ok(LineEdit {
+        modem: change.modem.as_ref().map(|modem| LineModemEdit {
+            modulations: modem.modulations.clone(),
+            v8: modem.v8,
+            tx_level_dbm0: modem.tx_level_dbm0.map(i64::from),
+        }),
         engine: change
             .engine
             .as_deref()

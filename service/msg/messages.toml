@@ -812,3 +812,38 @@ vars = 2
 text = "The modem on line &1 did not connect: it gave up in the state &2."
 cause = "The far end sent no answer tone or carrier the modem knows, the two modems have no modulation in common, or the line is too poor for the carrier to be held. The state is where the handshake stopped; docs/MODEM.md lists the states."
 recovery = "Check that the far end is a modem of 300 bit/s (V.21 or Bell 103) and that the gateway carries the call as G.711 with no echo canceller, silence suppression or jitter buffer adaptation. Capture a call to see what was received."
+
+[RMD7002]
+severity = "error"
+vars = 2
+text = "Line &1 cannot be in a self-test: it is &2."
+cause = "A self-test takes two lines that are idle: in service, with their ports open, and with no call. The line is disabled, not ready, in a call or in a self-test already."
+recovery = "Wait for the line to be idle, or choose another line."
+
+[RMD7003]
+severity = "error"
+vars = 2
+text = "Line &1 cannot be in a self-test: its engine is &2, not the modem."
+cause = "A self-test joins the modems of two lines. The line's engine is one that carries data with no modem."
+recovery = "Choose a line whose engine is modem, or set the line's engine to modem."
+
+[RMD7004]
+severity = "error"
+vars = 1
+text = "A self-test takes two lines, and line &1 was named twice."
+cause = "The self-test joins the modem of one line to the modem of another."
+recovery = "Name two different lines."
+
+[RMD7005]
+severity = "error"
+vars = 4
+text = "The self-test of lines &1 and &2 failed: the modems did not connect. The modem of line &3 got as far as the state &4."
+cause = "The settings of the two lines give their modems no way to connect, most often because they have no modulation in common; or the modem is at fault. The test joins the two modems directly, so the network and the hosts have no part in it."
+recovery = "Compare the modem settings of the two lines: they need a modulation in common. If they have one, report the failure with the version of rustmodem."
+
+[RMD7006]
+severity = "error"
+vars = 5
+text = "The self-test of lines &1 and &2 failed: of &5 octets each way, &3 arrived whole at line &2 and &4 at line &1."
+cause = "The modems connected and then lost or changed data, or lost each other's carrier. The test joins the two modems directly, so the modem is at fault."
+recovery = "Report the failure with the version of rustmodem and the modem settings of the two lines."

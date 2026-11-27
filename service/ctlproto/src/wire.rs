@@ -16,6 +16,7 @@ use serde_json::Value;
 use crate::model::{
     CallRecord, ErrorInfo, Event, LineInfo, LogEvent, LogLevel, PortInfo, ServiceMode,
 };
+use crate::modem::{LineModemSpec, ModemChange, ModemSettings, SelfTest};
 
 /// The protocol number this version speaks.
 pub const PROTOCOL: u32 = 1;
@@ -24,7 +25,7 @@ pub const PROTOCOL: u32 = 1;
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
 /// The name of every event, in the order the documentation lists them.
-pub const EVENT_NAMES: [&str; 7] = [
+pub const EVENT_NAMES: [&str; 8] = [
     "line.state",
     "call.started",
     "call.connected",
@@ -32,12 +33,16 @@ pub const EVENT_NAMES: [&str; 7] = [
     "log",
     "sip.registration",
     "sip.trace",
+    "line.diag",
 ];
 
 /// The events a client gets only when it subscribes to them by name:
 /// subscribing to every event leaves them out. They are many and of use to
 /// one window.
-pub const EVENTS_BY_NAME_ONLY: [&str; 1] = ["sip.trace"];
+pub const EVENTS_BY_NAME_ONLY: [&str; 2] = ["sip.trace", "line.diag"];
+
+/// The most `line.diag` events a client is sent in a second.
+pub const LINE_DIAG_PER_SECOND: u32 = 4;
 
 /// The body of a `hello` message.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,12 +158,15 @@ pub struct LineSpec {
     /// `ok` or `error`; `ok` if left out.
     #[serde(default)]
     pub unknown_command: Option<String>,
-    /// The modem engine: `null` or `echo`; `null` if left out.
+    /// The modem engine: `modem`, `null` or `echo`; `modem` if left out.
     #[serde(default)]
     pub engine: Option<String>,
     /// The line's registration to a PBX; none if left out.
     #[serde(default)]
     pub register: Option<RegisterSpec>,
+    /// The line's own modem settings; those of `[modem]` if left out.
+    #[serde(default)]
+    pub modem: Option<LineModemSpec>,
 }
 
 /// The `register` part of `lines.add`: the line is an extension of a PBX.
@@ -250,12 +258,16 @@ pub struct LineChange {
     /// `ok` or `error`.
     #[serde(default)]
     pub unknown_command: Option<String>,
-    /// A new modem engine: `null` or `echo`.
+    /// A new modem engine: `modem`, `null` or `echo`.
     #[serde(default)]
     pub engine: Option<String>,
     /// Changes to the line's registration to a PBX.
     #[serde(default)]
     pub register: Option<RegisterChange>,
+    /// The line's own modem settings, all of them: a key left out is
+    /// taken from `[modem]` from now on.
+    #[serde(default)]
+    pub modem: Option<LineModemSpec>,
 }
 
 /// The parameters of `lines.capture`.
@@ -383,6 +395,10 @@ pub struct EventSelection {
     /// The event names; every event if left out.
     #[serde(default)]
     pub events: Option<Vec<String>>,
+    /// With `line.diag` among the names: the line whose diagnostics are
+    /// meant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u16>,
 }
 
 /// The parameters of `log.tail`.
@@ -481,6 +497,9 @@ pub struct SettingsChange {
     /// Changes to `[media]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<MediaChange>,
+    /// Changes to `[modem]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modem: Option<ModemChange>,
 }
 
 /// Parameters of a method that takes none.
@@ -546,6 +565,10 @@ pub struct Reloaded {
 pub struct Subscription {
     /// The events the client is now subscribed to.
     pub events: Vec<String>,
+    /// The line whose `line.diag` events the client is sent, when it is
+    /// subscribed to them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u16>,
 }
 
 /// The result of `log.tail`.
@@ -620,6 +643,9 @@ pub struct Settings {
     /// The `[media]` settings.
     #[serde(default)]
     pub media: MediaSettings,
+    /// The `[modem]` settings.
+    #[serde(default)]
+    pub modem: ModemSettings,
     /// The path of the configuration file.
     pub path: String,
 }
@@ -676,6 +702,10 @@ pub enum Call {
     LinesRemove(LineRef),
     /// `lines.capture`
     LinesCapture(CaptureSwitch),
+    /// `lines.diag`
+    LinesDiag(LineRef),
+    /// `selftest.run`
+    SelfTestRun(SelfTest),
     /// `calls.list`
     CallsList(CallsQuery),
     /// `config.reload`
@@ -720,7 +750,7 @@ pub enum Call {
 
 impl Call {
     /// The name of every method, in the order the documentation lists them.
-    pub const METHODS: [&'static str; 32] = [
+    pub const METHODS: [&'static str; 34] = [
         "service.info",
         "lines.list",
         "lines.get",
@@ -733,6 +763,8 @@ impl Call {
         "lines.edit",
         "lines.remove",
         "lines.capture",
+        "lines.diag",
+        "selftest.run",
         "calls.list",
         "config.reload",
         "config.get",
@@ -770,6 +802,8 @@ impl Call {
             Call::LinesEdit(_) => "lines.edit",
             Call::LinesRemove(_) => "lines.remove",
             Call::LinesCapture(_) => "lines.capture",
+            Call::LinesDiag(_) => "lines.diag",
+            Call::SelfTestRun(_) => "selftest.run",
             Call::CallsList(_) => "calls.list",
             Call::ConfigReload => "config.reload",
             Call::ConfigGet => "config.get",
@@ -809,6 +843,7 @@ impl Call {
             | Call::HuntGroupsList
             | Call::RoutesList => value(&NoParams {}),
             Call::LinesCapture(p) => value(p),
+            Call::SelfTestRun(p) => value(p),
             Call::SipReregister(p) => value(p),
             Call::HuntGroupsAdd(p) => value(p),
             Call::HuntGroupsEdit(p) => value(p),
@@ -825,6 +860,7 @@ impl Call {
             | Call::LinesReset(p)
             | Call::LinesEnable(p)
             | Call::LinesDisable(p)
+            | Call::LinesDiag(p)
             | Call::LinesRemove(p) => value(p),
             Call::LinesAdd(p) => value(p),
             Call::LinesEdit(p) => value(p),
@@ -877,6 +913,8 @@ impl Call {
             "lines.edit" => Call::LinesEdit(read(method, params)?),
             "lines.remove" => Call::LinesRemove(read(method, params)?),
             "lines.capture" => Call::LinesCapture(read(method, params)?),
+            "lines.diag" => Call::LinesDiag(read(method, params)?),
+            "selftest.run" => Call::SelfTestRun(read(method, params)?),
             "sip.status" => {
                 read::<NoParams>(method, params)?;
                 Call::SipStatus

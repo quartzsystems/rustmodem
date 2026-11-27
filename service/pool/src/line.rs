@@ -13,12 +13,14 @@ use at::{AtConfig, AtInterpreter, Mode, ModemSignals, Profile};
 use config::{EngineKind, LineConfig, UnknownCommand};
 use ctlproto::{CallInfo, CallRecord, ConnectInfo, Counters, Direction, EndReason, LineInfo};
 use ctlproto::{ErrorInfo, LineSip, LineState, MediaInfo, Registration, SipMode};
+use ctlproto::{LineModem, ModemInfo};
 use engine::ModemEngine;
 use msg::Message;
 use serial::SerialBackend;
 
 use crate::media::MediaCall;
 use crate::router::LineId;
+use crate::selftest::modem_info;
 
 /// The call a line is in, from dialling or being offered it until it ends.
 #[derive(Clone, Debug)]
@@ -35,12 +37,14 @@ pub(crate) struct ActiveCall {
     pub answered: bool,
     /// The RTP of the call as it was when its media stopped.
     pub media: Option<MediaInfo>,
+    /// The call's modem as it was when its media stopped.
+    pub modem: Option<ModemInfo>,
 }
 
 impl ActiveCall {
     /// The call as the control API shows it. `media` is the RTP of the
-    /// call now, when its media is running.
-    pub fn info(&self, media: Option<MediaInfo>) -> CallInfo {
+    /// call now, and `modem` its modem, when its media is running.
+    pub fn info(&self, media: Option<MediaInfo>, modem: Option<ModemInfo>) -> CallInfo {
         CallInfo {
             id: self.id,
             direction: self.direction,
@@ -51,6 +55,7 @@ impl ActiveCall {
             bytes_tx: self.bytes_tx,
             bytes_rx: self.bytes_rx,
             media: media.or_else(|| self.media.clone()).map(Box::new),
+            modem: modem.or_else(|| self.modem.clone()),
         }
     }
 
@@ -113,6 +118,11 @@ pub(crate) struct Line {
     /// The modem settings the line's engine was made with: `[modem]`'s
     /// with the line's own over them.
     pub engine_modem: config::ModemConfig,
+    /// The line's modem is in a self-test: the line takes no call.
+    pub testing: bool,
+    /// When the line's diagnostics were last published, on the pool's
+    /// monotonic clock, and whether its call had a modem to show then.
+    pub diag_sent: Option<(u64, bool)>,
 }
 
 impl Line {
@@ -140,6 +150,8 @@ impl Line {
             hunt_groups: Vec::new(),
             sip: false,
             engine_modem: config::ModemConfig::default(),
+            testing: false,
+            diag_sent: None,
         }
     }
 
@@ -147,6 +159,39 @@ impl Line {
     /// runner keeps statistics.
     pub fn media_info(&self) -> Option<MediaInfo> {
         Some(self.media.as_ref()?.stats()?.info())
+    }
+
+    /// The modem of the line's call now, when its media is running and
+    /// its engine shows itself.
+    pub fn modem_info(&self) -> Option<ModemInfo> {
+        Some(modem_info(&self.media.as_ref()?.diagnostics()?))
+    }
+
+    /// The modem settings the line's calls use, as the control API shows
+    /// them: `modem` is the `[modem]` table.
+    pub fn modem_settings(&self, modem: &config::ModemConfig) -> LineModem {
+        let own = &self.config.modem;
+        let resolved = modem.for_line(own);
+        let mut keys = Vec::new();
+        for (key, set) in [
+            ("modulations", own.modulations.is_some()),
+            ("v8", own.v8.is_some()),
+            ("tx_level_dbm0", own.tx_level_dbm0.is_some()),
+        ] {
+            if set {
+                keys.push(key.to_string());
+            }
+        }
+        LineModem {
+            modulations: resolved
+                .modulations
+                .iter()
+                .map(|name| name.as_str().to_string())
+                .collect(),
+            v8: resolved.v8,
+            tx_level_dbm0: i32::from(resolved.tx_level_dbm0),
+            own: keys,
+        }
     }
 
     pub fn id(&self) -> LineId {
@@ -170,6 +215,9 @@ impl Line {
         } else if self.serial.is_none() || !self.dtr {
             // The port is closed, or the host has DTR off.
             LineState::NotReady
+        } else if self.testing {
+            // Its modem is in a self-test: the line takes no call.
+            LineState::Handshaking
         } else if self.incoming {
             LineState::Ringing
         } else {
@@ -178,8 +226,13 @@ impl Line {
     }
 
     /// The line as the control API shows it. `registration` is what the
-    /// router says of the line's registration.
-    pub fn info(&self, registration: Option<Registration>) -> LineInfo {
+    /// router says of the line's registration, and `modem` the `[modem]`
+    /// table.
+    pub fn info(
+        &self,
+        registration: Option<Registration>,
+        modem: &config::ModemConfig,
+    ) -> LineInfo {
         let register = self.config.register.as_ref();
         let sip = LineSip {
             mode: match register {
@@ -206,13 +259,17 @@ impl Line {
             auto_answer_rings: self.config.auto_answer_rings,
             unknown_command: self.config.unknown_command.as_str().to_string(),
             counters: self.counters,
-            call: self.call.as_ref().map(|call| call.info(self.media_info())),
+            call: self
+                .call
+                .as_ref()
+                .map(|call| call.info(self.media_info(), self.modem_info())),
             error: self.error.as_ref().map(ErrorInfo::from),
             binding: self.binding.clone(),
             engine: self.config.engine.as_str().to_string(),
             hunt_groups: self.hunt_groups.clone(),
             sip,
             capture: self.capture,
+            modem: self.modem_settings(modem),
         }
     }
 }

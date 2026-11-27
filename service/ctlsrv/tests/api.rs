@@ -14,12 +14,12 @@ use common::{Fixture, PIPE, TestClient, VERSION, eventually};
 use ctlproto::{
     Call, CallEvent, CallList, CallRecord, CallsQuery, CaptureSwitch, ControlChange, Direction,
     Done, EVENT_NAMES, EndReason, Event, EventSelection, HuntGroupChange, HuntGroupInfo,
-    HuntGroupList, HuntGroupRef, HuntGroupSpec, LineChange, LineInfo, LineList, LineRef, LineSpec,
-    LineState, ListenerState, LogEvent, LogLevel, LogTail, LogTailQuery, MediaChange, PROTOCOL,
-    PortKind, PortList, RegisterChange, RegisterSpec, Reloaded, ReregisterQuery, RouteChange,
-    RouteList, RouteMove, RouteRef, RouteSpec, ServerFrame, ServiceChange, ServiceInfo,
-    ServiceMode, Settings, SettingsChange, SettingsResult, SipChange, SipMode, SipStatus, Stats,
-    Subscription,
+    HuntGroupList, HuntGroupRef, HuntGroupSpec, LineChange, LineDiag, LineInfo, LineList, LineRef,
+    LineSpec, LineState, ListenerState, LogEvent, LogLevel, LogTail, LogTailQuery, MediaChange,
+    PROTOCOL, PortKind, PortList, RegisterChange, RegisterSpec, Reloaded, ReregisterQuery,
+    RouteChange, RouteList, RouteMove, RouteRef, RouteSpec, SelfTest, ServerFrame, ServiceChange,
+    ServiceInfo, ServiceMode, Settings, SettingsChange, SettingsResult, SipChange, SipMode,
+    SipStatus, Stats, Subscription,
 };
 use ctlsrv::{LOG_RING, Limits};
 
@@ -30,6 +30,7 @@ fn line(id: u16) -> LineRef {
 fn selection(events: &[&str]) -> EventSelection {
     EventSelection {
         events: Some(events.iter().map(|e| e.to_string()).collect()),
+        line: None,
     }
 }
 
@@ -44,6 +45,7 @@ fn spec(id: u16, port: &str) -> LineSpec {
         unknown_command: None,
         engine: None,
         register: None,
+        modem: None,
     }
 }
 
@@ -58,6 +60,7 @@ fn change(id: u16) -> LineChange {
         unknown_command: None,
         engine: None,
         register: None,
+        modem: None,
     }
 }
 
@@ -235,6 +238,28 @@ async fn every_method_round_trips() {
                 assert_eq!(client.err(Call::LinesRemove(line(3))).await, "RMD0019");
                 assert!(!fixture.config_text().contains("id = 3"));
                 assert_eq!(client.lines().await.len(), 2);
+            }
+            "lines.diag" => {
+                // A line with no call has no modem to show.
+                let diag: LineDiag = client.ok(Call::LinesDiag(line(1))).await;
+                assert_eq!((diag.line, &diag.modem), (1, &None));
+                assert_eq!(diag.scope_kind, "none");
+                assert!(diag.history.is_empty() && diag.scope.is_empty());
+                assert_eq!(client.err(Call::LinesDiag(line(9))).await, "RMD1001");
+            }
+            "selftest.run" => {
+                // The lines here have the null engine: `tests/modem.rs`
+                // runs the test itself.
+                for ((a, b), refused) in [
+                    ((1, 1), "RMD7004"),
+                    ((1, 9), "RMD1001"),
+                    ((1, 2), "RMD7003"),
+                ] {
+                    assert_eq!(
+                        client.err(Call::SelfTestRun(SelfTest { a, b })).await,
+                        refused
+                    );
+                }
             }
             "lines.capture" => {
                 let on: LineInfo = client
@@ -805,7 +830,18 @@ async fn every_method_round_trips() {
                 let sub: Subscription = client.ok(Call::Subscribe(EventSelection::default())).await;
                 assert_eq!(sub.events, EVENT_NAMES[..6]);
                 let sub: Subscription = client.ok(Call::Subscribe(selection(&["sip.trace"]))).await;
+                assert_eq!(sub.events, EVENT_NAMES[..7]);
+                // The diagnostics of a line are asked for with the line,
+                // and given up again.
+                let diag = EventSelection {
+                    events: Some(vec!["line.diag".to_string()]),
+                    line: Some(1),
+                };
+                let sub: Subscription = client.ok(Call::Subscribe(diag.clone())).await;
                 assert_eq!(sub.events, EVENT_NAMES);
+                assert_eq!(sub.line, Some(1));
+                let sub: Subscription = client.ok(Call::Unsubscribe(diag)).await;
+                assert_eq!((sub.events.len(), sub.line), (7, None));
                 assert_eq!(
                     client.err(Call::Subscribe(selection(&["line.gone"]))).await,
                     "RMD2003"

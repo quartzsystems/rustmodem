@@ -229,6 +229,24 @@ pub(crate) fn edit_line(document: &mut DocumentMut, index: usize, edit: &LineEdi
         }
         None => {}
     }
+    if let Some(modem) = &edit.modem {
+        // Written again whole, as the registration is: a key the line
+        // no longer has its own value for is left out.
+        table.remove("modem");
+        let mut own = InlineTable::new();
+        if let Some(modulations) = &modem.modulations {
+            own.insert("modulations", strings(modulations.iter().cloned()).into());
+        }
+        if let Some(v8) = modem.v8 {
+            own.insert("v8", v8.into());
+        }
+        if let Some(level) = modem.tx_level_dbm0 {
+            own.insert("tx_level_dbm0", level.into());
+        }
+        if !own.is_empty() {
+            table["modem"] = value(own);
+        }
+    }
 }
 
 /// Changes the keys `edit` names in the `index`th `[[hunt_group]]` table,
@@ -396,6 +414,31 @@ pub(crate) fn edit_settings(document: &mut DocumentMut, edit: &SettingsEdit) {
         put(
             "capture_dir",
             edit.media.capture_dir.as_deref().map(Value::from),
+        );
+    }
+    if !edit.modem.is_empty() {
+        let modem = section(document, "modem");
+        let mut put = |key: &str, new: Option<Value>| {
+            if let Some(new) = new {
+                set_item(modem.entry(key).or_insert(Item::None), new);
+            }
+        };
+        put(
+            "modulations",
+            edit.modem
+                .modulations
+                .as_ref()
+                .map(|names| strings(names.iter().cloned()).into()),
+        );
+        put("v8", edit.modem.v8.map(Value::from));
+        put("tx_level_dbm0", edit.modem.tx_level_dbm0.map(Value::from));
+        put(
+            "answer_delay_ms",
+            edit.modem.answer_delay_ms.map(|ms| i64::from(ms).into()),
+        );
+        put(
+            "fallback_ms",
+            edit.modem.fallback_ms.map(|ms| i64::from(ms).into()),
         );
     }
 }

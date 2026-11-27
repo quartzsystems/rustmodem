@@ -14,6 +14,8 @@ Usage:
   rustmodemctl [OPTIONS] info
   rustmodemctl [OPTIONS] lines
   rustmodemctl [OPTIONS] line <id>
+  rustmodemctl [OPTIONS] diag <id>      the modem of the line's call
+  rustmodemctl [OPTIONS] selftest <a> <b>
   rustmodemctl [OPTIONS] answer|hangup|reset|enable|disable <id>
   rustmodemctl [OPTIONS] calls [--last N]
   rustmodemctl [OPTIONS] reload
@@ -28,6 +30,11 @@ Usage:
   rustmodemctl [OPTIONS] capture on|off <id>
   rustmodemctl [--json] capture check <file>
   rustmodemctl capture wav <file> <out.wav>
+
+selftest joins the modems of two idle lines, the first originating and
+the second answering, with no network between them, and has each send the
+other 64 KiB. It takes some seconds and exits with 0 only when the modems
+connected and every octet arrived.
 
 capture on and off turn the capture of a line's calls on and off. The
 other capture commands read a call capture file and ask nothing of the
@@ -59,6 +66,10 @@ pub enum Command {
     Lines,
     /// `line <id>`
     Line(u16),
+    /// `diag <id>`
+    Diag(u16),
+    /// `selftest <a> <b>`
+    SelfTest(u16, u16),
     /// `answer <id>`
     Answer(u16),
     /// `hangup <id>`
@@ -163,6 +174,15 @@ pub fn parse(args: impl Iterator<Item = String>) -> Result<Options, Message> {
         Some("info") => alone(&words, Command::Info)?,
         Some("lines") => alone(&words, Command::Lines)?,
         Some("line") => Command::Line(id(&words)?),
+        Some("diag") => Command::Diag(id(&words)?),
+        Some("selftest") => match &words[1..] {
+            [a, b] => Command::SelfTest(
+                a.parse().map_err(|_| refuse(a))?,
+                b.parse().map_err(|_| refuse(b))?,
+            ),
+            [] | [_] => return Err(refuse("selftest")),
+            [_, _, extra, ..] => return Err(refuse(extra)),
+        },
         Some("answer") => Command::Answer(id(&words)?),
         Some("hangup") => Command::Hangup(id(&words)?),
         Some("reset") => Command::Reset(id(&words)?),
@@ -232,6 +252,8 @@ mod tests {
         assert_eq!(command(&["info"]), Command::Info);
         assert_eq!(command(&["lines"]), Command::Lines);
         assert_eq!(command(&["line", "3"]), Command::Line(3));
+        assert_eq!(command(&["diag", "3"]), Command::Diag(3));
+        assert_eq!(command(&["selftest", "1", "2"]), Command::SelfTest(1, 2));
         assert_eq!(command(&["answer", "1"]), Command::Answer(1));
         assert_eq!(command(&["hangup", "2"]), Command::Hangup(2));
         assert_eq!(command(&["reset", "999"]), Command::Reset(999));
@@ -294,6 +316,12 @@ mod tests {
             &["line", "one"],
             &["line", "1", "2"],
             &["line", "70000"],
+            &["diag"],
+            &["diag", "1", "2"],
+            &["selftest"],
+            &["selftest", "1"],
+            &["selftest", "1", "two"],
+            &["selftest", "1", "2", "3"],
             &["lines", "extra"],
             &["--pipe"],
             &["calls", "--last"],

@@ -106,6 +106,7 @@ fn events_keep_the_model_current_and_say_what_they_changed() {
             log: false,
             calls: false,
             trace: false,
+            diag: false,
         }
     );
     // The call events themselves change nothing the window shows: the
@@ -122,6 +123,7 @@ fn events_keep_the_model_current_and_say_what_they_changed() {
             log: false,
             calls: true,
             trace: false,
+            diag: false,
         }
     );
     assert_eq!(model.calls.len(), 1);
@@ -132,6 +134,7 @@ fn events_keep_the_model_current_and_say_what_they_changed() {
             log: true,
             calls: false,
             trace: false,
+            diag: false,
         }
     );
     assert_eq!(

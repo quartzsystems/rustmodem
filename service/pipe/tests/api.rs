@@ -350,6 +350,10 @@ fn every_method_round_trips_over_a_real_pipe() {
         // The examples name line 3, which the one before removed, and
         // what they would have made: each is refused for that.
         ("lines.capture", Err("RMD1001")),
+        ("lines.diag", Ok(())),
+        // The lines here have the null engine, which a self-test cannot
+        // use.
+        ("selftest.run", Err("RMD7003")),
         ("sip.status", Ok(())),
         ("sip.reregister", Err("RMD1001")),
         ("huntgroups.list", Ok(())),

@@ -5,8 +5,9 @@
 //! What the client prints: tables by default, for people.
 
 use ctlproto::{
-    CallInfo, CallRecord, ErrorInfo, Event, HuntGroupInfo, LineInfo, ListenerState, LogEvent,
-    LogLevel, MediaInfo, PortInfo, Registration, RouteInfo, ServiceInfo, SipMode, SipStatus, Stats,
+    CallInfo, CallRecord, ErrorInfo, Event, HuntGroupInfo, LineDiag, LineInfo, LineModem,
+    ListenerState, LogEvent, LogLevel, MediaInfo, ModemInfo, PortInfo, Registration, RouteInfo,
+    SelfTestResult, ServiceInfo, SipMode, SipStatus, Stats,
 };
 
 /// A column of a table.
@@ -347,6 +348,9 @@ pub fn line(line: &LineInfo) -> String {
         pairs.push(("Binding", binding.clone()));
     }
     pairs.push(("Engine", line.engine.clone()));
+    if line.engine == "modem" {
+        pairs.push(("Modem", modem_settings(&line.modem)));
+    }
     pairs.push((
         "SIP",
         match line.sip.mode {
@@ -374,9 +378,173 @@ pub fn line(line: &LineInfo) -> String {
         if let Some(media) = &call.media {
             pairs.push(("RTP", media_summary(media)));
         }
+        if let Some(modem) = &call.modem {
+            pairs.push(("Modem state", modem_summary(modem)));
+        }
     }
     if let Some(error) = &line.error {
         pairs.push(("Port error", error.to_string()));
+    }
+    fields(&pairs)
+}
+
+/// A line's modem settings in a line: a setting of the line's own is
+/// marked, the others are those of `[modem]`.
+fn modem_settings(modem: &LineModem) -> String {
+    let own = |key: &str| {
+        if modem.own.iter().any(|name| name == key) {
+            " (line)"
+        } else {
+            ""
+        }
+    };
+    format!(
+        "{}{}, V.8 {}{}, {} dBm0{}",
+        modem.modulations.join(" then "),
+        own("modulations"),
+        if modem.v8 { "on" } else { "off" },
+        own("v8"),
+        modem.tx_level_dbm0,
+        own("tx_level_dbm0"),
+    )
+}
+
+/// A level in tenths of a dBm0, or what stands for none.
+fn dbm0(tenths: Option<i32>) -> String {
+    match tenths {
+        Some(tenths) => format!("{:.1} dBm0", f64::from(tenths) / 10.0),
+        None => "none".to_string(),
+    }
+}
+
+/// The modem of a call in a line.
+fn modem_summary(modem: &ModemInfo) -> String {
+    format!(
+        "{}, receiving {}, sending {}, carrier {}, {:+.1} Hz, quality {}%, {} framing errors, \
+         {} retrains",
+        modem.state,
+        dbm0(modem.rx_level_tenth_dbm0),
+        dbm0(modem.tx_level_tenth_dbm0),
+        if modem.carrier { "detected" } else { "absent" },
+        f64::from(modem.frequency_error_mhz) / 1000.0,
+        modem.quality_percent,
+        modem.framing_errors,
+        modem.retrains,
+    )
+}
+
+/// The scope as one line of text: a character for each sample, from the
+/// lowest to the highest.
+fn scope_text(scope: &[i8]) -> String {
+    const MARKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    scope
+        .iter()
+        .map(|sample| MARKS[((i32::from(*sample) + 128) * 8 / 256).clamp(0, 7) as usize])
+        .collect()
+}
+
+/// The diagnostics of a line, as `diag` prints them.
+pub fn diag(diag: &LineDiag) -> String {
+    let Some(modem) = &diag.modem else {
+        return format!(
+            "Line {} has no modem to show: it has no call, or its engine is not the modem.\n",
+            diag.line
+        );
+    };
+    let mut pairs = vec![
+        ("Line", diag.line.to_string()),
+        ("State", modem.state.clone()),
+        ("Receive level", dbm0(modem.rx_level_tenth_dbm0)),
+        ("Transmit level", dbm0(modem.tx_level_tenth_dbm0)),
+        (
+            "Carrier",
+            if modem.carrier { "detected" } else { "absent" }.to_string(),
+        ),
+        (
+            "Frequency error",
+            format!("{:+.1} Hz", f64::from(modem.frequency_error_mhz) / 1000.0),
+        ),
+        ("Quality", format!("{}%", modem.quality_percent)),
+        ("Framing errors", modem.framing_errors.to_string()),
+        ("Retrains", modem.retrains.to_string()),
+    ];
+    if !diag.history.is_empty() {
+        let history: Vec<String> = diag
+            .history
+            .iter()
+            .map(|change| {
+                format!(
+                    "{} at {}.{:03} s",
+                    change.state,
+                    change.at_ms / 1000,
+                    change.at_ms % 1000
+                )
+            })
+            .collect();
+        pairs.push(("History", history.join(", ")));
+    }
+    if !diag.scope.is_empty() {
+        pairs.push((
+            "Scope",
+            format!("{} ({})", scope_text(&diag.scope), diag.scope_kind),
+        ));
+    }
+    fields(&pairs)
+}
+
+/// The result of a self-test, as `selftest` prints it.
+pub fn selftest(result: &SelfTestResult) -> String {
+    let mut pairs = vec![
+        (
+            "Self-test",
+            format!("line {} calls line {}", result.a, result.b),
+        ),
+        (
+            "Connect",
+            match (&result.connect, result.connect_ms) {
+                (Some(connect), Some(ms)) => format!(
+                    "{}{} after {}.{} s of the call",
+                    rate(connect.rate),
+                    match &connect.carrier {
+                        Some(carrier) => format!(" {carrier}"),
+                        None => String::new(),
+                    },
+                    ms / 1000,
+                    ms % 1000 / 100
+                ),
+                _ => "none".to_string(),
+            },
+        ),
+        (
+            "Data",
+            format!(
+                "{} of {} octets whole from {} to {}, {} of {} from {} to {}",
+                result.octets_a_to_b,
+                result.octets,
+                result.a,
+                result.b,
+                result.octets_b_to_a,
+                result.octets,
+                result.b,
+                result.a
+            ),
+        ),
+        (
+            "Time",
+            format!(
+                "{} of call in {}.{} s",
+                duration(u64::from(result.call_ms)),
+                result.elapsed_ms / 1000,
+                result.elapsed_ms % 1000 / 100
+            ),
+        ),
+        (
+            "Result",
+            if result.passed { "passed" } else { "FAILED" }.to_string(),
+        ),
+    ];
+    if let Some(error) = &result.error {
+        pairs.push(("Reason", error.to_string()));
     }
     fields(&pairs)
 }
@@ -602,6 +770,10 @@ pub fn event(event: &Event) -> String {
             trace.peer,
             trace.text.trim_end()
         ),
+        Event::LineDiag(diag) => match &diag.modem {
+            Some(modem) => format!("line {} modem: {}", diag.line, modem_summary(modem)),
+            None => format!("line {} modem: none", diag.line),
+        },
     }
 }
 

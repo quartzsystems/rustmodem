@@ -514,6 +514,7 @@ fn every_kind_of_event_has_a_line() {
         bytes_tx: 0,
         bytes_rx: 0,
         media: None,
+        modem: None,
     };
     let service = Service::start();
     let mut client = service.client();
@@ -882,5 +883,208 @@ fn the_sip_side_of_a_service_is_laid_out_for_people() {
              CPU:          1.5 %\n"
         ),
         "{text}"
+    );
+}
+
+/// A change to a line that changes nothing yet.
+fn line_change(id: u16) -> ctlproto::LineChange {
+    ctlproto::LineChange {
+        id,
+        name: None,
+        backend: None,
+        port: None,
+        enabled: None,
+        auto_answer_rings: None,
+        unknown_command: None,
+        engine: None,
+        register: None,
+        modem: None,
+    }
+}
+
+#[test]
+fn diag_and_selftest_against_lines_with_no_modem() {
+    let service = Service::start();
+    // A line with no call has no modem to show, and that is no error.
+    let (code, out, errors) = service.ctl(&["diag", "1"]);
+    assert_eq!(
+        (code, out.as_str(), errors.as_str()),
+        (
+            0,
+            "Line 1 has no modem to show: it has no call, or its engine is not the modem.\n",
+            ""
+        )
+    );
+    let (code, out, _) = service.ctl(&["diag", "1", "--json"]);
+    assert_eq!(code, 0);
+    let diag: ctlproto::LineDiag = serde_json::from_str(&out).unwrap();
+    assert_eq!((diag.line, diag.modem), (1, None));
+    let (code, _, errors) = service.ctl(&["diag", "9"]);
+    assert_eq!(code, 1);
+    assert!(errors.starts_with("RMD1001: "), "{errors}");
+
+    // The lines here have the null engine, which a self-test cannot use.
+    let (code, out, errors) = service.ctl(&["selftest", "1", "2"]);
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert_eq!(
+        errors,
+        "RMD7003: Line 1 cannot be in a self-test: its engine is null, not the modem.\n"
+    );
+    let (code, _, errors) = service.ctl(&["selftest", "2", "2"]);
+    assert_eq!(code, 1);
+    assert!(errors.starts_with("RMD7004: "), "{errors}");
+    // A line with the null engine shows no modem settings.
+    let (_, out, _) = service.ctl(&["line", "1"]);
+    assert!(!out.contains("Modem:"), "{out}");
+}
+
+#[test]
+fn selftest_runs_two_modems_and_its_exit_code_says_whether_they_passed() {
+    let service = Service::start();
+    let mut client = service.client();
+    for id in [1, 2] {
+        let mut change = line_change(id);
+        change.engine = Some("modem".to_string());
+        client
+            .call::<LineInfo>(&ctlproto::Call::LinesEdit(change))
+            .unwrap();
+    }
+    let (_, out, _) = service.ctl(&["line", "1"]);
+    assert!(out.contains("Engine:             modem\n"), "{out}");
+    assert!(
+        out.contains("Modem:              v21 then bell103, V.8 on, -12 dBm0\n"),
+        "{out}"
+    );
+
+    let (code, out, errors) = service.ctl(&["selftest", "1", "2"]);
+    assert_eq!((code, errors.as_str()), (0, ""), "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "Self-test:  line 1 calls line 2");
+    assert!(
+        lines[1].starts_with("Connect:    300 bit/s V.21 after "),
+        "{out}"
+    );
+    assert_eq!(
+        lines[2],
+        "Data:       65536 of 65536 octets whole from 1 to 2, 65536 of 65536 from 2 to 1"
+    );
+    assert!(lines[3].starts_with("Time:       0:36:"), "{out}");
+    assert_eq!(lines[4], "Result:     passed");
+    assert_eq!(lines.len(), 5);
+    // The lines are free again.
+    assert_eq!(service.state(1), LineState::Idle);
+
+    // Modems with no modulation in common: the test is run, the result
+    // is printed, and the command fails with the reason.
+    let mut bell = line_change(2);
+    bell.modem = Some(ctlproto::LineModemSpec {
+        modulations: Some(vec!["bell103".to_string()]),
+        v8: Some(false),
+        tx_level_dbm0: Some(-10),
+    });
+    client
+        .call::<LineInfo>(&ctlproto::Call::LinesEdit(bell))
+        .unwrap();
+    let mut v21 = line_change(1);
+    v21.modem = Some(ctlproto::LineModemSpec {
+        modulations: Some(vec!["v21".to_string()]),
+        ..ctlproto::LineModemSpec::default()
+    });
+    client
+        .call::<LineInfo>(&ctlproto::Call::LinesEdit(v21))
+        .unwrap();
+    let (_, out, _) = service.ctl(&["line", "2"]);
+    assert!(
+        out.contains("Modem:              bell103 (line), V.8 off (line), -10 dBm0 (line)\n"),
+        "{out}"
+    );
+    let (code, out, errors) = service.ctl(&["selftest", "1", "2"]);
+    assert_eq!(code, 1);
+    assert!(out.contains("Connect:    none\n"), "{out}");
+    assert!(out.contains("Result:     FAILED\n"), "{out}");
+    assert!(out.contains("Reason:     RMD7005: "), "{out}");
+    assert!(
+        errors.starts_with("RMD7005: The self-test of lines 1 and 2 failed"),
+        "{errors}"
+    );
+    let (code, out, _) = service.ctl(&["selftest", "1", "2", "--json"]);
+    assert_eq!(code, 1);
+    let result: ctlproto::SelfTestResult = serde_json::from_str(&out).unwrap();
+    assert!(!result.passed && result.error.is_some());
+}
+
+#[test]
+fn the_modem_of_a_call_is_laid_out_for_people() {
+    use crate::output;
+    use ctlproto::{LineDiag, ModemInfo, ModemStateChange};
+    let modem = ModemInfo {
+        state: "data".to_string(),
+        rx_level_tenth_dbm0: Some(-143),
+        tx_level_tenth_dbm0: Some(-120),
+        carrier: true,
+        frequency_error_mhz: -1250,
+        quality_percent: 71,
+        framing_errors: 2,
+        retrains: 0,
+    };
+    let diag = LineDiag {
+        line: 3,
+        modem: Some(modem.clone()),
+        history: vec![
+            ModemStateChange {
+                state: "answer-tone".to_string(),
+                at_ms: 2150,
+            },
+            ModemStateChange {
+                state: "data".to_string(),
+                at_ms: 5490,
+            },
+        ],
+        scope_kind: "discriminator".to_string(),
+        scope: vec![-127, -64, 0, 64, 127],
+    };
+    assert_eq!(
+        output::diag(&diag),
+        "Line:             3\n\
+         State:            data\n\
+         Receive level:    -14.3 dBm0\n\
+         Transmit level:   -12.0 dBm0\n\
+         Carrier:          detected\n\
+         Frequency error:  -1.2 Hz\n\
+         Quality:          71%\n\
+         Framing errors:   2\n\
+         Retrains:         0\n\
+         History:          answer-tone at 2.150 s, data at 5.490 s\n\
+         Scope:            ▁▃▅▇█ (discriminator)\n"
+    );
+    // A modem that hears and sends nothing, and has nothing to show.
+    let silent = LineDiag {
+        modem: Some(ModemInfo {
+            state: "answer-silence".to_string(),
+            rx_level_tenth_dbm0: None,
+            tx_level_tenth_dbm0: None,
+            carrier: false,
+            ..modem.clone()
+        }),
+        history: Vec::new(),
+        scope: Vec::new(),
+        ..diag.clone()
+    };
+    let text = output::diag(&silent);
+    assert!(text.contains("Receive level:    none\n"), "{text}");
+    assert!(text.contains("Carrier:          absent\n"), "{text}");
+    assert!(!text.contains("History:") && !text.contains("Scope:"));
+    // As `watch` prints it, and with the call on `line`.
+    assert_eq!(
+        output::event(&Event::LineDiag(diag)),
+        "line 3 modem: data, receiving -14.3 dBm0, sending -12.0 dBm0, carrier detected, \
+         -1.2 Hz, quality 71%, 2 framing errors, 0 retrains"
+    );
+    assert_eq!(
+        output::event(&Event::LineDiag(LineDiag {
+            line: 3,
+            ..LineDiag::default()
+        })),
+        "line 3 modem: none"
     );
 }

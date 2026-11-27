@@ -12,13 +12,14 @@ use ctlproto::doc::{self, FieldDoc};
 use ctlproto::{
     Call, CallEvent, CallInfo, CallList, CallRecord, ClientFrame, ConnectInfo, ConnectTally,
     ControlChange, ControlSettings, Counters, Direction, Done, EVENT_NAMES, EVENTS_BY_NAME_ONLY,
-    EndReason, ErrorInfo, Event, Hello, HuntGroupInfo, HuntGroupList, LineInfo, LineList, LineSip,
-    LineState, ListenerState, LogEvent, LogLevel, LogTail, MediaChange, MediaInfo, MediaSettings,
-    PROTOCOL, PortInfo, PortKind, PortList, RegisterChange, RegisterSpec, Registration,
-    RegistrationState, Reloaded, RequestFrame, RouteInfo, RouteList, ServerFrame, ServiceChange,
-    ServiceInfo, ServiceMode, ServiceSettings, Settings, SettingsResult, SipChange, SipMode,
-    SipRegistration, SipSettings, SipStatus, SipTrace, Stats, Subscription, Tally, TraceDirection,
-    decode_client, decode_server, encode,
+    EndReason, ErrorInfo, Event, Hello, HuntGroupInfo, HuntGroupList, LINE_DIAG_PER_SECOND,
+    LineDiag, LineInfo, LineList, LineModem, LineModemSpec, LineSip, LineState, ListenerState,
+    LogEvent, LogLevel, LogTail, MediaChange, MediaInfo, MediaSettings, ModemChange, ModemInfo,
+    ModemSettings, ModemStateChange, PROTOCOL, PortInfo, PortKind, PortList, RegisterChange,
+    RegisterSpec, Registration, RegistrationState, Reloaded, RequestFrame, RouteInfo, RouteList,
+    SelfTestResult, ServerFrame, ServiceChange, ServiceInfo, ServiceMode, ServiceSettings,
+    Settings, SettingsResult, SipChange, SipMode, SipRegistration, SipSettings, SipStatus,
+    SipTrace, Stats, Subscription, Tally, TraceDirection, decode_client, decode_server, encode,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -69,6 +70,52 @@ fn call_info(full: bool) -> CallInfo {
         bytes_tx: 10,
         bytes_rx: 20,
         media: full.then(|| Box::new(media_info(full))),
+        modem: full.then(|| modem_info(full)),
+    }
+}
+
+fn modem_info(full: bool) -> ModemInfo {
+    ModemInfo {
+        state: "data".to_string(),
+        rx_level_tenth_dbm0: full.then_some(-143),
+        tx_level_tenth_dbm0: full.then_some(-120),
+        carrier: true,
+        frequency_error_mhz: -1250,
+        quality_percent: 71,
+        framing_errors: 2,
+        retrains: 0,
+    }
+}
+
+fn line_modem() -> LineModem {
+    LineModem {
+        modulations: vec!["v21".to_string(), "bell103".to_string()],
+        v8: true,
+        tx_level_dbm0: -12,
+        own: vec!["v8".to_string()],
+    }
+}
+
+fn line_diag(full: bool) -> LineDiag {
+    LineDiag {
+        line: 1,
+        modem: full.then(|| modem_info(full)),
+        history: vec![ModemStateChange {
+            state: "answer-tone".to_string(),
+            at_ms: 2150,
+        }],
+        scope_kind: "discriminator".to_string(),
+        scope: vec![127, -127, 0, 64],
+    }
+}
+
+fn modem_settings() -> ModemSettings {
+    ModemSettings {
+        modulations: vec!["v21".to_string(), "bell103".to_string()],
+        v8: true,
+        tx_level_dbm0: -12,
+        answer_delay_ms: 0,
+        fallback_ms: 3000,
     }
 }
 
@@ -218,6 +265,7 @@ fn line_info(full: bool) -> LineInfo {
         hunt_groups: vec!["dialup".to_string()],
         sip: line_sip(full),
         capture: full,
+        modem: line_modem(),
     }
 }
 
@@ -246,6 +294,7 @@ fn settings() -> Settings {
             rtp_timeout_s: 10,
             capture_dir: String::new(),
         },
+        modem: modem_settings(),
         path: r"C:\ProgramData\Quartz Systems\rustmodem\rustmodem.toml".to_string(),
     }
 }
@@ -354,6 +403,37 @@ fn sample(name: &str, full: bool) -> Value {
         "Reloaded" => to_value(&Reloaded { lines: 2 }),
         "Subscription" => to_value(&Subscription {
             events: vec!["log".to_string()],
+            line: full.then_some(1),
+        }),
+        "LineModem" => to_value(&line_modem()),
+        "LineModemSpec" => to_value(&LineModemSpec {
+            modulations: full.then(|| vec!["bell103".to_string()]),
+            v8: full.then_some(false),
+            tx_level_dbm0: full.then_some(-15),
+        }),
+        "ModemInfo" => to_value(&modem_info(full)),
+        "ModemStateChange" => to_value(&line_diag(full).history[0]),
+        "LineDiag" => to_value(&line_diag(full)),
+        "SelfTestResult" => to_value(&SelfTestResult {
+            a: 1,
+            b: 2,
+            passed: !full,
+            connect: full.then(|| connect(false)),
+            connect_ms: full.then_some(5480),
+            octets: 65_536,
+            octets_a_to_b: 65_536,
+            octets_b_to_a: 65_000,
+            call_ms: 2_200_000,
+            elapsed_ms: 7400,
+            error: full.then(error_info),
+        }),
+        "ModemSettings" => to_value(&modem_settings()),
+        "ModemChange" => to_value(&ModemChange {
+            modulations: full.then(|| vec!["v21".to_string()]),
+            v8: full.then_some(true),
+            tx_level_dbm0: full.then_some(-12),
+            answer_delay_ms: full.then_some(0),
+            fallback_ms: full.then_some(3000),
         }),
         "Done" => to_value(&Done {}),
         "LineSip" => to_value(&line_sip(full)),
@@ -433,6 +513,7 @@ fn event_samples(full: bool) -> Vec<(Event, &'static str)> {
             "SipRegistration",
         ),
         (Event::SipTrace(sip_trace()), "SipTrace"),
+        (Event::LineDiag(line_diag(full)), "LineDiag"),
     ]
 }
 
@@ -617,7 +698,29 @@ fn every_sample_reads_back_as_it_was_written() {
             serde_json::from_str::<CallRecord>(&encode(&record)).unwrap(),
             record
         );
+        let diag = line_diag(full);
+        assert_eq!(
+            serde_json::from_str::<LineDiag>(&encode(&diag)).unwrap(),
+            diag
+        );
+        let result: SelfTestResult =
+            serde_json::from_value(sample("SelfTestResult", full)).unwrap();
+        assert_eq!(to_value(&result), sample("SelfTestResult", full));
     }
+    // What an older service leaves out reads as nothing: a line with no
+    // modem settings of its own, a call with no modem, diagnostics with
+    // none.
+    let mut old = to_value(&line_info(true));
+    old.as_object_mut().unwrap().remove("modem");
+    old["call"].as_object_mut().unwrap().remove("modem");
+    let line: LineInfo = serde_json::from_value(old).unwrap();
+    assert_eq!(line.modem, LineModem::default());
+    assert_eq!(line.call.unwrap().modem, None);
+    let bare: LineDiag = serde_json::from_value(json!({"line": 3})).unwrap();
+    assert_eq!(
+        (bare.modem, bare.scope_kind.as_str(), bare.scope.len()),
+        (None, "none", 0)
+    );
 }
 
 #[test]
@@ -729,7 +832,11 @@ fn every_event_is_documented_and_nothing_else() {
     // event that has to be asked for by name.
     assert!(event_samples(true)[5].0.is_state());
     assert!(!event_samples(true)[6].0.is_state());
-    assert_eq!(EVENTS_BY_NAME_ONLY, ["sip.trace"]);
+    // A line's diagnostics are neither state nor sent unless asked for,
+    // and come no faster than they can be read.
+    assert!(!event_samples(true)[7].0.is_state());
+    assert_eq!(EVENTS_BY_NAME_ONLY, ["sip.trace", "line.diag"]);
+    assert_eq!(LINE_DIAG_PER_SECOND, 4);
     assert!(
         EVENTS_BY_NAME_ONLY
             .iter()

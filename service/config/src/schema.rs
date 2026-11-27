@@ -224,6 +224,38 @@ pub struct LineEdit {
     /// A new registration, whole, or `Some(None)` to remove the
     /// registration.
     pub register: Option<Option<RegisterConfig>>,
+    /// The line's own modem settings, whole: a key that is `None` is
+    /// taken from `[modem]` from now on.
+    pub modem: Option<LineModemEdit>,
+}
+
+/// A line's own modem settings as they are to be written: checked when
+/// the change is made.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct LineModemEdit {
+    /// The modulations as the configuration spells them.
+    pub modulations: Option<Vec<String>>,
+    pub v8: Option<bool>,
+    pub tx_level_dbm0: Option<i64>,
+}
+
+/// A change to `[modem]`: each `Some` replaces that key. The values are
+/// checked when the change is made.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct ModemEdit {
+    /// The modulations as the configuration spells them.
+    pub modulations: Option<Vec<String>>,
+    pub v8: Option<bool>,
+    pub tx_level_dbm0: Option<i64>,
+    pub answer_delay_ms: Option<u32>,
+    pub fallback_ms: Option<u32>,
+}
+
+impl ModemEdit {
+    /// Whether the edit changes nothing.
+    pub fn is_empty(&self) -> bool {
+        *self == ModemEdit::default()
+    }
 }
 
 /// A change to the settings that are not lines: each `Some` replaces that
@@ -240,6 +272,8 @@ pub struct SettingsEdit {
     pub sip: SipEdit,
     /// Changes to `[media]`.
     pub media: MediaEdit,
+    /// Changes to `[modem]`.
+    pub modem: ModemEdit,
 }
 
 /// A change to `[sip]`: each `Some` replaces that key.

@@ -205,7 +205,7 @@ pub const METHODS: &[MethodDoc] = &[
             optional(
                 "engine",
                 "string",
-                "The modem engine: `null` or `echo`. Default `null`.",
+                "The modem engine: `modem`, `null` or `echo`. Default `modem`.",
             ),
             optional(
                 "register",
@@ -213,12 +213,18 @@ pub const METHODS: &[MethodDoc] = &[
                 "The line's registration to a PBX. Default none: the line is reached by \
                  the trunk.",
             ),
+            optional(
+                "modem",
+                "LineModemSpec",
+                "The line's own modem settings. Default none: the line has those of \
+                 `[modem]`.",
+            ),
         ],
         result: "LineInfo",
         errors: &[
             "RMD0011", "RMD0014", "RMD0017", "RMD0018", "RMD0020", "RMD0035",
         ],
-        example: r#"{"id":3,"name":"Line 3","backend":"com0com","port":"CNCB2","enabled":true,"auto_answer_rings":0,"unknown_command":"ok","engine":"null","register":{"server":"pbx.example.com","user":"203","password":"secret","auth_user":"line203","expires_s":300}}"#,
+        example: r#"{"id":3,"name":"Line 3","backend":"com0com","port":"CNCB2","enabled":true,"auto_answer_rings":0,"unknown_command":"ok","engine":"modem","register":{"server":"pbx.example.com","user":"203","password":"secret","auth_user":"line203","expires_s":300},"modem":{"modulations":["bell103"],"v8":false,"tx_level_dbm0":-15}}"#,
     },
     MethodDoc {
         name: "lines.edit",
@@ -245,19 +251,27 @@ pub const METHODS: &[MethodDoc] = &[
             optional(
                 "engine",
                 "string",
-                "A new modem engine: `null` or `echo`. It is used from the line's next call.",
+                "A new modem engine: `modem`, `null` or `echo`. It is used from the line's \
+                 next call.",
             ),
             optional(
                 "register",
                 "RegisterChange",
                 "Changes to the line's registration to a PBX.",
             ),
+            optional(
+                "modem",
+                "LineModemSpec",
+                "The line's own modem settings, all of them: a key left out is taken from \
+                 `[modem]` from now on, and an empty object leaves the line with none of \
+                 its own. They are used from the line's next call.",
+            ),
         ],
         result: "LineInfo",
         errors: &[
             "RMD0011", "RMD0014", "RMD0017", "RMD0018", "RMD0019", "RMD0035",
         ],
-        example: r#"{"id":3,"name":"Front desk","backend":"com0com","port":"CNCB5","enabled":false,"auto_answer_rings":2,"unknown_command":"error","engine":"echo","register":{"server":"pbx.example.com:5060","user":"203","password":"secret","auth_user":"","expires_s":600}}"#,
+        example: r#"{"id":3,"name":"Front desk","backend":"com0com","port":"CNCB5","enabled":false,"auto_answer_rings":2,"unknown_command":"error","engine":"echo","register":{"server":"pbx.example.com:5060","user":"203","password":"secret","auth_user":"","expires_s":600},"modem":{"modulations":["v21","bell103"],"v8":true,"tx_level_dbm0":-12}}"#,
     },
     MethodDoc {
         name: "lines.remove",
@@ -282,6 +296,36 @@ pub const METHODS: &[MethodDoc] = &[
         result: "LineInfo",
         errors: &["RMD1001"],
         example: r#"{"id":3,"on":true}"#,
+    },
+    MethodDoc {
+        name: "lines.diag",
+        summary: "Reports the diagnostics of a line: the modem of its call as it last \
+                  reported itself, the modem's last changes of state and its scope. A \
+                  line with no call, or whose engine is not a modem, has none of them. \
+                  To be sent them as they change, subscribe to `line.diag`.",
+        params: LINE_ID,
+        result: "LineDiag",
+        errors: &["RMD1001"],
+        example: r#"{"id":1}"#,
+    },
+    MethodDoc {
+        name: "selftest.run",
+        summary: "Runs the loopback self-test: the modems of two lines are joined sample \
+                  for sample, with no network and no port between them; the first \
+                  originates, the second answers, and once they are connected each sends \
+                  the other 65536 octets. The lines must be idle, with `modem` as their \
+                  engine, and use the settings they have. While the test runs, which is \
+                  some seconds, both lines show as `handshaking` and take no call. The \
+                  result says what the modems connected with, how long they took and \
+                  whether every octet arrived; a test that fails is a result with \
+                  `passed` false and the reason in `error`, not an error of the method.",
+        params: &[
+            required("a", "integer", "The line whose modem originates."),
+            required("b", "integer", "The line whose modem answers."),
+        ],
+        result: "SelfTestResult",
+        errors: &["RMD1001", "RMD7002", "RMD7003", "RMD7004"],
+        example: r#"{"a":1,"b":2}"#,
     },
     MethodDoc {
         name: "calls.list",
@@ -328,16 +372,18 @@ pub const METHODS: &[MethodDoc] = &[
                   `[media]` takes effect at once for the calls that follow, except that \
                   turning SIP on or off, and changing the listener's address, the RTP \
                   ports or the capture directory, take effect when the service next \
-                  starts. The result says whether a restart is needed.",
+                  starts. A change to `[modem]` takes effect at once, for the calls that \
+                  follow. The result says whether a restart is needed.",
         params: &[
             optional("service", "ServiceChange", "Changes to `[service]`."),
             optional("control", "ControlChange", "Changes to `[control]`."),
             optional("sip", "SipChange", "Changes to `[sip]`."),
             optional("media", "MediaChange", "Changes to `[media]`."),
+            optional("modem", "ModemChange", "Changes to `[modem]`."),
         ],
         result: "SettingsResult",
         errors: &["RMD0011", "RMD0014"],
-        example: r#"{"service":{"log_level":"debug","log_dir":""},"control":{"pipe":"rustmodem-control"},"sip":{"enabled":true,"listen":"0.0.0.0:5060","address":"","user_agent":"","trusted_peers":["10.10.20.0/24"],"outbound_peer":"10.10.20.11","ring_timeout_s":60},"media":{"codecs":["pcmu","pcma"],"ptime_ms":20,"rtp_ports":"20000-20999","rtp_timeout_s":10,"capture_dir":""}}"#,
+        example: r#"{"service":{"log_level":"debug","log_dir":""},"control":{"pipe":"rustmodem-control"},"sip":{"enabled":true,"listen":"0.0.0.0:5060","address":"","user_agent":"","trusted_peers":["10.10.20.0/24"],"outbound_peer":"10.10.20.11","ring_timeout_s":60},"media":{"codecs":["pcmu","pcma"],"ptime_ms":20,"rtp_ports":"20000-20999","rtp_timeout_s":10,"capture_dir":""},"modem":{"modulations":["v21","bell103"],"v8":true,"tx_level_dbm0":-12,"answer_delay_ms":0,"fallback_ms":3000}}"#,
     },
     MethodDoc {
         name: "stats.get",
@@ -557,27 +603,40 @@ pub const METHODS: &[MethodDoc] = &[
         name: "subscribe",
         summary: "Starts sending the client events. The result is everything the client \
                   is now subscribed to.",
-        params: &[optional(
-            "events",
-            "array of string",
-            "The event names to add. Default every event.",
-        )],
+        params: &[
+            optional(
+                "events",
+                "array of string",
+                "The event names to add. Default every event but those that have to be \
+                 asked for by name: `sip.trace` and `line.diag`.",
+            ),
+            optional(
+                "line",
+                "integer",
+                "With `line.diag` among the names, and only then: the line whose \
+                 diagnostics are meant. A client is sent those of one line; naming \
+                 another changes which.",
+            ),
+        ],
         result: "Subscription",
-        errors: &[],
-        example: r#"{"events":["line.state","call.ended"]}"#,
+        errors: &["RMD1001"],
+        example: r#"{"events":["line.state","line.diag"],"line":1}"#,
     },
     MethodDoc {
         name: "unsubscribe",
         summary: "Stops sending the client events. The result is everything the client \
                   is still subscribed to.",
-        params: &[optional(
-            "events",
-            "array of string",
-            "The event names to remove. Default every event.",
-        )],
+        params: &[
+            optional(
+                "events",
+                "array of string",
+                "The event names to remove. Default every event.",
+            ),
+            optional("line", "integer", "Not used: accepted and ignored."),
+        ],
         result: "Subscription",
         errors: &[],
-        example: r#"{"events":["log"]}"#,
+        example: r#"{"events":["log"],"line":1}"#,
     },
 ];
 
@@ -620,6 +679,15 @@ pub const EVENTS: &[EventDoc] = &[
         text: "A SIP message was sent or received. Sent only to a client that names \
                `sip.trace` in `subscribe`: subscribing to every event leaves it out. Like \
                `log`, it may be dropped for a client that is slow to read.",
+    },
+    EventDoc {
+        name: "line.diag",
+        data: "LineDiag",
+        text: "The diagnostics of a line. Sent only to a client that names `line.diag` \
+               and a line in `subscribe`, and only that line's: at once, then at most \
+               four times a second while the line's call has a modem to show, and once \
+               more, with no modem, when it has none any longer. Like `log`, it may be \
+               dropped for a client that is slow to read.",
     },
 ];
 
@@ -737,7 +805,7 @@ pub const TYPES: &[TypeDoc] = &[
             required(
                 "engine",
                 "string",
-                "The modem engine of the line: `null` or `echo`.",
+                "The modem engine of the line: `modem`, `null` or `echo`.",
             ),
             required(
                 "hunt_groups",
@@ -749,6 +817,263 @@ pub const TYPES: &[TypeDoc] = &[
                 "capture",
                 "boolean",
                 "Whether the line's calls are captured.",
+            ),
+            required(
+                "modem",
+                "LineModem",
+                "The modem settings the line's calls use.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "LineModem",
+        text: "The modem settings a line's calls use: those of `[modem]` with the line's \
+               own over them.",
+        fields: &[
+            required(
+                "modulations",
+                "array of string",
+                "The modulations the modem may use, the preferred one first: `v21`, \
+                 `bell103`.",
+            ),
+            required("v8", "boolean", "Whether the modem uses V.8."),
+            required(
+                "tx_level_dbm0",
+                "integer",
+                "The level the modem sends at, in dBm0.",
+            ),
+            required(
+                "own",
+                "array of string",
+                "The keys the line sets for itself: `modulations`, `v8`, `tx_level_dbm0`. \
+                 The others are those of `[modem]`.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "LineModemSpec",
+        text: "The `modem` part of `lines.add` and `lines.edit`: the line's own modem \
+               settings, all of them. A key left out is taken from `[modem]`.",
+        fields: &[
+            optional(
+                "modulations",
+                "array of string",
+                "The modulations the line's modem may use, the preferred one first: `v21`, \
+                 `bell103`.",
+            ),
+            optional("v8", "boolean", "Whether the line's modem uses V.8."),
+            optional(
+                "tx_level_dbm0",
+                "integer",
+                "The level the line's modem sends at, in dBm0: -20 to -9.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "ModemInfo",
+        text: "The modem of a call, as it last reported itself: ten times a second while \
+               the call's media runs. Levels are in tenths of a dBm0 and the frequency \
+               error in millihertz, so that every number is whole.",
+        fields: &[
+            required(
+                "state",
+                "string",
+                "What the modem is doing: `answer-silence`, `answer-tone`, `v8-jm`, `gap`, \
+                 `fallback`, `listening`, `v8-te`, `v8-cm`, `v8-cj`, `training`, `data`, \
+                 `ended` or `idle`. `docs/MODEM.md` says what each is.",
+            ),
+            optional(
+                "rx_level_tenth_dbm0",
+                "integer",
+                "The level received in the band the modem listens to, in tenths of a \
+                 dBm0. Absent when nothing is received.",
+            ),
+            optional(
+                "tx_level_tenth_dbm0",
+                "integer",
+                "The level the modem sends, in tenths of a dBm0. Absent when it sends \
+                 nothing.",
+            ),
+            required(
+                "carrier",
+                "boolean",
+                "Whether the far end's carrier is detected.",
+            ),
+            required(
+                "frequency_error_mhz",
+                "integer",
+                "How far the far end's carrier is from its nominal frequency, in \
+                 millihertz.",
+            ),
+            required(
+                "quality_percent",
+                "integer",
+                "How good the received signal is, 0 to 100. For the 300 bit/s modems it \
+                 is the opening of the eye where the bits are sampled, which on a clean \
+                 line is about 70.",
+            ),
+            required(
+                "framing_errors",
+                "integer",
+                "Characters lost to a wrong stop bit in this call.",
+            ),
+            required(
+                "retrains",
+                "integer",
+                "Retrains in this call. The 300 bit/s modems have none.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "ModemStateChange",
+        text: "A change of a modem's state.",
+        fields: &[
+            required("state", "string", "The state that was entered."),
+            required(
+                "at_ms",
+                "integer",
+                "When, in milliseconds of the call's own samples since the modem was \
+                 started.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "LineDiag",
+        text: "The diagnostics of a line: the result of `lines.diag` and the data of \
+               `line.diag`.",
+        fields: &[
+            required("line", "integer", "The line."),
+            optional(
+                "modem",
+                "ModemInfo",
+                "The modem of the line's call. Absent when the line has no call, or its \
+                 engine is not a modem.",
+            ),
+            required(
+                "history",
+                "array of ModemStateChange",
+                "The modem's last changes of state, the oldest first: eight at the most.",
+            ),
+            required(
+                "scope_kind",
+                "string",
+                "What the scope's samples are: `none`, or `discriminator`, the output of \
+                 the demodulator, where 127 is all mark and -127 all space, one sample \
+                 for every four of the line's.",
+            ),
+            required(
+                "scope",
+                "array of integer",
+                "The scope: the most recent samples, the oldest first, each from -127 to \
+                 127. Empty when there is none.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "SelfTestResult",
+        text: "The result of `selftest.run`.",
+        fields: &[
+            required("a", "integer", "The line whose modem originated."),
+            required("b", "integer", "The line whose modem answered."),
+            required(
+                "passed",
+                "boolean",
+                "Whether the modems connected and every octet arrived, both ways.",
+            ),
+            optional(
+                "connect",
+                "ConnectInfo",
+                "What the modems connected with, if they connected.",
+            ),
+            optional(
+                "connect_ms",
+                "integer",
+                "How long the modems took to connect, in milliseconds of the call's own \
+                 samples.",
+            ),
+            required("octets", "integer", "The octets sent each way."),
+            required(
+                "octets_a_to_b",
+                "integer",
+                "The octets that arrived at b as a sent them.",
+            ),
+            required(
+                "octets_b_to_a",
+                "integer",
+                "The octets that arrived at a as b sent them.",
+            ),
+            required(
+                "call_ms",
+                "integer",
+                "How long the call was, in milliseconds of its own samples. The modems \
+                 run as fast as the machine carries them, so this is much more than the \
+                 test took.",
+            ),
+            required(
+                "elapsed_ms",
+                "integer",
+                "How long the test took, in milliseconds.",
+            ),
+            optional(
+                "error",
+                "Error",
+                "Why the test failed, if it did: RMD7005 when the modems did not connect, \
+                 RMD7006 when data was lost or changed.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "ModemSettings",
+        text: "The `[modem]` settings.",
+        fields: &[
+            required(
+                "modulations",
+                "array of string",
+                "The modulations a modem may use, the preferred one first: `v21`, \
+                 `bell103`.",
+            ),
+            required("v8", "boolean", "Whether a modem uses V.8."),
+            required(
+                "tx_level_dbm0",
+                "integer",
+                "The level a modem sends at, in dBm0.",
+            ),
+            required(
+                "answer_delay_ms",
+                "integer",
+                "Silence before an answering modem begins, in milliseconds.",
+            ),
+            required(
+                "fallback_ms",
+                "integer",
+                "How long an answering modem offers each modulation, in milliseconds.",
+            ),
+        ],
+    },
+    TypeDoc {
+        name: "ModemChange",
+        text: "The `modem` part of `config.set`: the keys of `[modem]` to change.",
+        fields: &[
+            optional(
+                "modulations",
+                "array of string",
+                "The modulations, all of them, the preferred one first: `v21`, `bell103`.",
+            ),
+            optional("v8", "boolean", "Whether a modem uses V.8."),
+            optional(
+                "tx_level_dbm0",
+                "integer",
+                "A new level to send at, in dBm0: -20 to -9.",
+            ),
+            optional(
+                "answer_delay_ms",
+                "integer",
+                "A new silence before answering, in milliseconds: 0 to 10000.",
+            ),
+            optional(
+                "fallback_ms",
+                "integer",
+                "A new time for each modulation offered, in milliseconds: 500 to 20000.",
             ),
         ],
     },
@@ -964,6 +1289,12 @@ pub const TYPES: &[TypeDoc] = &[
                 "The RTP of the call: what was agreed and what has happened. Absent for a \
                  call with no media.",
             ),
+            optional(
+                "modem",
+                "ModemInfo",
+                "The modem of the call, as it last reported itself. Absent when the \
+                 line's engine is not a modem, or the call has had no media yet.",
+            ),
         ],
     },
     TypeDoc {
@@ -1085,6 +1416,7 @@ pub const TYPES: &[TypeDoc] = &[
             required("control", "ControlSettings", "The `[control]` settings."),
             required("sip", "SipSettings", "The `[sip]` settings."),
             required("media", "MediaSettings", "The `[media]` settings."),
+            required("modem", "ModemSettings", "The `[modem]` settings."),
             required("path", "string", "The path of the configuration file."),
         ],
     },
@@ -1674,11 +2006,19 @@ pub const TYPES: &[TypeDoc] = &[
     TypeDoc {
         name: "Subscription",
         text: "The result of `subscribe` and `unsubscribe`.",
-        fields: &[required(
-            "events",
-            "array of string",
-            "The events the client is now subscribed to.",
-        )],
+        fields: &[
+            required(
+                "events",
+                "array of string",
+                "The events the client is now subscribed to.",
+            ),
+            optional(
+                "line",
+                "integer",
+                "The line whose `line.diag` events the client is sent, when it is \
+                 subscribed to them.",
+            ),
+        ],
     },
     TypeDoc {
         name: "Done",

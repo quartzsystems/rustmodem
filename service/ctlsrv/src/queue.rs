@@ -45,6 +45,8 @@ struct State {
     logs: usize,
     /// The events the client has subscribed to.
     subscribed: BTreeSet<&'static str>,
+    /// The line whose diagnostics the client is sent.
+    watched: Option<u16>,
     /// Nothing more is accepted; the writer stops once the queue is empty.
     finishing: bool,
     /// The connection is gone or going; the writer stops at once.
@@ -189,6 +191,19 @@ impl ClientQueue {
         self.lock().overflowed
     }
 
+    /// Says which line's diagnostics the client is sent.
+    pub fn watch_line(&self, line: Option<u16>) {
+        self.lock().watched = line;
+    }
+
+    /// The line whose diagnostics the client is sent: one it has named,
+    /// while it is subscribed to them and connected.
+    pub fn watched_line(&self) -> Option<u16> {
+        let state = self.lock();
+        let wanted = !state.closed && state.subscribed.contains("line.diag");
+        state.watched.filter(|_| wanted)
+    }
+
     /// Adds to the client's subscription; `None` means every event but
     /// those that have to be asked for by name. Returns what the client is
     /// now subscribed to.
@@ -279,10 +294,29 @@ impl Hub {
         if !clients.iter().any(|client| client.wants(name)) {
             return;
         }
+        // A line's diagnostics go to the clients that asked for that
+        // line's.
+        let of_line = match event {
+            Event::LineDiag(diag) => Some(diag.line),
+            _ => None,
+        };
         let line: Arc<str> = encode(event).into();
         for client in clients.iter() {
+            if of_line.is_some() && client.watched_line() != of_line {
+                continue;
+            }
             client.offer(name, event.is_state(), &line);
         }
+    }
+
+    /// The lines whose diagnostics some client has asked for.
+    pub fn watched_lines(&self) -> Vec<u16> {
+        let lines: BTreeSet<u16> = self
+            .clients()
+            .iter()
+            .filter_map(|client| client.watched_line())
+            .collect();
+        lines.into_iter().collect()
     }
 
     fn recent_logs(&self) -> MutexGuard<'_, VecDeque<LogEvent>> {

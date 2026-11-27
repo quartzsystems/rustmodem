@@ -87,6 +87,8 @@ finds out at once that the service is older than it is.
 | [`lines.edit`](#linesedit) | LineInfo | Changes the keys of a line that are given and leaves the others alone. |
 | [`lines.remove`](#linesremove) | Done | Removes a line: any call on it is hung up and its port is released. |
 | [`lines.capture`](#linescapture) | LineInfo | Turns the capture of a line's calls on or off. |
+| [`lines.diag`](#linesdiag) | LineDiag | Reports the diagnostics of a line: the modem of its call as it last reported itself, the modem's last changes of state and its scope. |
+| [`selftest.run`](#selftestrun) | SelfTestResult | Runs the loopback self-test: the modems of two lines are joined sample for sample, with no network and no port between them; the first originates, the second answers, and once they are connected each sends the other 65536 octets. |
 | [`calls.list`](#callslist) | CallList | Lists the calls that have ended, oldest first. |
 | [`config.reload`](#configreload) | Reloaded | Reads the configuration file again and makes the lines match it. |
 | [`config.get`](#configget) | Settings | Reports the settings that are not lines, as the configuration file has them, and the path of the file. |
@@ -243,15 +245,16 @@ Adds a line. The change is written to the configuration file. The result is the 
 | `enabled` | boolean | no | Whether the line is in service. Default true. |
 | `auto_answer_rings` | integer | no | The initial S0, 0 to 255. Default 0. |
 | `unknown_command` | string | no | What the line answers to an unknown AT command: `ok` or `error`. Default `ok`. |
-| `engine` | string | no | The modem engine: `null` or `echo`. Default `null`. |
+| `engine` | string | no | The modem engine: `modem`, `null` or `echo`. Default `modem`. |
 | `register` | RegisterSpec | no | The line's registration to a PBX. Default none: the line is reached by the trunk. |
+| `modem` | LineModemSpec | no | The line's own modem settings. Default none: the line has those of `[modem]`. |
 
 Result: LineInfo.
 
 Errors: `RMD0011`, `RMD0014`, `RMD0017`, `RMD0018`, `RMD0020`, `RMD0035`.
 
 ```json
-{"id":1,"method":"lines.add","params":{"id":3,"name":"Line 3","backend":"com0com","port":"CNCB2","enabled":true,"auto_answer_rings":0,"unknown_command":"ok","engine":"null","register":{"server":"pbx.example.com","user":"203","password":"secret","auth_user":"line203","expires_s":300}}}
+{"id":1,"method":"lines.add","params":{"id":3,"name":"Line 3","backend":"com0com","port":"CNCB2","enabled":true,"auto_answer_rings":0,"unknown_command":"ok","engine":"modem","register":{"server":"pbx.example.com","user":"203","password":"secret","auth_user":"line203","expires_s":300},"modem":{"modulations":["bell103"],"v8":false,"tx_level_dbm0":-15}}}
 ```
 
 ### `lines.edit`
@@ -267,15 +270,16 @@ Changes the keys of a line that are given and leaves the others alone. Changing 
 | `enabled` | boolean | no | Whether the line is in service. |
 | `auto_answer_rings` | integer | no | A new initial S0, 0 to 255. |
 | `unknown_command` | string | no | `ok` or `error`. |
-| `engine` | string | no | A new modem engine: `null` or `echo`. It is used from the line's next call. |
+| `engine` | string | no | A new modem engine: `modem`, `null` or `echo`. It is used from the line's next call. |
 | `register` | RegisterChange | no | Changes to the line's registration to a PBX. |
+| `modem` | LineModemSpec | no | The line's own modem settings, all of them: a key left out is taken from `[modem]` from now on, and an empty object leaves the line with none of its own. They are used from the line's next call. |
 
 Result: LineInfo.
 
 Errors: `RMD0011`, `RMD0014`, `RMD0017`, `RMD0018`, `RMD0019`, `RMD0035`.
 
 ```json
-{"id":1,"method":"lines.edit","params":{"id":3,"name":"Front desk","backend":"com0com","port":"CNCB5","enabled":false,"auto_answer_rings":2,"unknown_command":"error","engine":"echo","register":{"server":"pbx.example.com:5060","user":"203","password":"secret","auth_user":"","expires_s":600}}}
+{"id":1,"method":"lines.edit","params":{"id":3,"name":"Front desk","backend":"com0com","port":"CNCB5","enabled":false,"auto_answer_rings":2,"unknown_command":"error","engine":"echo","register":{"server":"pbx.example.com:5060","user":"203","password":"secret","auth_user":"","expires_s":600},"modem":{"modulations":["v21","bell103"],"v8":true,"tx_level_dbm0":-12}}}
 ```
 
 ### `lines.remove`
@@ -309,6 +313,39 @@ Errors: `RMD1001`.
 
 ```json
 {"id":1,"method":"lines.capture","params":{"id":3,"on":true}}
+```
+
+### `lines.diag`
+
+Reports the diagnostics of a line: the modem of its call as it last reported itself, the modem's last changes of state and its scope. A line with no call, or whose engine is not a modem, has none of them. To be sent them as they change, subscribe to `line.diag`.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | integer | yes | The line id. |
+
+Result: LineDiag.
+
+Errors: `RMD1001`.
+
+```json
+{"id":1,"method":"lines.diag","params":{"id":1}}
+```
+
+### `selftest.run`
+
+Runs the loopback self-test: the modems of two lines are joined sample for sample, with no network and no port between them; the first originates, the second answers, and once they are connected each sends the other 65536 octets. The lines must be idle, with `modem` as their engine, and use the settings they have. While the test runs, which is some seconds, both lines show as `handshaking` and take no call. The result says what the modems connected with, how long they took and whether every octet arrived; a test that fails is a result with `passed` false and the reason in `error`, not an error of the method.
+
+| Parameter | Type | Required | Meaning |
+|---|---|---|---|
+| `a` | integer | yes | The line whose modem originates. |
+| `b` | integer | yes | The line whose modem answers. |
+
+Result: SelfTestResult.
+
+Errors: `RMD1001`, `RMD7002`, `RMD7003`, `RMD7004`.
+
+```json
+{"id":1,"method":"selftest.run","params":{"a":1,"b":2}}
 ```
 
 ### `calls.list`
@@ -353,7 +390,7 @@ Result: Settings.
 
 ### `config.set`
 
-Changes the settings that are given and leaves the others alone. The change is checked and written to the configuration file, comments kept. A change to `[service]` takes effect at once; a change to `[control]` takes effect when the service next starts. A change to `[sip]` or `[media]` takes effect at once for the calls that follow, except that turning SIP on or off, and changing the listener's address, the RTP ports or the capture directory, take effect when the service next starts. The result says whether a restart is needed.
+Changes the settings that are given and leaves the others alone. The change is checked and written to the configuration file, comments kept. A change to `[service]` takes effect at once; a change to `[control]` takes effect when the service next starts. A change to `[sip]` or `[media]` takes effect at once for the calls that follow, except that turning SIP on or off, and changing the listener's address, the RTP ports or the capture directory, take effect when the service next starts. A change to `[modem]` takes effect at once, for the calls that follow. The result says whether a restart is needed.
 
 | Parameter | Type | Required | Meaning |
 |---|---|---|---|
@@ -361,13 +398,14 @@ Changes the settings that are given and leaves the others alone. The change is c
 | `control` | ControlChange | no | Changes to `[control]`. |
 | `sip` | SipChange | no | Changes to `[sip]`. |
 | `media` | MediaChange | no | Changes to `[media]`. |
+| `modem` | ModemChange | no | Changes to `[modem]`. |
 
 Result: SettingsResult.
 
 Errors: `RMD0011`, `RMD0014`.
 
 ```json
-{"id":1,"method":"config.set","params":{"service":{"log_level":"debug","log_dir":""},"control":{"pipe":"rustmodem-control"},"sip":{"enabled":true,"listen":"0.0.0.0:5060","address":"","user_agent":"","trusted_peers":["10.10.20.0/24"],"outbound_peer":"10.10.20.11","ring_timeout_s":60},"media":{"codecs":["pcmu","pcma"],"ptime_ms":20,"rtp_ports":"20000-20999","rtp_timeout_s":10,"capture_dir":""}}}
+{"id":1,"method":"config.set","params":{"service":{"log_level":"debug","log_dir":""},"control":{"pipe":"rustmodem-control"},"sip":{"enabled":true,"listen":"0.0.0.0:5060","address":"","user_agent":"","trusted_peers":["10.10.20.0/24"],"outbound_peer":"10.10.20.11","ring_timeout_s":60},"media":{"codecs":["pcmu","pcma"],"ptime_ms":20,"rtp_ports":"20000-20999","rtp_timeout_s":10,"capture_dir":""},"modem":{"modulations":["v21","bell103"],"v8":true,"tx_level_dbm0":-12,"answer_delay_ms":0,"fallback_ms":3000}}}
 ```
 
 ### `stats.get`
@@ -590,12 +628,15 @@ Starts sending the client events. The result is everything the client is now sub
 
 | Parameter | Type | Required | Meaning |
 |---|---|---|---|
-| `events` | array of string | no | The event names to add. Default every event. |
+| `events` | array of string | no | The event names to add. Default every event but those that have to be asked for by name: `sip.trace` and `line.diag`. |
+| `line` | integer | no | With `line.diag` among the names, and only then: the line whose diagnostics are meant. A client is sent those of one line; naming another changes which. |
 
 Result: Subscription.
 
+Errors: `RMD1001`.
+
 ```json
-{"id":1,"method":"subscribe","params":{"events":["line.state","call.ended"]}}
+{"id":1,"method":"subscribe","params":{"events":["line.state","line.diag"],"line":1}}
 ```
 
 ### `unsubscribe`
@@ -605,11 +646,12 @@ Stops sending the client events. The result is everything the client is still su
 | Parameter | Type | Required | Meaning |
 |---|---|---|---|
 | `events` | array of string | no | The event names to remove. Default every event. |
+| `line` | integer | no | Not used: accepted and ignored. |
 
 Result: Subscription.
 
 ```json
-{"id":1,"method":"unsubscribe","params":{"events":["log"]}}
+{"id":1,"method":"unsubscribe","params":{"events":["log"],"line":1}}
 ```
 
 ## Events
@@ -623,6 +665,7 @@ Result: Subscription.
 | `log` | LogEvent | A line was written to the service log, at the service's log level. |
 | `sip.registration` | SipRegistration | A line's registration changed state. |
 | `sip.trace` | SipTrace | A SIP message was sent or received. Sent only to a client that names `sip.trace` in `subscribe`: subscribing to every event leaves it out. Like `log`, it may be dropped for a client that is slow to read. |
+| `line.diag` | LineDiag | The diagnostics of a line. Sent only to a client that names `line.diag` and a line in `subscribe`, and only that line's: at once, then at most four times a second while the line's call has a modem to show, and once more, with no modem, when it has none any longer. Like `log`, it may be dropped for a client that is slow to read. |
 
 Removing a line sends no event of its own. A client that changes the lines
 should list them again afterwards.
@@ -692,10 +735,110 @@ Everything about one line.
 | `call` | CallInfo | no | The call in progress, if there is one. |
 | `error` | Error | no | Why the serial port is not open, if it should be and is not. |
 | `binding` | string | no | What the host side of the line's port is bound to, for example `Standard 56000 bps Modem on COM4`. Absent when unknown. |
-| `engine` | string | yes | The modem engine of the line: `null` or `echo`. |
+| `engine` | string | yes | The modem engine of the line: `modem`, `null` or `echo`. |
 | `hunt_groups` | array of string | yes | The names of the hunt groups the line is in. |
 | `sip` | LineSip | yes | The SIP side of the line. |
 | `capture` | boolean | yes | Whether the line's calls are captured. |
+| `modem` | LineModem | yes | The modem settings the line's calls use. |
+
+### LineModem
+
+The modem settings a line's calls use: those of `[modem]` with the line's own over them.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `modulations` | array of string | yes | The modulations the modem may use, the preferred one first: `v21`, `bell103`. |
+| `v8` | boolean | yes | Whether the modem uses V.8. |
+| `tx_level_dbm0` | integer | yes | The level the modem sends at, in dBm0. |
+| `own` | array of string | yes | The keys the line sets for itself: `modulations`, `v8`, `tx_level_dbm0`. The others are those of `[modem]`. |
+
+### LineModemSpec
+
+The `modem` part of `lines.add` and `lines.edit`: the line's own modem settings, all of them. A key left out is taken from `[modem]`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `modulations` | array of string | no | The modulations the line's modem may use, the preferred one first: `v21`, `bell103`. |
+| `v8` | boolean | no | Whether the line's modem uses V.8. |
+| `tx_level_dbm0` | integer | no | The level the line's modem sends at, in dBm0: -20 to -9. |
+
+### ModemInfo
+
+The modem of a call, as it last reported itself: ten times a second while the call's media runs. Levels are in tenths of a dBm0 and the frequency error in millihertz, so that every number is whole.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `state` | string | yes | What the modem is doing: `answer-silence`, `answer-tone`, `v8-jm`, `gap`, `fallback`, `listening`, `v8-te`, `v8-cm`, `v8-cj`, `training`, `data`, `ended` or `idle`. `docs/MODEM.md` says what each is. |
+| `rx_level_tenth_dbm0` | integer | no | The level received in the band the modem listens to, in tenths of a dBm0. Absent when nothing is received. |
+| `tx_level_tenth_dbm0` | integer | no | The level the modem sends, in tenths of a dBm0. Absent when it sends nothing. |
+| `carrier` | boolean | yes | Whether the far end's carrier is detected. |
+| `frequency_error_mhz` | integer | yes | How far the far end's carrier is from its nominal frequency, in millihertz. |
+| `quality_percent` | integer | yes | How good the received signal is, 0 to 100. For the 300 bit/s modems it is the opening of the eye where the bits are sampled, which on a clean line is about 70. |
+| `framing_errors` | integer | yes | Characters lost to a wrong stop bit in this call. |
+| `retrains` | integer | yes | Retrains in this call. The 300 bit/s modems have none. |
+
+### ModemStateChange
+
+A change of a modem's state.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `state` | string | yes | The state that was entered. |
+| `at_ms` | integer | yes | When, in milliseconds of the call's own samples since the modem was started. |
+
+### LineDiag
+
+The diagnostics of a line: the result of `lines.diag` and the data of `line.diag`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `line` | integer | yes | The line. |
+| `modem` | ModemInfo | no | The modem of the line's call. Absent when the line has no call, or its engine is not a modem. |
+| `history` | array of ModemStateChange | yes | The modem's last changes of state, the oldest first: eight at the most. |
+| `scope_kind` | string | yes | What the scope's samples are: `none`, or `discriminator`, the output of the demodulator, where 127 is all mark and -127 all space, one sample for every four of the line's. |
+| `scope` | array of integer | yes | The scope: the most recent samples, the oldest first, each from -127 to 127. Empty when there is none. |
+
+### SelfTestResult
+
+The result of `selftest.run`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `a` | integer | yes | The line whose modem originated. |
+| `b` | integer | yes | The line whose modem answered. |
+| `passed` | boolean | yes | Whether the modems connected and every octet arrived, both ways. |
+| `connect` | ConnectInfo | no | What the modems connected with, if they connected. |
+| `connect_ms` | integer | no | How long the modems took to connect, in milliseconds of the call's own samples. |
+| `octets` | integer | yes | The octets sent each way. |
+| `octets_a_to_b` | integer | yes | The octets that arrived at b as a sent them. |
+| `octets_b_to_a` | integer | yes | The octets that arrived at a as b sent them. |
+| `call_ms` | integer | yes | How long the call was, in milliseconds of its own samples. The modems run as fast as the machine carries them, so this is much more than the test took. |
+| `elapsed_ms` | integer | yes | How long the test took, in milliseconds. |
+| `error` | Error | no | Why the test failed, if it did: RMD7005 when the modems did not connect, RMD7006 when data was lost or changed. |
+
+### ModemSettings
+
+The `[modem]` settings.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `modulations` | array of string | yes | The modulations a modem may use, the preferred one first: `v21`, `bell103`. |
+| `v8` | boolean | yes | Whether a modem uses V.8. |
+| `tx_level_dbm0` | integer | yes | The level a modem sends at, in dBm0. |
+| `answer_delay_ms` | integer | yes | Silence before an answering modem begins, in milliseconds. |
+| `fallback_ms` | integer | yes | How long an answering modem offers each modulation, in milliseconds. |
+
+### ModemChange
+
+The `modem` part of `config.set`: the keys of `[modem]` to change.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `modulations` | array of string | no | The modulations, all of them, the preferred one first: `v21`, `bell103`. |
+| `v8` | boolean | no | Whether a modem uses V.8. |
+| `tx_level_dbm0` | integer | no | A new level to send at, in dBm0: -20 to -9. |
+| `answer_delay_ms` | integer | no | A new silence before answering, in milliseconds: 0 to 10000. |
+| `fallback_ms` | integer | no | A new time for each modulation offered, in milliseconds: 500 to 20000. |
 
 ### LineSip
 
@@ -776,6 +919,7 @@ A call in progress.
 | `bytes_tx` | integer | yes | Data bytes from the host to the far end so far. |
 | `bytes_rx` | integer | yes | Data bytes from the far end to the host so far. |
 | `media` | MediaInfo | no | The RTP of the call: what was agreed and what has happened. Absent for a call with no media. |
+| `modem` | ModemInfo | no | The modem of the call, as it last reported itself. Absent when the line's engine is not a modem, or the call has had no media yet. |
 
 ### CallRecord
 
@@ -853,6 +997,7 @@ The result of `config.get`: the settings that are not lines.
 | `control` | ControlSettings | yes | The `[control]` settings. |
 | `sip` | SipSettings | yes | The `[sip]` settings. |
 | `media` | MediaSettings | yes | The `[media]` settings. |
+| `modem` | ModemSettings | yes | The `[modem]` settings. |
 | `path` | string | yes | The path of the configuration file. |
 
 ### SipSettings
@@ -1144,6 +1289,7 @@ The result of `subscribe` and `unsubscribe`.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `events` | array of string | yes | The events the client is now subscribed to. |
+| `line` | integer | no | The line whose `line.diag` events the client is sent, when it is subscribed to them. |
 
 ### Done
 
@@ -1301,3 +1447,6 @@ service fills in.
 | `RMD2005` | The first control message must be hello. | A client sent something else before saying hello. | Send hello with the protocol number and client version first. |
 | `RMD2010` | The service is stopping. | The request arrived while the service was shutting down, so it was not carried out. | Start the service and repeat the request. |
 | `RMD2014` | Control message is longer than &1 bytes. | A control message must fit on one line within the size limit. | Send a shorter message. |
+| `RMD7002` | Line &1 cannot be in a self-test: it is &2. | A self-test takes two lines that are idle: in service, with their ports open, and with no call. The line is disabled, not ready, in a call or in a self-test already. | Wait for the line to be idle, or choose another line. |
+| `RMD7003` | Line &1 cannot be in a self-test: its engine is &2, not the modem. | A self-test joins the modems of two lines. The line's engine is one that carries data with no modem. | Choose a line whose engine is modem, or set the line's engine to modem. |
+| `RMD7004` | A self-test takes two lines, and line &1 was named twice. | The self-test joins the modem of one line to the modem of another. | Name two different lines. |

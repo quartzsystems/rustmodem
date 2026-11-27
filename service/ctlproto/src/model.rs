@@ -8,6 +8,7 @@
 use msg::Message;
 use serde::{Deserialize, Serialize};
 
+use crate::modem::{LineDiag, LineModem, ModemInfo};
 use crate::telephony::{LineSip, MediaInfo, SipRegistration, SipSummary, SipTrace};
 
 /// The state of a line.
@@ -199,6 +200,10 @@ pub struct CallInfo {
     /// The RTP of the call, once it has media.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<Box<MediaInfo>>,
+    /// The modem of the call, as it last reported itself, when the line's
+    /// engine is a modem.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modem: Option<ModemInfo>,
 }
 
 /// A call that has ended.
@@ -301,7 +306,7 @@ pub struct LineInfo {
     /// `Standard 56000 bps Modem on COM4`. Absent when unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding: Option<String>,
-    /// The modem engine of the line: `null` or `echo`.
+    /// The modem engine of the line: `modem`, `null` or `echo`.
     #[serde(default = "default_engine")]
     pub engine: String,
     /// The names of the hunt groups the line is in.
@@ -313,6 +318,9 @@ pub struct LineInfo {
     /// Whether the line's calls are captured.
     #[serde(default)]
     pub capture: bool,
+    /// The modem settings the line's calls use.
+    #[serde(default)]
+    pub modem: LineModem,
 }
 
 fn default_engine() -> String {
@@ -584,6 +592,9 @@ pub enum Event {
     /// A SIP message was sent or received.
     #[serde(rename = "sip.trace")]
     SipTrace(SipTrace),
+    /// The diagnostics of the line a client asked to watch.
+    #[serde(rename = "line.diag")]
+    LineDiag(LineDiag),
 }
 
 impl Event {
@@ -597,13 +608,17 @@ impl Event {
             Event::Log(_) => "log",
             Event::SipRegistration(_) => "sip.registration",
             Event::SipTrace(_) => "sip.trace",
+            Event::LineDiag(_) => "line.diag",
         }
     }
 
     /// Whether the event reports state that a client must not miss. Log
-    /// lines and traced messages are the events that may be dropped for a
-    /// slow client.
+    /// lines, traced messages and diagnostics are the events that may be
+    /// dropped for a slow client.
     pub fn is_state(&self) -> bool {
-        !matches!(self, Event::Log(_) | Event::SipTrace(_))
+        !matches!(
+            self,
+            Event::Log(_) | Event::SipTrace(_) | Event::LineDiag(_)
+        )
     }
 }

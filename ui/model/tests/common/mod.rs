@@ -35,6 +35,7 @@ pub fn line(id: u16, state: LineState) -> LineInfo {
         hunt_groups: Vec::new(),
         sip: ctlproto::LineSip::default(),
         capture: false,
+        modem: ctlproto::LineModem::default(),
     }
 }
 
@@ -50,6 +51,7 @@ pub fn call(direction: Direction, number: &str, started_s: u64) -> CallInfo {
         bytes_tx: 0,
         bytes_rx: 0,
         media: None,
+        modem: None,
     }
 }
 

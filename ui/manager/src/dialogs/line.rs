@@ -301,6 +301,7 @@ impl Form {
             unknown_command: Some(self.unknown_command()),
             engine: Some(self.engine.clone()),
             register: self.register_spec()?,
+            modem: None,
         })
     }
 
@@ -323,6 +324,7 @@ impl Form {
             unknown_command: (unknown_command != line.unknown_command).then_some(unknown_command),
             engine: (self.engine != line.engine).then(|| self.engine.clone()),
             register: self.register_change(line)?,
+            modem: None,
         })
     }
 }
@@ -638,6 +640,7 @@ mod tests {
             hunt_groups: Vec::new(),
             sip: ctlproto::LineSip::default(),
             capture: false,
+            modem: ctlproto::LineModem::default(),
         }
     }
 

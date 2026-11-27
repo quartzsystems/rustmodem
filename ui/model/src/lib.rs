@@ -29,8 +29,8 @@ mod stats;
 mod trace;
 
 use ctlproto::{
-    CallRecord, ErrorInfo, Event, LineInfo, LineState, ListenerState, LogEvent, ServiceInfo,
-    ServiceMode, SipMode, Stats,
+    CallRecord, ErrorInfo, Event, LineDiag, LineInfo, LineState, ListenerState, LogEvent,
+    ServiceInfo, ServiceMode, SipMode, Stats,
 };
 
 pub use calls::{CALL_COLUMNS, CALL_LIMIT, CallHistory, reason_text};
@@ -74,6 +74,8 @@ pub struct Changes {
     pub calls: bool,
     /// The SIP trace has a new message.
     pub trace: bool,
+    /// The diagnostics of the line being watched are new.
+    pub diag: bool,
 }
 
 impl Changes {
@@ -83,6 +85,7 @@ impl Changes {
         log: false,
         calls: false,
         trace: false,
+        diag: false,
     };
 
     fn rows(rows: RowChange) -> Changes {
@@ -106,6 +109,9 @@ pub struct Model {
     pub calls: CallHistory,
     /// The SIP messages that passed while the trace window was open.
     pub trace: TraceBuffer,
+    /// The diagnostics of the line the diagnostics window watches, as the
+    /// service last gave them.
+    pub diag: Option<LineDiag>,
     /// The lines reported by events since the manager connected and
     /// before the answer to its first `lines.list`: they are newer than
     /// the answer may be, and are applied on top of it.
@@ -128,6 +134,7 @@ impl Model {
             log: LogBuffer::new(),
             calls: CallHistory::new(),
             trace: TraceBuffer::new(),
+            diag: None,
             early_lines: None,
         }
     }
@@ -186,6 +193,7 @@ impl Model {
     /// The connection is gone, for this reason, or the user closed it.
     pub fn disconnected(&mut self, reason: Option<ErrorInfo>) {
         self.connection = ConnectionState::Disconnected(reason);
+        self.diag = None;
         self.early_lines = None;
         self.stats = None;
     }
@@ -254,6 +262,13 @@ impl Model {
                 trace: self.trace.push(message),
                 ..Changes::NONE
             },
+            Event::LineDiag(diag) => {
+                self.diag = Some(diag);
+                Changes {
+                    diag: true,
+                    ..Changes::NONE
+                }
+            }
         }
     }
 

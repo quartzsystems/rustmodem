@@ -10,8 +10,9 @@ use std::io::Write;
 use at::{Action, HangupCause, Input, LineEvent, Output, Trace};
 use config::{Config, LineConfig};
 use ctlproto::{
-    CallEvent, CallRecord, ConnectInfo, Direction, EndReason, Event, LineInfo, LineState,
-    ListenerState, LogEvent, LogLevel, SipRegistration, SipStatus, Stats,
+    CallEvent, CallRecord, ConnectInfo, Direction, EndReason, Event, LINE_DIAG_PER_SECOND,
+    LineDiag, LineInfo, LineState, ListenerState, LogEvent, LogLevel, SipRegistration, SipStatus,
+    Stats,
 };
 use engine::ModemEvent;
 use msg::{Message, Severity, message};
@@ -21,6 +22,7 @@ use crate::handle::Command;
 use crate::line::{ActiveCall, Line, at_config, call_settings};
 use crate::media::{MediaCall, MediaEndpoint, MediaEvent, MediaRunner, MediaStats};
 use crate::router::{CallRouter, LineDirectory, LineId, RouterEvent};
+use crate::selftest::{SELFTEST_OCTETS, SelfTestJob, line_diag, modem_info};
 use crate::stats::{MediaNow, Tallies};
 use crate::{
     CALL_HISTORY, EngineFactory, EventSink, Now, PORT_RETRY_MS, ProfileStore, SerialFactory,
@@ -73,6 +75,8 @@ pub struct Pool {
     engines: EngineFactory,
     /// The `[modem]` table of the configuration in force.
     modem: config::ModemConfig,
+    /// The lines whose diagnostics are published.
+    watched: Vec<LineId>,
     sink: Box<dyn EventSink>,
     profiles: Box<dyn ProfileStore>,
     call_log: Option<Box<dyn Write + Send>>,
@@ -120,6 +124,7 @@ impl Pool {
             serial: parts.serial,
             engines: parts.engines,
             modem: config::ModemConfig::default(),
+            watched: Vec::new(),
             sink: parts.sink,
             profiles: parts.profiles,
             call_log: parts.call_log,
@@ -182,6 +187,119 @@ impl Pool {
 
         self.finish();
         self.measure_rate();
+        self.publish_diagnostics();
+    }
+
+    /// Says which lines' diagnostics are watched: a `line.diag` event is
+    /// published for each of them, [`LINE_DIAG_PER_SECOND`] times a
+    /// second while its call has a modem to show, and once more when it
+    /// has none any longer.
+    pub fn watch_diagnostics(&mut self, lines: &[LineId]) {
+        self.watched = lines.to_vec();
+        for line in &mut self.lines {
+            if !lines.contains(&line.id()) {
+                line.diag_sent = None;
+            }
+        }
+    }
+
+    /// The diagnostics of a line: its call's modem and what the modem
+    /// remembers and sees.
+    pub fn line_diag(&self, id: LineId) -> Result<LineDiag, Message> {
+        let line = &self.lines[self.index(id)?];
+        let snapshot = line.media.as_ref().and_then(MediaCall::diagnostics);
+        Ok(line_diag(id, snapshot.as_ref()))
+    }
+
+    fn publish_diagnostics(&mut self) {
+        if self.watched.is_empty() {
+            return;
+        }
+        let every_ms = u64::from(1000 / LINE_DIAG_PER_SECOND);
+        let now_ms = self.now.mono_ms;
+        let mut due = Vec::new();
+        for line in &mut self.lines {
+            if !self.watched.contains(&line.id()) {
+                continue;
+            }
+            let snapshot = line.media.as_ref().and_then(MediaCall::diagnostics);
+            let send = match (line.diag_sent, &snapshot) {
+                // A call with a modem: at the rate.
+                (Some((at, true)), Some(_)) => now_ms.saturating_sub(at) >= every_ms,
+                // The modem has gone: said once.
+                (Some((_, true)), None) => true,
+                (Some((_, false)), None) => false,
+                // A line just watched, or a modem just begun.
+                (None, _) | (Some((_, false)), Some(_)) => true,
+            };
+            if send {
+                line.diag_sent = Some((now_ms, snapshot.is_some()));
+                due.push(line_diag(line.id(), snapshot.as_ref()));
+            }
+        }
+        for diag in due {
+            self.publish(Event::LineDiag(diag));
+        }
+    }
+
+    /// Begins a self-test of two lines: both must be idle, with the modem
+    /// as their engine. They are busy until [`Pool::selftest_end`]. The
+    /// job is run by whoever asked, on a thread of its own.
+    pub fn selftest_begin(&mut self, a: LineId, b: LineId) -> Result<SelfTestJob, Message> {
+        if a == b {
+            return Err(message("RMD7004", &[&a.to_string()]));
+        }
+        // Both lines are there, before anything is said of either.
+        self.index(a)?;
+        self.index(b)?;
+        let mut settings = Vec::new();
+        for id in [a, b] {
+            let line = &self.lines[self.index(id)?];
+            if line.config.engine != config::EngineKind::Modem {
+                return Err(message(
+                    "RMD7003",
+                    &[&id.to_string(), line.config.engine.as_str()],
+                ));
+            }
+            if line.testing {
+                return Err(message("RMD7002", &[&id.to_string(), "in a self-test"]));
+            }
+            let state = line.state();
+            if state != LineState::Idle {
+                return Err(message("RMD7002", &[&id.to_string(), state.as_str()]));
+            }
+            let modem = self.modem.for_line(&line.config.modem);
+            let call = call_settings(line.interpreter.profile(), &modem);
+            settings.push((crate::modem_config(&modem), call));
+        }
+        let (modem_b, call_b) = settings.pop().unwrap_or_default();
+        let (modem_a, call_a) = settings.pop().unwrap_or_default();
+        for id in [a, b] {
+            let index = self.index(id)?;
+            self.lines[index].testing = true;
+        }
+        // The lines are seen to be busy.
+        self.finish();
+        Ok(SelfTestJob {
+            a,
+            b,
+            modem_a,
+            modem_b,
+            call_a,
+            call_b,
+            octets: SELFTEST_OCTETS,
+        })
+    }
+
+    /// Ends a self-test: the two lines take calls again. A line that was
+    /// removed meanwhile is no matter.
+    pub fn selftest_end(&mut self, a: LineId, b: LineId) {
+        for id in [a, b] {
+            if let Ok(index) = self.index(id) {
+                self.lines[index].testing = false;
+            }
+        }
+        self.finish();
     }
 
     /// When [`Pool::service`] is next due, on the monotonic clock of
@@ -373,8 +491,15 @@ impl Pool {
                     self.end_call(index, EndReason::Failed);
                 }
                 self.start_call(index, Direction::Outgoing, number.clone());
-                self.router
-                    .dial(now_ms, id, &number, &Directory(&self.lines));
+                if self.lines[index].testing {
+                    // The line's modem is in a self-test: to its host the
+                    // line is busy.
+                    self.step(index, Input::Event(LineEvent::Busy));
+                    self.end_call(index, EndReason::Busy);
+                } else {
+                    self.router
+                        .dial(now_ms, id, &number, &Directory(&self.lines));
+                }
             }
             Action::Answer => {
                 let line = &mut self.lines[index];
@@ -545,7 +670,7 @@ impl Pool {
             Some(_) => self.router.registration(self.now.mono_ms, line.id()),
             None => None,
         };
-        line.info(registration)
+        line.info(registration, &self.modem)
     }
 
     /// Hands a line's engine and the far end of its call to the media
@@ -622,7 +747,7 @@ impl Pool {
                         if call.direction == Direction::Incoming {
                             self.tallies.connected(&connect);
                         }
-                        let call = call.info(None);
+                        let call = call.info(None, None);
                         let source = line.source();
                         self.publish(Event::CallConnected(CallEvent { line: id, call }));
                         self.log_message(
@@ -685,6 +810,12 @@ impl Pool {
         // A runner that lost the engine with whatever ran it gives none
         // back; the line gets a new one when it next needs it.
         self.lines[index].engine = self.media.stop(id, call);
+        // The modem's last word on the call is kept with the call.
+        if let Some(snapshot) = shared.diagnostics()
+            && let Some(call) = &mut self.lines[index].call
+        {
+            call.modem = Some(modem_info(&snapshot));
+        }
         // A runner that keeps statistics has published its last by now.
         if let Some(stats) = shared.stats() {
             self.tallies
@@ -715,6 +846,7 @@ impl Pool {
             bytes_rx: 0,
             answered: false,
             media: None,
+            modem: None,
         };
         self.next_call_id += 1;
         let line = &mut self.lines[index];
@@ -724,7 +856,7 @@ impl Pool {
         }
         let id = line.id();
         let source = line.source();
-        let info = call.info(None);
+        let info = call.info(None, None);
         let started = message(
             "RMD1006",
             &[&id.to_string(), direction.as_str(), &call.number],

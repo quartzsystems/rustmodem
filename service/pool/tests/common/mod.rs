@@ -334,6 +334,11 @@ pub fn summarise(events: &[Event]) -> Vec<String> {
                 e.registration.state.as_str()
             ),
             Event::SipTrace(trace) => format!("trace {}", trace.direction.as_str()),
+            Event::LineDiag(diag) => format!(
+                "diag {} {}",
+                diag.line,
+                diag.modem.as_ref().map_or("none", |modem| &modem.state)
+            ),
         })
         .collect()
 }

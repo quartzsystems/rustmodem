@@ -339,6 +339,7 @@ mod tests {
             path: r"C:\ProgramData\Quartz Systems\rustmodem\rustmodem.toml".to_string(),
             sip: ctlproto::SipSettings::default(),
             media: ctlproto::MediaSettings::default(),
+            modem: ctlproto::ModemSettings::default(),
         }
     }
 

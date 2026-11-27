@@ -28,6 +28,7 @@ mod line;
 mod media;
 mod pool;
 mod router;
+mod selftest;
 mod stats;
 
 use std::collections::BTreeMap;
@@ -49,6 +50,7 @@ pub use router::{
     CallRouter, LineDirectory, LineId, NullSwitch, RING_OFF_MS, RING_ON_MS, RouterEvent,
     UNOBTAINABLE_DELAY_MS,
 };
+pub use selftest::{SELFTEST_OCTETS, SelfTestJob};
 
 /// The pool's clock, in milliseconds: how often the interpreters' timers
 /// are run, and how often [`InlineRunner`] ticks the engines of the calls

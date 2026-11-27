@@ -29,8 +29,8 @@ use args::{Command, Options};
 use client::{Client, Failure};
 use ctlproto::{
     Call, CallList, CallsQuery, CaptureSwitch, Done, ErrorInfo, EventSelection, HuntGroupList,
-    LineInfo, LineList, LineRef, LogTail, LogTailQuery, PortList, Reloaded, ReregisterQuery,
-    RouteList, ServiceInfo, SipStatus, Stats, encode,
+    LineDiag, LineInfo, LineList, LineRef, LogTail, LogTailQuery, PortList, Reloaded,
+    ReregisterQuery, RouteList, SelfTest, SelfTestResult, ServiceInfo, SipStatus, Stats, encode,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -125,6 +125,30 @@ fn run<R: BufRead, W: Write>(
         Command::Line(id) => {
             let call = line_call(id, Call::LinesGet);
             answer::<LineInfo, _, _>(client, &call, json, out, output::line)
+        }
+        Command::Diag(id) => {
+            let call = line_call(id, Call::LinesDiag);
+            answer::<LineDiag, _, _>(client, &call, json, out, output::diag)
+        }
+        Command::SelfTest(a, b) => {
+            let call = Call::SelfTestRun(SelfTest { a, b });
+            let result: SelfTestResult = client.call(&call)?;
+            let text = if json {
+                format!(
+                    "{}
+",
+                    encode(&result)
+                )
+            } else {
+                output::selftest(&result)
+            };
+            print(out, &text);
+            // A test that ran and failed is a failure of the command,
+            // however its result was printed.
+            match result.error {
+                Some(error) => Err(Failure::Api(error)),
+                None => Ok(()),
+            }
         }
         Command::Answer(id) => acted(client, &line_call(id, Call::LinesAnswer), json, out),
         Command::Hangup(id) => acted(client, &line_call(id, Call::LinesHangup), json, out),

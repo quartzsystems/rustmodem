@@ -244,6 +244,7 @@ fn the_idle_script_is_a_service_with_every_line_waiting() {
         unknown_command: None,
         engine: None,
         register: None,
+        modem: None,
     }));
     assert_eq!(added.binding.as_deref(), Some("COM14"));
     eventually("the new line to be idle", || {
@@ -262,6 +263,7 @@ fn the_idle_script_is_a_service_with_every_line_waiting() {
         unknown_command: None,
         engine: None,
         register: None,
+        modem: None,
     }));
     assert_eq!(moved.binding.as_deref(), Some("COM16"));
     eventually("every line to be idle again", || {
@@ -516,11 +518,12 @@ fn the_sip_script_takes_calls_over_sip_and_shows_them() {
 
     // The trace has to be asked for by name; a registration made again
     // is a message each way, and an event when its state changes.
-    let all: Subscription = client.ok(Call::Subscribe(EventSelection { events: None }));
+    let all: Subscription = client.ok(Call::Subscribe(EventSelection::default()));
     assert!(!all.events.iter().any(|name| name == "sip.trace"));
-    client.ok::<Subscription>(Call::Unsubscribe(EventSelection { events: None }));
+    client.ok::<Subscription>(Call::Unsubscribe(EventSelection::default()));
     let named: Subscription = client.ok(Call::Subscribe(EventSelection {
         events: Some(vec!["sip.trace".to_string()]),
+        line: None,
     }));
     assert_eq!(named.events, ["sip.trace"]);
     let id = client.next_id;

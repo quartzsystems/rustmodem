@@ -220,6 +220,7 @@ mod tests {
                 ..LineSip::default()
             },
             capture: false,
+            modem: ctlproto::LineModem::default(),
         };
         assert_eq!(row(&line), ["3", "Front desk", "CNCB2", "203"]);
         line.name = None;
