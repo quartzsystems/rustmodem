@@ -169,7 +169,7 @@ mod tests {
     impl Scratch {
         fn new(name: &str) -> Scratch {
             let path = format!(
-                r"Software\Quartz Systems\rustmodem\Tests\{}-{name}",
+                r"Software\Quartz Systems\RustModem\Tests\{}-{name}",
                 std::process::id()
             );
             UserKey::delete(&path);

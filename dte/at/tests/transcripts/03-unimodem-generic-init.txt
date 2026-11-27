@@ -8,7 +8,7 @@
 > AT#CID=1\r
 < \r\nOK\r\n
 > ATI3\r
-< \r\nrustmodem ${VERSION}\r\n\r\nOK\r\n
+< \r\nRustModem ${VERSION}\r\n\r\nOK\r\n
 > ATDT5551234\r
 ! dial 5551234
 @ connected

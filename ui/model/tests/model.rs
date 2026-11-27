@@ -356,7 +356,11 @@ fn every_command_in_every_state_of_the_connection() {
         .iter()
         .find(|(label, _)| *label == "Softmodem engine")
         .unwrap();
-    assert!(engine.1.starts_with("null, rustmodem "), "{}", engine.1);
+    assert!(
+        engine.1.starts_with("RustModem ") && engine.1.ends_with(", null"),
+        "{}",
+        engine.1
+    );
     // The log has nothing in it yet.
     assert_eq!(
         model.availability(Command::ExportLog).reason(),

@@ -134,7 +134,7 @@ decides what can be chosen.
   steps that touch no control, and the controls are brought up to date
   after each step. `view.rs` makes, places and fills the controls.
 - `settings.rs`: column widths, sort, filter, the bars and the window
-  placement, under `HKCU\Software\Quartz Systems\rustmodem\Manager`.
+  placement, under `HKCU\Software\Quartz Systems\RustModem\Manager`.
 
 ### 8. `ui/manager`: dialogs and actions
 
@@ -332,7 +332,7 @@ the documentation as described; say if any should change.
 
 | Reference | For | How |
 |---|---|---|
-| `quartz-systems-access`: `qsa-glyph`, `qsa-icons` | `ui/glyph` | Quartz's own, MIT. The approach (icons drawn in code, `.ico` and `.res` written at build time) was reused and its code adapted, with the rustmodem header. `qsa-ui` was not used |
+| `quartz-systems-access`: `qsa-glyph`, `qsa-icons` | `ui/glyph` | Quartz's own, MIT. The approach (icons drawn in code, `.ico` and `.res` written at build time) was reused and its code adapted, with the RustModem header. `qsa-ui` was not used |
 | VoIPModem Manager | The layout | **Not looked at.** Neither its source, its resource scripts, its icons nor a screenshot. The layout is the handoff's text and nothing else |
 | `docs/design/` | The layout | Did not exist. There were no screenshots to match |
 | Microsoft's Win32 documentation | `ui/win32` | From memory: the dialog template formats, the property sheet, the task dialog, the list view's notifications. No sample code was copied |

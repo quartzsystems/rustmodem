@@ -1,11 +1,11 @@
-# Setting up com0com for rustmodem
+# Setting up com0com for RustModem
 
-Until the virtual COM driver of phase 5, each rustmodem line reaches Windows
+Until the virtual COM driver of phase 5, each RustModem line reaches Windows
 through a [com0com](https://com0com.sourceforge.net/) null-modem pair. The
 host (RRAS, a terminal, the Windows modem driver) opens one port of the pair;
-rustmodem opens the other.
+RustModem opens the other.
 
-com0com is a separate GPL product. rustmodem does not include it, link to it
+com0com is a separate GPL product. RustModem does not include it, link to it
 or copy from it; it only opens a port the driver provides. Install it from
 its own distribution.
 
@@ -21,9 +21,9 @@ its own distribution.
 A null-modem pair has no modem end. Each side drives its own output lines
 (DTR, RTS, OUT1, OUT2) and the driver wires them to the other side's input
 lines (DSR, CTS, DCD, RI) as the pair is configured. A modem has to drive DCD,
-DSR, CTS and RI toward the host, so rustmodem uses all four of its outputs:
+DSR, CTS and RI toward the host, so RustModem uses all four of its outputs:
 
-| The modem sets | rustmodem drives, on its port | The host's port must be wired | The host sees |
+| The modem sets | RustModem drives, on its port | The host's port must be wired | The host sees |
 |---|---|---|---|
 | DSR | DTR | `dsr=rdtr` (the default) | DSR |
 | CTS | RTS | `cts=rrts` (the default) | CTS |
@@ -32,19 +32,19 @@ DSR, CTS and RI toward the host, so rustmodem uses all four of its outputs:
 
 In the other direction:
 
-| The host does | rustmodem's port must be wired | rustmodem sees it on | Meaning |
+| The host does | RustModem's port must be wired | RustModem sees it on | Meaning |
 |---|---|---|---|
 | Drives DTR | `dsr=rdtr` (the default) | DSR | DTR |
 | Drives RTS | `cts=rrts` (the default) | CTS | RTS |
 | Opens or closes the port | `dcd=ropen` | DCD | Host opened, host closed |
 
-If rustmodem's port is left without `dcd=ropen`, it cannot see the open
+If RustModem's port is left without `dcd=ropen`, it cannot see the open
 itself. With com0com's default wiring its DCD then follows the host's DTR, and
-rustmodem takes DTR going on as the host having opened the port. A line is
+RustModem takes DTR going on as the host having opened the port. A line is
 ready when the port is open and DTR is on, so both set-ups work; `dcd=ropen`
 is the better one.
 
-rustmodem opens its port at 115200 bit/s, 8 data bits, no parity, 1 stop bit,
+RustModem opens its port at 115200 bit/s, 8 data bits, no parity, 1 stop bit,
 with no flow control in the driver. With baud rate emulation off (the com0com
 default) the rate does not matter.
 
@@ -55,7 +55,7 @@ are the names com0com gives the first pair; a second pair is `CNCA1` and
 `CNCB1`, and so on.
 
 Install one pair. The first port gets a COM name chosen by Windows; the second
-keeps its `CNCB` name and is rustmodem's:
+keeps its `CNCB` name and is RustModem's:
 
 ```
 setupc install PortName=COM# -
@@ -67,13 +67,13 @@ See which names the pair got:
 setupc list
 ```
 
-Wire the host's side, so that it sees DCD and RI from rustmodem:
+Wire the host's side, so that it sees DCD and RI from RustModem:
 
 ```
 setupc change CNCA0 dcd=rout1,ri=rout2
 ```
 
-Wire rustmodem's side, so that it sees the host open the port:
+Wire RustModem's side, so that it sees the host open the port:
 
 ```
 setupc change CNCB0 dcd=ropen
@@ -89,9 +89,9 @@ Repeat for each line with the next pair (`CNCA1` and `CNCB1`, and so on).
 
 Leave `EmuBR` and `EmuOverrun` off, which is their default.
 
-## The rustmodem configuration
+## The RustModem configuration
 
-Each line names rustmodem's port of its pair:
+Each line names RustModem's port of its pair:
 
 ```toml
 [[line]]
@@ -124,6 +124,6 @@ host's port in a terminal program at any speed and check each of these.
 - [ ] Closing the terminal returns the line to `not_ready`.
 
 If DCD or RI never change, the host's port is not wired with `dcd=rout1` and
-`ri=rout2`. If the line never leaves `not_ready`, check that rustmodem's port
+`ri=rout2`. If the line never leaves `not_ready`, check that RustModem's port
 name in the configuration is the `CNCB` one and that DTR is on in the
 terminal.

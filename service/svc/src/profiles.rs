@@ -49,7 +49,7 @@ pub const PROFILES_FILE: &str = "profiles.toml";
 
 /// What the file starts with.
 const HEADER: &str = "\
-# rustmodem stored profiles: what AT&W saved for each line.
+# RustModem stored profiles: what AT&W saved for each line.
 # Written by the service. Changes made by hand are read when the service
 # starts; comments are not kept.
 
@@ -307,7 +307,7 @@ mod tests {
         profiles.insert(12, Profile::factory(0));
         profiles.insert(999, Profile::factory(255));
         let text = render(&profiles);
-        assert!(text.starts_with("# rustmodem stored profiles"), "{text}");
+        assert!(text.starts_with("# RustModem stored profiles"), "{text}");
         assert!(text.contains("\n[line.1]\necho = false\n"), "{text}");
         assert!(text.contains("\n[line.12]\n"), "{text}");
         assert!(text.contains("ms = \"B103,0,300,300,0,0\"\n"), "{text}");

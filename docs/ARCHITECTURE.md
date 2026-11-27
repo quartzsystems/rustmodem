@@ -1,6 +1,6 @@
-# rustmodem architecture
+# RustModem architecture
 
-rustmodem is a software modem pool for 64-bit Windows. A Windows service
+RustModem is a software modem pool for 64-bit Windows. A Windows service
 terminates SIP/RTP, runs one in-house softmodem per call, and presents each
 line to Windows as a modem on a COM port, so Routing and Remote Access answers
 dial-up calls as if the modems were hardware. A separate manager GUI and a

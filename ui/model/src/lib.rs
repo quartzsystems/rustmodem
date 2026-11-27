@@ -304,7 +304,7 @@ impl Model {
         // service that runs it.
         let modem = self
             .service()
-            .map(|info| format!("rustmodem {}", info.version))
+            .map(|info| format!("RustModem {}", info.version))
             .unwrap_or_default();
         let mut engines: Vec<&str> = self
             .lines

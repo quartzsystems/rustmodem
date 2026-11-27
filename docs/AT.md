@@ -1,4 +1,4 @@
-# The rustmodem AT command set
+# The RustModem AT command set
 
 This describes the Hayes-compatible command interpreter as it is built in
 `dte/at`. It is written from the implementation: every command, register and
@@ -107,7 +107,7 @@ reports 1.
 | `E0`, `E1` | Echo off, on. Default `E1` | 6.2.4 |
 | `H`, `H0` | Hang up, if off hook. `H1` returns `OK` and does nothing. Above 1 is an error | 6.3.6 |
 | `I`, `I0` | Print the product code, `rustmodem` | 6.1.3 |
-| `I3` | Print `rustmodem <version>` | |
+| `I3` | Print `RustModem <version>` | |
 | `I4` | Print the capability line, `SOFT MODEM,V.250,+MS,+ES,+DS`. It starts with the name of the line's engine: `SOFT` for the modem, `NULL` for a line with `engine = "null"` and `ECHO` for one with `engine = "echo"` | |
 | `I1` | Print `000`: a modem with a ROM prints its checksum, and this one has none | |
 | `I5` | Print the manufacturer, `Quartz Systems` | |
@@ -155,7 +155,7 @@ V.250's and are here because a host may ask. None of them is answered
 |---|---|---|
 | `+GMI` | Print the manufacturer, `Quartz Systems` | 6.1.4 |
 | `+GMM` | Print the model, `RustModem Softmodem`. It is the name the modem has in Windows | 6.1.5 |
-| `+GMR` | Print the version of rustmodem | 6.1.6 |
+| `+GMR` | Print the version of RustModem | 6.1.6 |
 | `+GSN` | Print the serial number, `00000000`: a modem made of software has none | 6.1.7 |
 | `+GCAP` | Print `+GCAP: +MS,+ES,+DS`: the modem has modulation control, error control and compression, and no fax or voice | 6.1.9 |
 | `+GMI=?` and the same of the other four | `OK` | 5.4.3 |

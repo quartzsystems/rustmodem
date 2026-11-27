@@ -1,6 +1,6 @@
 # The modem
 
-rustmodem's modem is in-house, written from the ITU-T Recommendations. It
+RustModem's modem is in-house, written from the ITU-T Recommendations. It
 is the modem at 2400 bit/s, V.22bis, with the modems it falls back to: V.22
 and Bell 212A at 1200 bit/s, and V.21 and Bell 103 at 300 bit/s. V.8 agrees
 between them. At 1200 and 2400 bit/s it has the error control of V.42

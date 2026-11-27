@@ -10,10 +10,10 @@ use config::{
 };
 
 /// The example from the phase 0 handoff, with a later-phase section added.
-const EXAMPLE: &str = r#"# rustmodem configuration
+const EXAMPLE: &str = r#"# RustModem configuration
 [service]
 log_level = "info"            # error, warning, info, debug
-log_dir = ""                  # empty = %ProgramData%\Quartz Systems\rustmodem\logs
+log_dir = ""                  # empty = %ProgramData%\Quartz Systems\RustModem\logs
 
 [control]
 pipe = "rustmodem-control"    # \\.\pipe\<name>
@@ -336,7 +336,7 @@ fn save_and_load_round_trip_through_a_file() {
 fn default_paths_are_under_the_data_directory() {
     let data = config::data_dir();
     assert!(
-        data.ends_with("Quartz Systems/rustmodem") || data.ends_with(r"Quartz Systems\rustmodem")
+        data.ends_with("Quartz Systems/RustModem") || data.ends_with(r"Quartz Systems\RustModem")
     );
     assert_eq!(config::default_path(), data.join("rustmodem.toml"));
     assert_eq!(config::default_log_dir(), data.join("logs"));

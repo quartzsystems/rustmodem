@@ -1,4 +1,4 @@
-# Installing rustmodem from the release zip
+# Installing RustModem from the release zip
 
 A release is a zip of the three programs, a sample configuration and the
 documentation. There is no installer yet: that, and the virtual COM driver
@@ -16,7 +16,7 @@ under its own licence and is not in the zip.
 | `rustmodem-manager.exe` | The manager, "RustModem Manager" |
 | `rustmodem-ctl.exe` | The command-line client |
 | `rustmodem.sample.toml` | A configuration to start from |
-| `LICENSE`, `README.md`, `CHANGELOG.md` | The licence, what rustmodem is, and what each version changed |
+| `LICENSE`, `README.md`, `CHANGELOG.md` | The licence, what RustModem is, and what each version changed |
 | `docs\` | The documentation, this file among it |
 
 ## Install
@@ -27,10 +27,10 @@ under its own licence and is not in the zip.
 2. **Install com0com** and make a pair of ports for each line, wired as
    `docs\COM0COM.md` says.
 3. **Write the configuration.** The service reads
-   `%ProgramData%\Quartz Systems\rustmodem\rustmodem.toml` unless it is
+   `%ProgramData%\Quartz Systems\RustModem\rustmodem.toml` unless it is
    told another path. Make the folder, copy `rustmodem.sample.toml` there
    as `rustmodem.toml`, and edit it: a `[[line]]` for each pair, naming
-   rustmodem's port of the pair, and `[sip]` for the network the calls
+   RustModem's port of the pair, and `[sip]` for the network the calls
    come from. `docs\TELEPHONY.md` has `[sip]`, `docs\MODEM.md` has
    `[modem]`.
 4. **Try it in the foreground**, from an elevated prompt in the folder of
@@ -78,9 +78,9 @@ Then, for dial-up networking, `docs\RRAS.md`.
 
 | What | Where |
 |---|---|
-| The configuration | `%ProgramData%\Quartz Systems\rustmodem\rustmodem.toml`, or the path given to `--install` |
+| The configuration | `%ProgramData%\Quartz Systems\RustModem\rustmodem.toml`, or the path given to `--install` |
 | Stored AT profiles (`AT&W`) | `profiles.toml` beside the configuration |
-| The log | `%ProgramData%\Quartz Systems\rustmodem\logs`, unless `[service] log_dir` names another; `rustmodem-ctl log` prints its end |
+| The log | `%ProgramData%\Quartz Systems\RustModem\logs`, unless `[service] log_dir` names another; `rustmodem-ctl log` prints its end |
 | Call captures | `captures` under the log folder, unless `[media] capture_dir` names another, when a line's capture is on |
 
 ## Upgrade

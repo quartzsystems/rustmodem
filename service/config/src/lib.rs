@@ -36,10 +36,10 @@ pub use schema::{
 };
 
 /// The directory under `%ProgramData%` that holds rustmodem's files.
-const DATA_SUBDIR: [&str; 2] = ["Quartz Systems", "rustmodem"];
+const DATA_SUBDIR: [&str; 2] = ["Quartz Systems", "RustModem"];
 
 /// The directory rustmodem keeps its configuration and logs in:
-/// `%ProgramData%\Quartz Systems\rustmodem`.
+/// `%ProgramData%\Quartz Systems\RustModem`.
 pub fn data_dir() -> PathBuf {
     let base = std::env::var_os("ProgramData")
         .map(PathBuf::from)

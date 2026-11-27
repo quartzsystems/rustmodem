@@ -332,7 +332,7 @@ fn settings() -> Settings {
             capture_dir: String::new(),
         },
         modem: modem_settings(),
-        path: r"C:\ProgramData\Quartz Systems\rustmodem\rustmodem.toml".to_string(),
+        path: r"C:\ProgramData\Quartz Systems\RustModem\rustmodem.toml".to_string(),
     }
 }
 
@@ -383,14 +383,14 @@ fn sample(name: &str, full: bool) -> Value {
             version: "0.0.1".to_string(),
             protocol: PROTOCOL,
             pipe: "rustmodem-control".to_string(),
-            config_path: r"C:\ProgramData\Quartz Systems\rustmodem\rustmodem.toml".to_string(),
+            config_path: r"C:\ProgramData\Quartz Systems\RustModem\rustmodem.toml".to_string(),
             lines: 2,
             started_ms: 1_800_000_000_000,
             uptime_ms: 60_000,
             config_loaded_ms: 1_800_000_000_000,
             mode: ServiceMode::Service,
             capture_dir: full
-                .then(|| r"C:\ProgramData\Quartz Systems\rustmodem\logs\captures".to_string()),
+                .then(|| r"C:\ProgramData\Quartz Systems\RustModem\logs\captures".to_string()),
         }),
         "Settings" => to_value(&settings()),
         "ServiceSettings" => to_value(&settings().service),

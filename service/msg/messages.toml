@@ -2,7 +2,7 @@
 # licensed under the terms of the MIT license which can be found in the
 # root directory of this project.
 
-# The rustmodem message catalogue.
+# The RustModem message catalogue.
 #
 # One table per message. The table name is the message id: RMD and four
 # digits. Each message has:
@@ -34,21 +34,21 @@
 [RMD0001]
 severity = "info"
 vars = 1
-text = "rustmodem service started, version &1."
+text = "RustModem service started, version &1."
 cause = "The service finished starting and is serving its lines."
 recovery = "No action is needed."
 
 [RMD0002]
 severity = "info"
 vars = 0
-text = "rustmodem service stopped."
+text = "RustModem service stopped."
 cause = "The service was asked to stop. Every call was hung up and every port released."
 recovery = "No action is needed."
 
 [RMD0003]
 severity = "error"
 vars = 1
-text = "rustmodem service ended abnormally: &1"
+text = "RustModem service ended abnormally: &1"
 cause = "The service met an error it could not continue from."
 recovery = "Look at the service log for earlier messages, correct the problem and start the service again."
 
@@ -154,7 +154,7 @@ recovery = "Give one of the lines a different port and try again."
 severity = "error"
 vars = 2
 text = "Serial backend &1 at line &2 is not known."
-cause = "The backend named for the line is not one this version of rustmodem has. Known backends: com0com and vcom."
+cause = "The backend named for the line is not one this version of RustModem has. Known backends: com0com and vcom."
 recovery = "Correct the backend name and try again."
 
 [RMD0019]
@@ -697,7 +697,7 @@ recovery = "Correct the user, the password or the authentication user in the lin
 [RMD5006]
 severity = "error"
 vars = 2
-text = "Registrar &2 asked line &1 for authentication that rustmodem does not have."
+text = "Registrar &2 asked line &1 for authentication that RustModem does not have."
 cause = "The registrar offered no Digest challenge with MD5 or SHA-256 and qop auth."
 recovery = "Set the registrar to use Digest authentication with MD5 or SHA-256 for this extension."
 
@@ -786,8 +786,8 @@ recovery = "Check the path. Capture files are in the captures directory under th
 severity = "error"
 vars = 2
 text = "File &1 is not a call capture that can be read: &2"
-cause = "The file is not a capture, was written by a later version of rustmodem, or was cut off or damaged."
-recovery = "Name a .rmcap file that rustmodem wrote. A capture that was cut off while the service ran can be read once the call has ended."
+cause = "The file is not a capture, was written by a later version of RustModem, or was cut off or damaged."
+recovery = "Name a .rmcap file that RustModem wrote. A capture that was cut off while the service ran can be read once the call has ended."
 
 [RMD6005]
 severity = "error"
@@ -854,7 +854,7 @@ severity = "error"
 vars = 5
 text = "The self-test of lines &1 and &2 failed: of &5 octets each way, &3 arrived whole at line &2 and &4 at line &1."
 cause = "The modems connected and then lost or changed data, or lost each other's carrier. The test joins the two modems directly, so the modem is at fault."
-recovery = "Report the failure with the version of rustmodem and the modem settings of the two lines."
+recovery = "Report the failure with the version of RustModem and the modem settings of the two lines."
 
 # ---------------------------------------------------------------------------
 # 8000-8999: link: error control and compression
@@ -872,7 +872,7 @@ severity = "warning"
 vars = 2
 text = "The error-corrected connection on line &1 ended, and the call with it: &2."
 cause = "LAPM's connection ended under the call. remote: the far end released it, as it does when its host hangs up. timed-out: the far end stopped answering, which is a line that no longer carries the signal. no-response and no-protocol: the far end said it had error control and did not go on with it. protocol and compression: the far end sent what V.42 or V.42bis does not allow. refused and local: the far end refused the connection, or this end released it."
-recovery = "remote needs nothing. For timed-out, look at the call's RTP statistics and the modem's diagnostics for a path that loses packets or changes the audio. For protocol and compression, capture a call and report it with the version of rustmodem and the make of the far modem."
+recovery = "remote needs nothing. For timed-out, look at the call's RTP statistics and the modem's diagnostics for a path that loses packets or changes the audio. For protocol and compression, capture a call and report it with the version of RustModem and the make of the far modem."
 
 # ---------------------------------------------------------------------------
 # 9000-9499: driver and ports

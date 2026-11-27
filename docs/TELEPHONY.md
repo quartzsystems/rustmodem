@@ -1,6 +1,6 @@
 # Telephony
 
-How rustmodem behaves on a SIP network: what it listens to, how it routes a
+How RustModem behaves on a SIP network: what it listens to, how it routes a
 call to a line, what it sends and answers method by method, and the
 configuration that decides it. This describes the service as built in
 phase 2. The code is `service/telephony` (the router), `voip/sip`,
@@ -12,7 +12,7 @@ it did in phase 0.
 
 ## What it is and is not
 
-rustmodem is a SIP user agent over UDP on IPv4. It takes calls on one
+RustModem is a SIP user agent over UDP on IPv4. It takes calls on one
 listener, the trunk, and can also register any of its lines to a PBX as an
 extension. Each call carries one stream of G.711 (PCMU or PCMA) over RTP.
 
@@ -45,7 +45,7 @@ counted (`dropped untrusted` in `sip.status`), and `RMD5010` is logged for
 the first one and then for every hundredth. With `trusted_peers` empty and
 no line registered, nothing is accepted at all.
 
-Responses are matched to requests rustmodem sent by the branch it put in
+Responses are matched to requests RustModem sent by the branch it put in
 its Via; a response that matches nothing is ignored.
 
 ## Routing an incoming call
@@ -86,12 +86,12 @@ Every call that is turned away before a line is rung is logged as
 
 ## An incoming call
 
-| Event | What rustmodem does |
+| Event | What RustModem does |
 |---|---|
 | INVITE, routed to an idle line | `100 Trying`, then `180 Ringing` with its tag and Contact. The line rings: `RING` on the cadence of 2 s on, 4 s off |
 | INVITE whose session description cannot be used (see "Session descriptions") | `488 Not Acceptable Here` |
 | INVITE with a body that is not `application/sdp` | `415 Unsupported Media Type` |
-| INVITE with no body (a delayed offer) | Accepted. rustmodem's offer goes in the `200`, and the answer is taken from the ACK |
+| INVITE with no body (a delayed offer) | Accepted. RustModem's offer goes in the `200`, and the answer is taken from the ACK |
 | INVITE whose Request-URI is not `sip:` | `416 Unsupported URI Scheme` |
 | INVITE with no Contact that is a `sip:` URI | `400 Bad Request` |
 | INVITE with `Require` | `420 Bad Extension`, with `Unsupported` naming what was required |
@@ -107,7 +107,7 @@ Every call that is turned away before a line is rung is logged as
 | The host hangs up, or `lines.hangup`, while the line rings | `603 Decline` |
 | The host hangs up after the `200` and before its ACK | The BYE is sent when the ACK arrives, or after the 32 s |
 
-The Contact rustmodem gives is `sip:<called user>@<address>:<port>`, and
+The Contact RustModem gives is `sip:<called user>@<address>:<port>`, and
 for a call to a registered line `sip:<extension>@<address>:<port>;line=<id>`.
 
 ## An outgoing call
@@ -122,7 +122,7 @@ for a call to a registered line `sip:<extension>@<address>:<port>;line=<id>`.
 
 The Request-URI is `sip:<digits>@<host>[:<port>]`. Of the dial string, the
 digits, `*` and `+` are kept, `#` is sent as `%23`, and everything else
-(the pause `,`, the wait `W`) is left out. The INVITE carries rustmodem's
+(the pause `,`, the wait `W`) is left out. The INVITE carries RustModem's
 offer.
 
 | What comes back | What the host gets |
@@ -144,21 +144,21 @@ Which of `BUSY`, `NO ANSWER` and `NO DIALTONE` a host sees depends on its
 
 ## In a call
 
-| Event | What rustmodem does |
+| Event | What RustModem does |
 |---|---|
 | BYE from the far end | `200`; the host gets `NO CARRIER` |
 | BYE with a CSeq number lower than the last | `500 Server Internal Error`; the call goes on |
 | The host hangs up, or `lines.hangup` | BYE, sent again until it is answered or 32 s have passed |
 | No RTP packet for `media.rtp_timeout_s` | The call is cleared: BYE, `NO CARRIER`, `RMD6001` in the log |
-| re-INVITE whose session description is still a G.711 stream | `200` with rustmodem's description, its version one higher. The media is sent to the new address, in the new codec and at the new packet time, from then on |
-| re-INVITE with `a=sendonly`, `a=inactive` or a `0.0.0.0` address (hold) | `200`. While the call is held rustmodem sends no RTP, the line's modem goes on ticking on silence from a local timer, and the RTP timeout does not run |
-| re-INVITE with no body | `200` with rustmodem's offer |
-| re-INVITE offering T.38, or no codec rustmodem has | `488`; the call goes on as it was |
+| re-INVITE whose session description is still a G.711 stream | `200` with RustModem's description, its version one higher. The media is sent to the new address, in the new codec and at the new packet time, from then on |
+| re-INVITE with `a=sendonly`, `a=inactive` or a `0.0.0.0` address (hold) | `200`. While the call is held RustModem sends no RTP, the line's modem goes on ticking on silence from a local timer, and the RTP timeout does not run |
+| re-INVITE with no body | `200` with RustModem's offer |
+| re-INVITE offering T.38, or no codec RustModem has | `488`; the call goes on as it was |
 | OPTIONS, in a call or outside one | `200` with `Allow` and `Accept: application/sdp` |
 | REGISTER, SUBSCRIBE, NOTIFY, REFER, UPDATE, PRACK, INFO, MESSAGE, PUBLISH | `405 Method Not Allowed` with `Allow` |
 | Any other method | `501 Not Implemented` with `Allow` |
 | Any request with `Require` | `420 Bad Extension` |
-| BYE or re-INVITE for a dialog rustmodem does not have | `481` |
+| BYE or re-INVITE for a dialog RustModem does not have | `481` |
 
 `Allow` is always `INVITE, ACK, BYE, CANCEL, OPTIONS`. No `Supported`
 header is sent: no extension is advertised.
@@ -172,7 +172,7 @@ a line, for as long as the line is in service.
   `sip:<user>@<server>`, with the contact
   `sip:<user>@<address>:<port>;line=<id>` and `Expires: <expires_s>`.
 - It is refreshed at 90 percent of the time the registrar granted. The
-  time granted is the `expires` of rustmodem's contact in the `200`, or
+  time granted is the `expires` of RustModem's contact in the `200`, or
   its `Expires` header, or what was asked for.
 - `401` or `407`: answered once with the line's credentials, MD5 or
   SHA-256, with `qop=auth` when the registrar offers it. The user name is
@@ -180,7 +180,7 @@ a line, for as long as the line is in service.
   for the refreshes without being asked.
 - `423 Interval Too Brief`: the registrar's `Min-Expires` is taken, once
   a try.
-- Any other answer, or none in 32 s, is a failure. rustmodem tries again
+- Any other answer, or none in 32 s, is a failure. RustModem tries again
   after 5, 10, 20 and 40 seconds and then every 60.
 - When the service stops, when the line is taken out of service, and when
   its `register` table is changed or removed, the binding is removed with
@@ -192,7 +192,7 @@ a line, for as long as the line is in service.
 |---|---|
 | `registering` | The first REGISTER is out, or the registrar's name is being looked up |
 | `registered` | The registrar accepted; `expires_in_s` says for how long |
-| `failed` | The last try failed. The state stays `failed`, with its reason, while rustmodem tries again, until a try succeeds |
+| `failed` | The last try failed. The state stays `failed`, with its reason, while RustModem tries again, until a try succeeds |
 | `unregistered` | The binding was removed |
 
 | Reason | Message |
@@ -211,7 +211,7 @@ logged, traced or returned by the control API.
 
 ## Session descriptions
 
-rustmodem offers and answers one audio stream:
+RustModem offers and answers one audio stream:
 
 ```
 v=0
@@ -230,7 +230,7 @@ a=silenceSupp:off - - - -
 An offer lists the codecs of `media.codecs` in their order. An answer has
 one codec: the first of `media.codecs` that the offer contains.
 
-| In an offer | What rustmodem does |
+| In an offer | What RustModem does |
 |---|---|
 | No `m=audio` line over `RTP/AVP`, or its port is zero | Refused |
 | Neither payload type 0 nor 8, or none that `media.codecs` has | Refused |

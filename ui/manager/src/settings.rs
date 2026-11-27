@@ -6,7 +6,7 @@
 //! grid's columns, the sort, the filter, which bars are shown and where
 //! the window is.
 //!
-//! It is kept under `HKEY_CURRENT_USER\Software\Quartz Systems\rustmodem\
+//! It is kept under `HKEY_CURRENT_USER\Software\Quartz Systems\RustModem\
 //! Manager`. Whatever is missing there, or is not what was written, is the
 //! default: the registry is never trusted to hold something usable.
 
@@ -14,7 +14,7 @@ use model::{Column, Filter, SortOrder};
 use win32::UserKey;
 
 /// Where the settings are kept, under `HKEY_CURRENT_USER`.
-pub const KEY: &str = r"Software\Quartz Systems\rustmodem\Manager";
+pub const KEY: &str = r"Software\Quartz Systems\RustModem\Manager";
 
 /// The narrowest and the widest a saved column may be, at 96 DPI.
 const WIDTH_RANGE: std::ops::RangeInclusive<i32> = 10..=4000;
@@ -165,7 +165,7 @@ mod tests {
     impl TestKey {
         fn new(name: &str) -> TestKey {
             let path = format!(
-                r"Software\Quartz Systems\rustmodem\Test\manager-{name}-{}",
+                r"Software\Quartz Systems\RustModem\Test\manager-{name}-{}",
                 std::process::id()
             );
             UserKey::delete(&path);

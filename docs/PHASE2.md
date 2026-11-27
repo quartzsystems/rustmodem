@@ -296,7 +296,7 @@ the documentation as described; say if any should change.
 
 - RFC 6026 is followed for the INVITE transaction, which the handoff does
   not name.
-- Two rustmodem services calling each other have no clock between them:
+- Two RustModem services calling each other have no clock between them:
   each sends when the other's packet arrives. It works, and is how the
   megabyte test runs, but nothing paces it. A real far end has a clock.
 
@@ -323,7 +323,7 @@ the documentation as described; say if any should change.
 
 - `rustmodem-sippeer` reports what goes wrong in plain text, with the line
   of the script, not as `RMD` messages: it is a tool for whoever develops
-  rustmodem and is not shipped.
+  RustModem and is not shipped.
 - The demo service's `sip` script gives the lines the engines their
   configuration names, not its demo engine, and makes every line answer by
   itself. Its frozen script gained two hunt groups and two routes, so that

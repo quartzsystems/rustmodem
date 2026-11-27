@@ -143,7 +143,7 @@ $ONLINE_COMMAND
 > ATI0\\r
 < \\r\\nrustmodem\\r\\n\\r\\nOK\\r\\n
 > ATI3\\r
-< \\r\\nrustmodem ${VERSION}\\r\\n\\r\\nOK\\r\\n
+< \\r\\nRustModem ${VERSION}\\r\\n\\r\\nOK\\r\\n
 > ATI4\\r
 < \\r\\nNULL MODEM,V.250,+MS,+ES,+DS\\r\\n\\r\\nOK\\r\\n
 > ATI1\\r

@@ -130,7 +130,7 @@ fn a_missing_configuration_is_reported_and_exits_with_1() {
 
     // It is in the log too: with no usable configuration, the log is in the
     // default log directory.
-    let log = scratch.path(r"ProgramData\Quartz Systems\rustmodem\logs\rustmodem.log");
+    let log = scratch.path(r"ProgramData\Quartz Systems\RustModem\logs\rustmodem.log");
     let logged = read(&log);
     assert!(logged.contains("ERROR [SVC] RMD0010"), "{logged}");
 }
@@ -143,7 +143,7 @@ fn the_default_configuration_path_is_under_program_data() {
     let errors = text(&output.stderr);
     assert!(errors.contains("RMD0010"), "{errors}");
     assert!(
-        errors.contains(r"ProgramData\Quartz Systems\rustmodem\rustmodem.toml"),
+        errors.contains(r"ProgramData\Quartz Systems\RustModem\rustmodem.toml"),
         "{errors}"
     );
 }
@@ -220,7 +220,7 @@ fn console_mode_starts_logs_and_stops_cleanly() {
     let mut child = start_console(&scratch, &config);
 
     eventually("the service to start", || {
-        read(&log).contains("RMD0001: rustmodem service started")
+        read(&log).contains("RMD0001: RustModem service started")
     });
     eventually("the port failure to be logged", || {
         read(&log).contains("RMD3001")
@@ -263,17 +263,17 @@ fn console_mode_starts_logs_and_stops_cleanly() {
     assert!(
         finished
             .trim_end()
-            .ends_with("INFO  [SVC] RMD0002: rustmodem service stopped."),
+            .ends_with("INFO  [SVC] RMD0002: RustModem service stopped."),
         "{finished}"
     );
     // In console mode the log lines are on standard output as well.
     let printed = text(&output.stdout);
     assert!(
-        printed.contains("RMD0001: rustmodem service started"),
+        printed.contains("RMD0001: RustModem service started"),
         "{printed}"
     );
     assert!(
-        printed.contains("RMD0002: rustmodem service stopped."),
+        printed.contains("RMD0002: RustModem service stopped."),
         "{printed}"
     );
 }
@@ -311,7 +311,7 @@ fn the_program_carries_its_version_information_icon_and_manifest() {
     for wanted in [
         "VS_VERSION_INFO",
         "Quartz Systems",
-        "rustmodem modem pool service",
+        "RustModem modem pool service",
         "rustmodem-svc.exe",
         "Copyright (C) 2026 Quartz Systems",
         file_version.as_str(),

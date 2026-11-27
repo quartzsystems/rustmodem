@@ -8,7 +8,7 @@ use msg::{Message, message};
 
 /// What `--help` prints.
 pub const USAGE: &str = "\
-rustmodem-ctl, the rustmodem command-line client
+rustmodem-ctl, the RustModem command-line client
 
 Usage:
   rustmodem-ctl [OPTIONS] info

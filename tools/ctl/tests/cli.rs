@@ -94,7 +94,7 @@ fn the_program_carries_its_version_information_icon_and_manifest() {
     for wanted in [
         "VS_VERSION_INFO",
         "Quartz Systems",
-        "rustmodem command-line client",
+        "RustModem command-line client",
         "rustmodem-ctl.exe",
         "Copyright (C) 2026 Quartz Systems",
         file_version.as_str(),

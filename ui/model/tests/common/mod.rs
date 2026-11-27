@@ -93,7 +93,7 @@ pub fn service(mode: ServiceMode, lines: u32, uptime_s: u64) -> ServiceInfo {
         version: "0.0.3".to_string(),
         protocol: PROTOCOL,
         pipe: "rustmodem-control".to_string(),
-        config_path: r"C:\ProgramData\Quartz Systems\rustmodem\rustmodem.toml".to_string(),
+        config_path: r"C:\ProgramData\Quartz Systems\RustModem\rustmodem.toml".to_string(),
         lines,
         started_ms: START_MS,
         uptime_ms: uptime_s * 1000,

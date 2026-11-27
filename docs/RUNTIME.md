@@ -372,7 +372,7 @@ No GPL or LGPL project was opened.
 |---|---|---|
 | `tokio` 1.54, features `rt-multi-thread`, `net`, `time`, `sync`, `macros`, `io-util`; `test-util` for `ctlsrv`'s tests | `svc`, `ctlsrv`, `pipe` (feature `server`), `demosvc`; the tests of `ctl` | MIT |
 | `tokio-macros`, `mio`, `socket2`, `bytes`, `pin-project-lite` | Tokio | MIT, or MIT OR Apache-2.0 |
-| `wasi` | In the lockfile only: `mio` names it for a target rustmodem is not built for | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| `wasi` | In the lockfile only: `mio` names it for a target RustModem is not built for | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 
 No `tokio-util`, `futures` or `async-trait`: the transport traits return
 `impl Future`. `cargo deny check` passes. None of these compiles C.

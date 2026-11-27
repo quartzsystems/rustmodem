@@ -2410,7 +2410,7 @@ fn id_list(ids: &[&str]) -> String {
 pub fn render() -> String {
     let mut out = String::new();
     let o = &mut out;
-    let _ = writeln!(o, "# The rustmodem control API");
+    let _ = writeln!(o, "# The RustModem control API");
     let _ = writeln!(o);
     let _ = writeln!(
         o,

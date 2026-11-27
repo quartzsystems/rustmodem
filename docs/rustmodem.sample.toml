@@ -2,10 +2,10 @@
 # licensed under the terms of the MIT license which can be found in the
 # root directory of this project.
 
-# A rustmodem configuration to start from: two lines on com0com pairs,
+# A RustModem configuration to start from: two lines on com0com pairs,
 # answering calls that a gateway sends over SIP to one number.
 #
-# Copy it to %ProgramData%\Quartz Systems\rustmodem\rustmodem.toml and
+# Copy it to %ProgramData%\Quartz Systems\RustModem\rustmodem.toml and
 # change the lines, the gateway's address and the number. docs\INSTALL.md
 # has the install, docs\COM0COM.md the ports, docs\TELEPHONY.md [sip] and
 # the tables after it, docs\MODEM.md [modem], and docs\RRAS.md dial-up
@@ -42,7 +42,7 @@ error_control = "auto"              # "auto": LAPM if the caller has it;
 compression = true                  # V.42bis, where there is LAPM
 guard_tone = "off"                  # "off", "1800" or "550"
 
-# A line for each com0com pair: `port` is rustmodem's port of the pair, and
+# A line for each com0com pair: `port` is RustModem's port of the pair, and
 # the host (RRAS, a terminal) has the other.
 [[line]]
 id = 1

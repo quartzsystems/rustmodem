@@ -183,7 +183,7 @@ impl AtInterpreter {
                     Next::Continue
                 }
                 Some(3) => {
-                    let version = format!("rustmodem {}", env!("CARGO_PKG_VERSION"));
+                    let version = format!("RustModem {}", env!("CARGO_PKG_VERSION"));
                     self.info(&[&version], out);
                     Next::Continue
                 }

@@ -1,7 +1,7 @@
 # Answering dial-up calls with Routing and Remote Access
 
-From a working rustmodem service to an answered PPP call: a Windows client
-behind a modem dials a number, the call arrives over SIP, a rustmodem line
+From a working RustModem service to an answered PPP call: a Windows client
+behind a modem dials a number, the call arrives over SIP, a RustModem line
 answers it, and Routing and Remote Access (RRAS) on the same machine runs
 PPP over that line's COM port as it would over a hardware modem.
 
@@ -29,7 +29,7 @@ versions.
       criteria of phase 3 ask. Do not debug RRAS on a path where a plain
       terminal call is unproven.
 
-In this guide line 1 is on the pair `CNCA0` and `CNCB0`: rustmodem has
+In this guide line 1 is on the pair `CNCA0` and `CNCB0`: RustModem has
 `CNCB0`, and the host's port `CNCA0` has been given the name `COM8`. Use the
 names of your own pairs.
 

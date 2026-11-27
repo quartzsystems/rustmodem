@@ -244,7 +244,7 @@ impl Command {
     /// the command is highlighted and for the tip of its toolbar button.
     pub fn description(self) -> &'static str {
         match self {
-            Command::Connect => "Connects to a rustmodem service by the name of its control pipe.",
+            Command::Connect => "Connects to a RustModem service by the name of its control pipe.",
             Command::Disconnect => {
                 "Closes the connection to the service and stops trying to connect."
             }
@@ -255,13 +255,13 @@ impl Command {
                 "Writes the statistics and the connect rates to a CSV file."
             }
             Command::ExportLog => "Writes the event log to a text file.",
-            Command::ServiceStart => "Starts the rustmodem Windows service.",
-            Command::ServiceStop => "Stops the rustmodem Windows service. Every call is hung up.",
+            Command::ServiceStart => "Starts the RustModem Windows service.",
+            Command::ServiceStop => "Stops the RustModem Windows service. Every call is hung up.",
             Command::ServiceRestart => {
-                "Stops the rustmodem Windows service and starts it again. Every call is hung up."
+                "Stops the RustModem Windows service and starts it again. Every call is hung up."
             }
-            Command::ServiceInstall => "Registers rustmodem as a Windows service.",
-            Command::ServiceUninstall => "Removes the rustmodem Windows service.",
+            Command::ServiceInstall => "Registers RustModem as a Windows service.",
+            Command::ServiceUninstall => "Removes the RustModem Windows service.",
             Command::Exit => "Closes the manager. The service goes on running.",
             Command::Answer => "Answers the call ringing on the selected line.",
             Command::HangUp => {

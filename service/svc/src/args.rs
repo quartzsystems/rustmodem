@@ -10,7 +10,7 @@ use msg::{Message, message};
 
 /// What `--help` prints.
 pub const USAGE: &str = "\
-rustmodem-svc, the rustmodem modem pool service
+rustmodem-svc, the RustModem modem pool service
 
 Usage:
   rustmodem-svc                       started by the service control manager
@@ -21,7 +21,7 @@ Usage:
   rustmodem-svc --version
 
 CONFIG is the path of the configuration file. The default is
-%ProgramData%\\Quartz Systems\\rustmodem\\rustmodem.toml.";
+%ProgramData%\\Quartz Systems\\RustModem\\rustmodem.toml.";
 
 /// What the program was asked to do.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -331,12 +331,12 @@ mod tests {
         Settings {
             service: ServiceSettings {
                 log_level: LogLevel::Info,
-                log_dir: r"C:\ProgramData\Quartz Systems\rustmodem\logs".to_string(),
+                log_dir: r"C:\ProgramData\Quartz Systems\RustModem\logs".to_string(),
             },
             control: ControlSettings {
                 pipe: "rustmodem-control".to_string(),
             },
-            path: r"C:\ProgramData\Quartz Systems\rustmodem\rustmodem.toml".to_string(),
+            path: r"C:\ProgramData\Quartz Systems\RustModem\rustmodem.toml".to_string(),
             sip: ctlproto::SipSettings::default(),
             media: ctlproto::MediaSettings::default(),
             modem: ctlproto::ModemSettings::default(),

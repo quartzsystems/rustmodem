@@ -197,7 +197,7 @@ fn control_report(command: Command, outcome: Option<std::io::Result<()>>) -> Err
 fn confirm_install(manager: &Manager, window: Hwnd, program: &Path) -> bool {
     let dialog = TaskDialog {
         title: "Install service".to_string(),
-        instruction: "Install rustmodem as a Windows service?".to_string(),
+        instruction: "Install RustModem as a Windows service?".to_string(),
         content: format!(
             "This runs {} --install. The service is registered to start with Windows and reads \
              its configuration from its default place.",

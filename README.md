@@ -1,4 +1,4 @@
-# rustmodem
+# RustModem
 
 A software modem pool for 64-bit Windows, by Quartz Systems.
 

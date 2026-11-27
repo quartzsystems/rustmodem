@@ -55,7 +55,7 @@ impl VersionInfo {
             .map(|part| part.parse::<u16>().unwrap_or(0));
         let mut next = || parts.next().unwrap_or(0);
         VersionInfo {
-            product: "rustmodem".to_string(),
+            product: "RustModem".to_string(),
             company: "Quartz Systems".to_string(),
             description: description.to_string(),
             version: [next(), next(), next(), 0],
@@ -483,7 +483,7 @@ mod tests {
         assert_eq!(version.internal_name, "rustmodem-manager");
         assert_eq!(version.original_filename, "rustmodem-manager.exe");
         assert_eq!(version.company, "Quartz Systems");
-        assert_eq!(version.product, "rustmodem");
+        assert_eq!(version.product, "RustModem");
         let odd = VersionInfo::rustmodem("x", "x.exe", "0.0.2-rc.1");
         assert_eq!(odd.version, [0, 0, 2, 0]);
         assert_eq!(
@@ -555,7 +555,7 @@ mod tests {
             "RustModem Manager",
             "1.2.3.0",
             "ProductName",
-            "rustmodem",
+            "RustModem",
             "ProductVersion",
             "OriginalFilename",
             "rustmodem-manager.exe",

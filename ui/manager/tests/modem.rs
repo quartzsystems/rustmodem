@@ -168,7 +168,7 @@ fn the_grid_and_the_statistics_show_what_the_modems_say() {
             .map(|(_, value)| value.clone())
             .unwrap()
     });
-    assert_eq!(engine, format!("rustmodem {}", env!("CARGO_PKG_VERSION")));
+    assert_eq!(engine, format!("RustModem {}", env!("CARGO_PKG_VERSION")));
     // The three commands of the modem can be chosen.
     select_line(&bench, 1);
     bench.opened.manager.with_model(|model| {

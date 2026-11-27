@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to rustmodem are recorded here. Versions follow the
+All notable changes to RustModem are recorded here. Versions follow the
 `VERSION` file.
 
 ## 0.1.0 (phase 4: V.22bis and V.42, the first release)

@@ -16,7 +16,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     let version = std::env::var("CARGO_PKG_VERSION").expect("Cargo sets the package version");
     let info = VersionInfo::rustmodem(
-        "rustmodem modem pool service",
+        "RustModem modem pool service",
         "rustmodem-svc.exe",
         &version,
     );

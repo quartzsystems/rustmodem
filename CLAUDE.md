@@ -1,6 +1,6 @@
-# rustmodem
+# RustModem
 
-rustmodem is a software modem pool for 64-bit Windows, a Quartz Systems
+RustModem is a software modem pool for 64-bit Windows, a Quartz Systems
 product. A Windows service terminates SIP/RTP, runs one in-house softmodem per
 call, and presents each line to Windows as a modem on a COM port, so RRAS
 answers dial-up calls as if the modems were hardware. A manager GUI and a CLI

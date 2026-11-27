@@ -52,7 +52,7 @@ use args::Mode;
 pub(crate) const SERVICE_NAME: &str = "rustmodem";
 
 /// The display name of the Windows service.
-pub(crate) const SERVICE_DISPLAY_NAME: &str = "rustmodem modem pool";
+pub(crate) const SERVICE_DISPLAY_NAME: &str = "RustModem Modem Pool";
 
 /// The version of the service.
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");

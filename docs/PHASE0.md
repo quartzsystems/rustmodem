@@ -262,7 +262,7 @@ These need an elevated prompt. Criterion 5 also needs com0com.
   setupc change CNCB1 dcd=ropen
   ```
 
-- [ ] Write `C:\ProgramData\Quartz Systems\rustmodem\rustmodem.toml`:
+- [ ] Write `C:\ProgramData\Quartz Systems\RustModem\rustmodem.toml`:
 
   ```toml
   [service]
@@ -330,7 +330,7 @@ These need an elevated prompt. Criterion 5 also needs com0com.
   Event 1 is `RMD0001`, the start; event 2 is `RMD0002`, the stop. The text
   follows a note that the description cannot be found, which is the
   `BLOCKED(phase5)` above.
-- [ ] `C:\ProgramData\Quartz Systems\rustmodem\logs\rustmodem.log` has the
+- [ ] `C:\ProgramData\Quartz Systems\RustModem\logs\rustmodem.log` has the
       same two messages.
 
 ## Known limits of phase 0

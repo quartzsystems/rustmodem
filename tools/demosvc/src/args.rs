@@ -8,7 +8,7 @@ use msg::{Message, message};
 
 /// What `--help` prints.
 pub const USAGE: &str = "\
-rustmodem-demosvc, a stand-in for the rustmodem service
+rustmodem-demosvc, a stand-in for the RustModem service
 
 Runs a real pool and the real control API on in-memory serial ports, so
 that the manager and rustmodem-ctl can be tried and tested with no com0com
