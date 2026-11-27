@@ -119,7 +119,7 @@ All additive: the protocol is still 1. `LineInfo.modem` and
 `CallInfo.modem`; `lines.diag` and the `line.diag` event, which a client
 is sent for one line, at most four times a second, and only when it asks
 by name; `selftest.run`; `[modem]` in `config.get` and `config.set`, and
-`modem` in `lines.add` and `lines.edit`. `rustmodemctl diag` and
+`modem` in `lines.add` and `lines.edit`. `rustmodem-ctl diag` and
 `selftest`. In the manager: Rate cap and modulations, Line diagnostics and
 Loopback self-test, the modem among the engines of a line with its own
 settings, and the Retr. column and "Softmodem engine" live. Nothing is
@@ -232,7 +232,7 @@ gone.
 | The 64 KiB over SIP and RTP is a long test | It is in the ordinary run | Two ends that tick on what they receive have no clock between them: three calls of 36 minutes each take five seconds |
 | The corpus has the engine calling itself | It has the engine answering itself: three captures, of a caller with V.8, with V.21 and no V.8, and with Bell 103 only | The bench that captures has the peer call the line. A capture of the line calling is not there |
 | Replay takes `--answer`, `--originate`, `--law`, `--expect` and `--tx-out` | And `--modulations` and `--no-v8`, and it prints `sent-as-captured` | A capture does not say what the modem's settings were, and a replay with others is not that call. The line says for how many frames the replay sends what the call sent |
-| `rustmodemctl` has "modem settings on `line`" | `line` shows them | The program has no command that changes a line |
+| `rustmodem-ctl` has "modem settings on `line`" | `line` shows them | The program has no command that changes a line |
 | The demo service names the engine it relied on | Its lines are modem lines, except in the `sip` script, and its calls are still played by the demo engine, which modulates nothing and makes up what a modem would show of itself | So that the manager's three new windows have something to work on in a demo and in the tests |
 | Goldens are blessed on the CI runner image | The manager's commit went to a branch, `phase3-goldens`, first; CI took the pictures; the branch was deleted | As in phases 1 and 2 |
 | Every commit on `main` is green | Two were red on the Linux job | `feat(engine)`: the soak failed with a wrong octet on a null-engine line, on a commit that touched neither the soak nor that engine. Each end of a call in the soak began to send the moment its own engine connected, which can be before the other end's has: what is sent to a modem that is not connected yet is lost, as it is between any two modems. The runner lost that race once, and again on the manager's branch, on a modem line. Each end waits for the other's now. `feat(ctl)`: `a_hundred_lines_on_memory_ports_are_served_as_the_first_is` read the carrier signal the moment the pool said the line was online, and the signal is raised by the port's own thread a moment later. The test waits for it now. Both repairs are the `test` commit, with a third: the CLI's test of the self-test gave the service 10 seconds, and the runner took a little more |
@@ -435,19 +435,19 @@ target = "line:1"
 
 ```
 rustmodem-svc --console C:\rustmodem\rustmodem.toml
-rustmodemctl capture on 1
-rustmodemctl watch
+rustmodem-ctl capture on 1
+rustmodem-ctl watch
 ```
 
 - [ ] On line 1's host: `ATS0=1`. On the Courier: `AT&F1&N1&M0&K0B0`, then
       `ATDT5551000`.
 - [ ] Both ends say `CONNECT 300`.
-- [ ] `rustmodemctl line 1` shows the call with `300 bit/s` and `V.21`,
-      and `rustmodemctl diag 1` the state `data`.
+- [ ] `rustmodem-ctl line 1` shows the call with `300 bit/s` and `V.21`,
+      and `rustmodem-ctl diag 1` the state `data`.
 - [ ] Text typed at each end appears at the other.
 - [ ] A known file sent each way for ten minutes arrives with no error:
       compare the two with `fc /b`.
-- [ ] `rustmodemctl capture check <file>` on the call's capture says
+- [ ] `rustmodem-ctl capture check <file>` on the call's capture says
       clean.
 - [ ] If error control is left on (`&M4`), the Courier opens with the V.42
       detection pattern, which arrives as a few stray characters, and then
@@ -471,7 +471,7 @@ rustmodemctl watch
 
 **13. Captures for the corpus.**
 
-- [ ] Each of the three calls above was captured (`rustmodemctl capture
+- [ ] Each of the three calls above was captured (`rustmodem-ctl capture
       on 1`). For each: copy the file to
       `modem/engine/tests/corpus/courier-<what>.rmcap`, run
 
@@ -495,7 +495,7 @@ rustmodemctl watch
       is steady and somewhere between -10 and -30 dBm0.
 - [ ] The frequency error is within a few hertz, and the quality is
       steady.
-- [ ] `rustmodemctl selftest 1 2` passes on the machine, with two idle
+- [ ] `rustmodem-ctl selftest 1 2` passes on the machine, with two idle
       modem lines: it is the same modem with no network, and tells a fault
       of the path from a fault of the modem.
 

@@ -141,7 +141,7 @@ ui/model            the manager's data model (pure)
 ui/glyph            icons drawn in code; .ico and .res writers (pure)
 ui/win32            safe wrappers over the Win32 controls the manager uses
 ui/manager          rustmodem-manager.exe, "RustModem Manager"
-tools/ctl           rustmodemctl.exe
+tools/ctl           rustmodem-ctl.exe
 tools/demosvc       rustmodem-demosvc.exe: a pool on memory ports, scripted
 tools/sippeer       rustmodem-sippeer.exe: a scriptable SIP and RTP peer for
                     tests (not shipped)

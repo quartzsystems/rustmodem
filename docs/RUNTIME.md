@@ -8,7 +8,7 @@ service there after phase 2: what changed, what was measured, what differs
 from the handoff, and what is left for Cody.
 
 The retrofit changed no behaviour: no control API message, no file format,
-no AT command, nothing in `docs/TELEPHONY.md`. A `rustmodemctl` or a manager
+no AT command, nothing in `docs/TELEPHONY.md`. A `rustmodem-ctl` or a manager
 built before it works against a service built after it.
 
 ## Where Tokio is
@@ -39,8 +39,8 @@ router is given its datagrams through, and nothing else of a network.
 A pure crate or a media thread that gains a Tokio dependency is a defect.
 `ci/pure.sh` fails the build if Tokio is anywhere in the dependency graph,
 tests included, of a pure crate, of `media`, `telephony` or `sippeer`, or of
-`ui/win32` and `ui/manager`; and in what `rustmodemctl` itself is built
-from. `rustmodemctl`'s tests are the one allowed exception: they run its
+`ui/win32` and `ui/manager`; and in what `rustmodem-ctl` itself is built
+from. `rustmodem-ctl`'s tests are the one allowed exception: they run its
 commands against the real control server, which is on Tokio, so Tokio is a
 dependency of those tests and of nothing the program links.
 
@@ -285,7 +285,7 @@ those of the commit before, and are the same but for `.await`.
 |---|---|
 | `service/ctlsrv/tests/api.rs`, 16 tests, 304 assertions | They are `#[tokio::test(start_paused = true)]`. The client is async, and the fixture's pool is a task on Tokio's clock, so what waited on the pool's timers no longer waits. The assertions are identical |
 | `service/pipe/tests/api.rs`, 11 tests, 53 assertions | The listener and the server run on a runtime the tests share; the clients still block, as real ones do. Three tests ended a listener's wait for a client with a Win32 event; the wait is now given up as the server gives it up, on its stop channel. The assertions are identical |
-| `tools/ctl/src/tests.rs`, 15 tests, 125 assertions | The control server runs on a runtime the tests share, and `rustmodemctl`'s blocking client reaches the in-memory transport through `ctlsrv::memory::blocking`. The assertions are identical |
+| `tools/ctl/src/tests.rs`, 15 tests, 125 assertions | The control server runs on a runtime the tests share, and `rustmodem-ctl`'s blocking client reaches the in-memory transport through `ctlsrv::memory::blocking`. The assertions are identical |
 | `soak.rs`, `transparency.rs`, `udp.rs`, `peer.rs` | Moved from `service/telephony/tests/` to `service/svc/tests/`, where the socket now is. `transparency.rs` (18 assertions), `udp.rs` (22) and `peer.rs` (34) take their SIP socket from `svc::sipsock` and are otherwise as they were: they still drive the pool themselves. Their assertions are identical |
 | `soak.rs` | Also moved onto the real runner in package 5. Its 18 assertions keep their conditions; three had `states(&pool)` in the message they print and have `states()`. Two were added: that the ports were opened, and that the service stops in ten seconds |
 | `service/media/tests/threaded.rs`, `capture.rs` | The wakers they give return `true`. The assertions are identical |
@@ -384,7 +384,7 @@ No `tokio-util`, `futures` or `async-trait`: the transport traits return
 | # | Criterion | How it was shown |
 |---|---|---|
 | 1 | fmt, clippy with `-D warnings`, `cargo deny check`, `ci/headers.sh` and all tests pass on Windows; the pure crates pass on Linux, and none of them depends on Tokio | Run locally on Windows before every commit, and the Linux job under WSL before every push. `ci/pure.sh` is in the Windows job |
-| 2 | `docs/CONTROL_API.md`, the behaviour tables of `docs/TELEPHONY.md` and the `.rmcap` format are unchanged, and old clients work | None of the three files, nor `service/ctlproto`, `voip/*` or the router, was touched. The manager's tests and `rustmodemctl`'s run their clients against the new servers |
+| 2 | `docs/CONTROL_API.md`, the behaviour tables of `docs/TELEPHONY.md` and the `.rmcap` format are unchanged, and old clients work | None of the three files, nor `service/ctlproto`, `voip/*` or the router, was touched. The manager's tests and `rustmodem-ctl`'s run their clients against the new servers |
 | 3 | No test assertion was weakened or removed | "Tests" above |
 | 4 | 100 lines on memory ports are served correctly | `service/svc/tests/lines.rs` |
 | 5 | The 60-second soak passes, with tick times no worse than phase 2's | "Tick times" above |
@@ -415,12 +415,12 @@ set-up is the one in the checklists of `docs/PHASE0.md` and
 - [ ] Criterion 8 of `docs/PHASE2.md`: a call from the gateway rings,
       answers with `ATA` and clears from either end.
 - [ ] Criterion 9 of `docs/PHASE2.md`: a line registers; leave it past its
-      expiry and `rustmodemctl sip` still shows it registered, with the
+      expiry and `rustmodem-ctl sip` still shows it registered, with the
       time left renewed.
 
 **8. A 10-minute captured call.**
 
-- [ ] Criterion 12 of `docs/PHASE2.md`: `rustmodemctl capture check`
+- [ ] Criterion 12 of `docs/PHASE2.md`: `rustmodem-ctl capture check`
       reports Lost 0, Resync 0, Slips 0 and exits with 0.
 
 **9. The 10-minute soak on the real machine.**
@@ -434,7 +434,7 @@ set-up is the one in the checklists of `docs/PHASE0.md` and
 **10. The service installs, starts, stops and uninstalls.**
 
 - [ ] Criterion 7 of `docs/PHASE0.md`: `--install`, `net start`,
-      `rustmodemctl info`, `net stop`, `--uninstall`, and the two events
+      `rustmodem-ctl info`, `net stop`, `--uninstall`, and the two events
       in the Event Log.
 - [ ] With a call up and a line registered, `net stop rustmodem` returns
       well inside thirty seconds; the caller's telephone is hung up; the

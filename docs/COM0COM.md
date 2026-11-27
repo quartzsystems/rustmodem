@@ -110,7 +110,7 @@ The host then uses `COM8` (or whatever name `CNCA0` was given) as line 1.
 With the service running in console mode (`rustmodem-svc --console`), open the
 host's port in a terminal program at any speed and check each of these.
 
-- [ ] `rustmodemctl lines` shows the line as `not_ready` before the terminal
+- [ ] `rustmodem-ctl lines` shows the line as `not_ready` before the terminal
       opens the port and `idle` once it has.
 - [ ] The terminal shows DSR and CTS on, and DCD and RI off.
 - [ ] Typing `AT` and Enter gives `OK`.

@@ -8,28 +8,28 @@ use msg::{Message, message};
 
 /// What `--help` prints.
 pub const USAGE: &str = "\
-rustmodemctl, the rustmodem command-line client
+rustmodem-ctl, the rustmodem command-line client
 
 Usage:
-  rustmodemctl [OPTIONS] info
-  rustmodemctl [OPTIONS] lines
-  rustmodemctl [OPTIONS] line <id>
-  rustmodemctl [OPTIONS] diag <id>      the modem of the line's call
-  rustmodemctl [OPTIONS] selftest <a> <b>
-  rustmodemctl [OPTIONS] answer|hangup|reset|enable|disable <id>
-  rustmodemctl [OPTIONS] calls [--last N]
-  rustmodemctl [OPTIONS] reload
-  rustmodemctl [OPTIONS] stats
-  rustmodemctl [OPTIONS] ports
-  rustmodemctl [OPTIONS] log [--last N]
-  rustmodemctl [OPTIONS] watch          prints events until interrupted
-  rustmodemctl [OPTIONS] sip            the listener and the registrations
-  rustmodemctl [OPTIONS] reregister [<id>]
-  rustmodemctl [OPTIONS] groups         the hunt groups
-  rustmodemctl [OPTIONS] routes         the routes, in the order tried
-  rustmodemctl [OPTIONS] capture on|off <id>
-  rustmodemctl [--json] capture check <file>
-  rustmodemctl capture wav <file> <out.wav>
+  rustmodem-ctl [OPTIONS] info
+  rustmodem-ctl [OPTIONS] lines
+  rustmodem-ctl [OPTIONS] line <id>
+  rustmodem-ctl [OPTIONS] diag <id>      the modem of the line's call
+  rustmodem-ctl [OPTIONS] selftest <a> <b>
+  rustmodem-ctl [OPTIONS] answer|hangup|reset|enable|disable <id>
+  rustmodem-ctl [OPTIONS] calls [--last N]
+  rustmodem-ctl [OPTIONS] reload
+  rustmodem-ctl [OPTIONS] stats
+  rustmodem-ctl [OPTIONS] ports
+  rustmodem-ctl [OPTIONS] log [--last N]
+  rustmodem-ctl [OPTIONS] watch          prints events until interrupted
+  rustmodem-ctl [OPTIONS] sip            the listener and the registrations
+  rustmodem-ctl [OPTIONS] reregister [<id>]
+  rustmodem-ctl [OPTIONS] groups         the hunt groups
+  rustmodem-ctl [OPTIONS] routes         the routes, in the order tried
+  rustmodem-ctl [OPTIONS] capture on|off <id>
+  rustmodem-ctl [--json] capture check <file>
+  rustmodem-ctl capture wav <file> <out.wav>
 
 selftest joins the modems of two idle lines, the first originating and
 the second answering, with no network between them, and has each send the
@@ -52,7 +52,7 @@ Exit code: 0 on success, 1 on an error from the service, 2 when the
 service cannot be reached, 3 when the command line is not understood.
 
 The control pipe is open to SYSTEM and Administrators only: run
-rustmodemctl from an elevated prompt.";
+rustmodem-ctl from an elevated prompt.";
 
 /// The default control pipe name.
 pub const DEFAULT_PIPE: &str = "rustmodem-control";

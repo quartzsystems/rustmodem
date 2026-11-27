@@ -2,7 +2,7 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! The rustmodemctl command-line client.
+//! The rustmodem-ctl command-line client.
 //!
 //! A thin client of the control API in `ctlproto`: it opens the service's
 //! named pipe, makes one call, and prints the answer as a table, or as JSON
@@ -59,7 +59,7 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Command::Version => {
-            println!("rustmodemctl {}", env!("CARGO_PKG_VERSION"));
+            println!("rustmodem-ctl {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
         }
         // The capture commands read a file and need no service.

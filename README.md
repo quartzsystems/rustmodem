@@ -55,7 +55,7 @@ where.
 | `voip/` | SDP, RTP and SIP, written in-house and free of I/O |
 | `service/` | Messages, configuration, control API, the pool, the media threads, the SIP router, and the service with its runner |
 | `ui/` | The manager: its data model, its icons, the Win32 wrappers and the window |
-| `tools/` | `rustmodemctl`, the demo service, the test SIP peer, the capture replay tool and the fuzz targets |
+| `tools/` | `rustmodem-ctl`, the demo service, the test SIP peer, the capture replay tool and the fuzz targets |
 | `docs/` | Architecture, the runtime model, the modem, the AT command set, the control API, telephony, call capture, gateways, com0com set-up, the install from a release, and dial-up networking with RRAS |
 | `ci/` | The licence header and version checks, and the check that Tokio stays out of the pure crates |
 
@@ -69,7 +69,7 @@ cargo build --release -p svc -p ctl -p manager
 ```
 
 This produces `target/release/rustmodem-svc.exe`,
-`target/release/rustmodemctl.exe` and `target/release/rustmodem-manager.exe`.
+`target/release/rustmodem-ctl.exe` and `target/release/rustmodem-manager.exe`.
 The manager looks for `rustmodem-svc.exe` in its own folder when it is asked
 to install or remove the service.
 
@@ -81,8 +81,8 @@ prompt:
 
 ```
 rustmodem-svc --console C:\rustmodem\rustmodem.toml
-rustmodemctl lines
-rustmodemctl watch
+rustmodem-ctl lines
+rustmodem-ctl watch
 ```
 
 Or install it as the Windows service `rustmodem`:
@@ -122,11 +122,11 @@ in front. A call can be captured and checked for lost and slipped samples:
 [docs/CAPTURE.md](docs/CAPTURE.md).
 
 ```
-rustmodemctl sip
-rustmodemctl groups
-rustmodemctl routes
-rustmodemctl capture on 1
-rustmodemctl capture check <file>
+rustmodem-ctl sip
+rustmodem-ctl groups
+rustmodem-ctl routes
+rustmodem-ctl capture on 1
+rustmodem-ctl capture check <file>
 ```
 
 A line's engine is the modem unless its configuration says otherwise.
@@ -138,8 +138,8 @@ to start from. To see what the modem of a call is doing, and to try the
 modems of two idle lines against each other with no network between them:
 
 ```
-rustmodemctl diag 1
-rustmodemctl selftest 1 2
+rustmodem-ctl diag 1
+rustmodem-ctl selftest 1 2
 ```
 
 The AT command set is in [docs/AT.md](docs/AT.md) and the control API in

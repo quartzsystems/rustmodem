@@ -11,7 +11,7 @@ pub const USAGE: &str = "\
 rustmodem-demosvc, a stand-in for the rustmodem service
 
 Runs a real pool and the real control API on in-memory serial ports, so
-that the manager and rustmodemctl can be tried and tested with no com0com
+that the manager and rustmodem-ctl can be tried and tested with no com0com
 and no elevated prompt. It is not part of the product and is never
 installed as a service. Ctrl+C stops it.
 
@@ -33,7 +33,7 @@ Options:
   --pipe NAME    the control pipe; default rustmodem-demo
 
 Connect with:  rustmodem-manager --demo
-               rustmodemctl --pipe rustmodem-demo lines";
+               rustmodem-ctl --pipe rustmodem-demo lines";
 
 /// The default control pipe name.
 pub const DEFAULT_PIPE: &str = "rustmodem-demo";

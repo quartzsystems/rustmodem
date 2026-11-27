@@ -14,7 +14,7 @@ under its own licence and is not in the zip.
 |---|---|
 | `rustmodem-svc.exe` | The service |
 | `rustmodem-manager.exe` | The manager, "RustModem Manager" |
-| `rustmodemctl.exe` | The command-line client |
+| `rustmodem-ctl.exe` | The command-line client |
 | `rustmodem.sample.toml` | A configuration to start from |
 | `LICENSE`, `README.md`, `CHANGELOG.md` | The licence, what rustmodem is, and what each version changed |
 | `docs\` | The documentation, this file among it |
@@ -44,8 +44,8 @@ under its own licence and is not in the zip.
    names the line and the key. In another elevated prompt:
 
    ```
-   rustmodemctl info
-   rustmodemctl lines
+   rustmodem-ctl info
+   rustmodem-ctl lines
    ```
 
    Ctrl+C stops the service.
@@ -68,9 +68,9 @@ Then, for dial-up networking, `docs\RRAS.md`.
 
 ## Check
 
-- [ ] `rustmodemctl info` prints the version of the zip.
-- [ ] `rustmodemctl lines` lists every line of the configuration.
-- [ ] `rustmodemctl selftest 1 2` passes: the modems of lines 1 and 2 call
+- [ ] `rustmodem-ctl info` prints the version of the zip.
+- [ ] `rustmodem-ctl lines` lists every line of the configuration.
+- [ ] `rustmodem-ctl selftest 1 2` passes: the modems of lines 1 and 2 call
       each other inside the service and each sends the other 64 KiB.
 - [ ] The checklist at the end of `docs\COM0COM.md` passes for one pair.
 
@@ -80,7 +80,7 @@ Then, for dial-up networking, `docs\RRAS.md`.
 |---|---|
 | The configuration | `%ProgramData%\Quartz Systems\rustmodem\rustmodem.toml`, or the path given to `--install` |
 | Stored AT profiles (`AT&W`) | `profiles.toml` beside the configuration |
-| The log | `%ProgramData%\Quartz Systems\rustmodem\logs`, unless `[service] log_dir` names another; `rustmodemctl log` prints its end |
+| The log | `%ProgramData%\Quartz Systems\rustmodem\logs`, unless `[service] log_dir` names another; `rustmodem-ctl log` prints its end |
 | Call captures | `captures` under the log folder, unless `[media] capture_dir` names another, when a line's capture is on |
 
 ## Upgrade

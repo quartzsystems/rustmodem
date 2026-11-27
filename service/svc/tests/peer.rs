@@ -5,7 +5,7 @@
 //! A whole service against the test peer on real sockets, with the call
 //! captured: the peer calls a line over SIP, sends RTP by a clock of its
 //! own, with and without faults, and checks what comes back; the capture
-//! of the call is then read and checked as `rustmodemctl capture check`
+//! of the call is then read and checked as `rustmodem-ctl capture check`
 //! does.
 
 mod support;

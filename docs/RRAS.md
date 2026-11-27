@@ -22,7 +22,7 @@ versions.
 - [ ] Every line has its com0com pair, wired as `docs/COM0COM.md` says, and
       the checklist at the end of that document passes for it.
 - [ ] Calls arrive: `[sip]` is set up, the gateway sends the pilot number to
-      a hunt group of these lines, and `rustmodemctl watch` shows a line
+      a hunt group of these lines, and `rustmodem-ctl watch` shows a line
       ring when the number is dialled. `docs/TELEPHONY.md` and
       `docs/GATEWAYS.md`.
 - [ ] A call connects at 300 bit/s from a real modem, as the manual
@@ -81,8 +81,8 @@ Leave each modem's properties alone. In particular leave **Extra
 initialization commands** on the **Advanced** tab empty, and leave the
 maximum port speed as it is.
 
-Check: `rustmodemctl ports` lists each host port with the modem Windows
-has on it. `rustmodemctl lines` shows the lines `not_ready` still: nothing
+Check: `rustmodem-ctl ports` lists each host port with the modem Windows
+has on it. `rustmodem-ctl lines` shows the lines `not_ready` still: nothing
 has their host ports open yet.
 
 ## 3. Routing and Remote Access
@@ -128,7 +128,7 @@ connections.
 4. Repeat for each modem, and **OK**.
 
 **Ports** now lists each modem with the status **Inactive**. RRAS has
-opened the host port: `rustmodemctl lines` shows the line `idle` where it
+opened the host port: `rustmodem-ctl lines` shows the line `idle` where it
 was `not_ready`, and the service's log at `debug` shows the initialisation
 the driver sent.
 
@@ -162,9 +162,9 @@ What should happen, and where to see it:
 
 | Step | Where |
 |---|---|
-| The call arrives and a line rings | `rustmodemctl watch`; the manager's grid; `RING` in the log at `debug` |
+| The call arrives and a line rings | `rustmodem-ctl watch`; the manager's grid; `RING` in the log at `debug` |
 | RRAS answers | `ATA` in the log; the line goes to `handshaking` |
-| The modems connect | The line goes to `online`, with `2400`, `V.22bis`, `LAPM` and `V.42bis`; `rustmodemctl diag 1` and the manager's Line diagnostics show a constellation of sixteen tight points |
+| The modems connect | The line goes to `online`, with `2400`, `V.22bis`, `LAPM` and `V.42bis`; `rustmodem-ctl diag 1` and the manager's Line diagnostics show a constellation of sixteen tight points |
 | PPP comes up | **Ports** in RRAS shows the port **Active**; **Remote Access Clients** lists the user |
 | The client has an address | `ipconfig` on the client; `ping` to the server's address in the pool |
 
@@ -177,7 +177,7 @@ leave the session up for half an hour: the manual criteria of
 The service logs every AT command line a host sends, and the modem's
 answer, at `debug`. Set the log level in the manager's Settings, which
 takes effect at once, or set `log_level = "debug"` under `[service]` in
-the configuration file and restart the service. `rustmodemctl log` prints
+the configuration file and restart the service. `rustmodem-ctl log` prints
 the end of the log.
 
 NEEDS-CODY: after the first call that works, take the lines of that line
@@ -201,7 +201,7 @@ unknown commands refused, so that none of them passes by being skipped.
 | The modem is not in the list of **Ports** | No modem device on the host port: step 2. Or RRAS was configured before the modems were added: restart the Routing and Remote Access service |
 | The line shows `not_ready` | Nothing has the host port open. RRAS opens it when the port is enabled for inbound connections: step 4 |
 | The line rings and nobody answers | The port is not enabled for inbound connections; or the driver's initialisation failed: look for `ERROR` in the log, and set `unknown_command = "ok"` |
-| `NO CARRIER` after some seconds of tones | The modems did not agree. `rustmodemctl diag` during the call shows where it stopped; RMD7001 in the log names the state. Try the client capped at 1200 bit/s, and then at 300 |
+| `NO CARRIER` after some seconds of tones | The modems did not agree. `rustmodem-ctl diag` during the call shows where it stopped; RMD7001 in the log names the state. Try the client capped at 1200 bit/s, and then at 300 |
 | `NO CARRIER` straight after the modems connect | `error_control = "required"`, or the driver's `\N2` or `\N4`, and a client with error control off. RMD8001 in the log says so |
 | `CONNECT`, and then PPP fails | Authentication: step 5. The RRAS log, and the client's error number, say which side refused |
-| The call drops under load | Look at the RTP statistics of the line's call, `rustmodemctl line 1`: lost packets, and slips. LAPM rides out lost packets, but a path that loses many of them or changes the audio is the gateway's to fix: `docs/GATEWAYS.md` |
+| The call drops under load | Look at the RTP statistics of the line's call, `rustmodem-ctl line 1`: lost packets, and slips. LAPM rides out lost packets, but a path that loses many of them or changes the audio is the gateway's to fix: `docs/GATEWAYS.md` |

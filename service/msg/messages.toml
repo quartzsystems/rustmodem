@@ -253,7 +253,7 @@ severity = "error"
 vars = 1
 text = "Hunt group &1 is not in the configuration."
 cause = "A change was asked for to a hunt group that the configuration does not have."
-recovery = "List the hunt groups with: rustmodemctl groups"
+recovery = "List the hunt groups with: rustmodem-ctl groups"
 
 [RMD0033]
 severity = "error"
@@ -267,7 +267,7 @@ severity = "error"
 vars = 2
 text = "There is no route at position &1: the configuration has &2 routes."
 cause = "A route is named by its position in the list, from 0. The routes may have been changed since they were listed."
-recovery = "List the routes again with: rustmodemctl routes"
+recovery = "List the routes again with: rustmodem-ctl routes"
 
 [RMD0035]
 severity = "error"
@@ -801,7 +801,7 @@ severity = "info"
 vars = 2
 text = "The call on line &1 is being captured to &2."
 cause = "Call capture is on for the line. Every RTP packet the call receives and sends is written to the file."
-recovery = "No action is needed. Check the capture with: rustmodemctl capture check <file>"
+recovery = "No action is needed. Check the capture with: rustmodem-ctl capture check <file>"
 
 [RMD6007]
 severity = "warning"

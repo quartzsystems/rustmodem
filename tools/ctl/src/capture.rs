@@ -193,7 +193,7 @@ mod tests {
 
     /// A file of the test's own in the temporary directory.
     fn scratch(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("rustmodemctl-{}-{name}", std::process::id()))
+        std::env::temp_dir().join(format!("rustmodem-ctl-{}-{name}", std::process::id()))
     }
 
     fn packet(kind: Kind, n: u32, at_ms: u64) -> Record {

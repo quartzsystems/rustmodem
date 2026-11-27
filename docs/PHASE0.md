@@ -103,7 +103,7 @@ thread, which sleeps on the ports' wait handles between ticks.
 
 ### 10. `tools/ctl`
 
-`rustmodemctl.exe` with the commands of the handoff, tables by default and
+`rustmodem-ctl.exe` with the commands of the handoff, tables by default and
 `--json` for scripts.
 
 ### 11. This record
@@ -135,7 +135,7 @@ Every `BLOCKED` and `NEEDS-CODY` in the tree:
 | Start, stop and fatal errors go to the Event Log | They do in service mode only | Console mode logs to the console. Writing to the Event Log from every test run and every foreground run would fill it with noise |
 | With no arguments the program expects the service control manager | It does. A service installed with a configuration path is started as `rustmodem-svc --service <path>` | The service control manager passes the path as a process argument, and the program has to tell it from a mode |
 | Pool events include "counters" | There is no counters event. `line.state` carries the whole line, counters included, and `lines.get` reports them at any time | The control API's event list has no counters event |
-| `rustmodemctl` exits 0, 1 or 2 | It also exits 3 when the command line is not understood | A usage error is neither an API error nor a connection error |
+| `rustmodem-ctl` exits 0, 1 or 2 | It also exits 3 when the command line is not understood | A usage error is neither an API error nor a connection error |
 | Work packages are committed and checked one at a time | Work packages 4, 5 and 6 were checked together and then committed as three commits | Work on 5 and 6 went on while the 10-minute fuzz run for 4 was running. The `Cargo.lock` in the commits for 4 and 5 is the one that goes with 6 |
 
 ## Decisions to confirm
@@ -200,7 +200,7 @@ documentation as described; say if any should change.
 
 - Log timestamps are UTC.
 - The log file rotates at 10 MiB.
-- In console mode `rustmodemctl` still needs an elevated prompt, because the
+- In console mode `rustmodem-ctl` still needs an elevated prompt, because the
   pipe's security is the same in both modes.
 
 ## References consulted
@@ -293,18 +293,18 @@ These need an elevated prompt. Criterion 5 also needs com0com.
 - [ ] In terminal 1, `ATH`: `OK`. Terminal 2 shows `NO CARRIER`.
 - [ ] Go through the signal checklist at the end of `docs/COM0COM.md`.
 
-**6. `rustmodemctl watch` shows each state change as it happens.**
+**6. `rustmodem-ctl watch` shows each state change as it happens.**
 
 - [ ] With the service running as above, in an elevated prompt:
 
   ```
-  rustmodemctl watch
+  rustmodem-ctl watch
   ```
 
 - [ ] Repeat the call. Each of these appears as it happens: line 1
       handshaking, line 2 ringing, both online, both calls ended, both idle.
 - [ ] Close terminal 2: line 2 becomes `not_ready`.
-- [ ] `rustmodemctl lines` and `rustmodemctl calls` show the lines and the
+- [ ] `rustmodem-ctl lines` and `rustmodem-ctl calls` show the lines and the
       calls just made.
 
 **7. The service installs, starts, stops and uninstalls.**
@@ -315,7 +315,7 @@ These need an elevated prompt. Criterion 5 also needs com0com.
   ```
   rustmodem-svc --install
   net start rustmodem
-  rustmodemctl info
+  rustmodem-ctl info
   net stop rustmodem
   rustmodem-svc --uninstall
   ```

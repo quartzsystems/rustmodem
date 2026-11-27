@@ -47,7 +47,7 @@ say what the call connected with.
    `log_level = "debug"` under `[service]`.
 2. Let the host do what it does: open the port, initialise, answer a
    call.
-3. `rustmodemctl log --last 500 > host.log`, and copy the lines of the
+3. `rustmodem-ctl log --last 500 > host.log`, and copy the lines of the
    one line into a file here, named for the host: `rras-server-2022.txt`.
 4. `cargo test -p at --test hostlogs`.
 

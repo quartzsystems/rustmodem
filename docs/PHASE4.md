@@ -571,8 +571,8 @@ gateway's address in `trusted_peers` and `outbound_peer`, `CNCB0` and
 
 ```
 rustmodem-svc --console C:\rustmodem\rustmodem.toml
-rustmodemctl capture on 1
-rustmodemctl watch
+rustmodem-ctl capture on 1
+rustmodem-ctl watch
 ```
 
 - [ ] On line 1's host: `ATS0=1`. On the Courier: `AT&F1&N3`, then
@@ -580,7 +580,7 @@ rustmodemctl watch
 - [ ] Line 1's host says `CONNECT 2400`. The Courier says `CONNECT 2400`
       with its words for LAPM and V.42bis, and `ATI6` after the call
       names them.
-- [ ] `rustmodemctl line 1` shows the call with `2400 bit/s`, `V.22bis`,
+- [ ] `rustmodem-ctl line 1` shows the call with `2400 bit/s`, `V.22bis`,
       `LAPM` and `V.42bis`.
 - [ ] In the manager, View, Line diagnostics on line 1: the constellation
       is sixteen tight points on the sixteen marks; the signal-to-noise
@@ -590,27 +590,27 @@ rustmodemctl watch
       programs, or a plain capture of a text file) arrives with matching
       checksums: `certutil -hashfile <file> SHA256` at each end.
 - [ ] The call holds for 30 minutes with data now and then, and
-      `rustmodemctl line 1` shows no retrain, or few.
-- [ ] `rustmodemctl capture check <file>` on the call's capture says
+      `rustmodem-ctl line 1` shows no retrain, or few.
+- [ ] `rustmodem-ctl capture check <file>` on the call's capture says
       clean.
 
-**12. Fallbacks.** Each with `rustmodemctl capture on 1` first.
+**12. Fallbacks.** Each with `rustmodem-ctl capture on 1` first.
 
 - [ ] V.22: on the Courier `AT&F1&N2`, dial. `CONNECT 1200` at both
-      ends; `rustmodemctl line 1` shows `1200 bit/s`, `V.22` and `LAPM`;
+      ends; `rustmodem-ctl line 1` shows `1200 bit/s`, `V.22` and `LAPM`;
       the constellation is four points. Text crosses both ways.
 - [ ] Bell 212A: `AT&F1&N2B1`, dial. `CONNECT 1200`; the line says
       `V.22`, which is the same signal (see "Where the build differs");
       text crosses both ways.
 - [ ] No error control: `AT&F1&N3&M0&K0`, dial. `CONNECT 2400`;
-      `rustmodemctl line 1` shows no protocol; Link in the diagnostics
+      `rustmodem-ctl line 1` shows no protocol; Link in the diagnostics
       says start-stop characters with no error control; text crosses
       both ways.
 - [ ] Required against none: on line 1's host `AT+ES=3,2,4` (or set
       `error_control = "required"` on the line and restart nothing: it
       takes effect at the next call), and on the Courier
       `AT&F1&N3&M0`, dial. The modems train and the call clears: line
-      1's host has `NO CARRIER` and no `CONNECT`, and `rustmodemctl log`
+      1's host has `NO CARRIER` and no `CONNECT`, and `rustmodem-ctl log`
       shows RMD8001. Then `AT&F` on line 1's host.
 
 **13. Retrain.**
@@ -639,7 +639,7 @@ rustmodemctl watch
 **15. Initialisation strings.**
 
 - [ ] With `log_level = "debug"`, after criterion 14:
-      `rustmodemctl log --last 500 > rras.log`. Copy the lines of line
+      `rustmodem-ctl log --last 500 > rras.log`. Copy the lines of line
       1 from the first `> AT` to the `< CONNECT` into
       `dte/at/tests/hostlogs/rras-<windows version>.txt`, as
       `dte/at/tests/hostlogs/README.md` says, and run

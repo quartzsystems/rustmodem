@@ -75,7 +75,7 @@ struct Service {
 }
 
 /// What the control servers of the tests run on. The commands themselves
-/// block, as they do in `rustmodemctl`, on the threads of the tests. A
+/// block, as they do in `rustmodem-ctl`, on the threads of the tests. A
 /// server lives on after its service has gone, for as long as it has a
 /// client, so the runtime is the whole program's.
 fn runtime() -> &'static tokio::runtime::Runtime {
@@ -93,7 +93,7 @@ impl Service {
     fn start() -> Service {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let directory = std::env::temp_dir().join(format!(
-            "rustmodemctl-{}-{}",
+            "rustmodem-ctl-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -223,7 +223,7 @@ impl Service {
         client
     }
 
-    /// Runs a command line as `rustmodemctl` would and returns the exit
+    /// Runs a command line as `rustmodem-ctl` would and returns the exit
     /// code, what went to standard output and what went to standard error.
     fn ctl(&self, words: &[&str]) -> (u8, String, String) {
         self.ctl_watching(words, None)

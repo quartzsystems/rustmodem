@@ -36,5 +36,5 @@ replay send every frame the call sent: `tools/replay` says why.
 Captures of calls with real modems are added as they are taken.
 
 NEEDS-CODY: capture calls from the US Robotics Courier through the SPA112
-(`rustmodemctl capture on <line>`), in each of the modes above, answered
+(`rustmodem-ctl capture on <line>`), in each of the modes above, answered
 and originated, and add each here with its `.expect` and a note.

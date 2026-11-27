@@ -256,7 +256,7 @@ impl Drop for Fixture {
     }
 }
 
-/// A client on the pipe, as `rustmodemctl` is: the pipe opened as a file.
+/// A client on the pipe, as `rustmodem-ctl` is: the pipe opened as a file.
 struct PipeClient {
     reader: BufReader<File>,
     writer: File,

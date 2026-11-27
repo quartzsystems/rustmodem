@@ -267,10 +267,10 @@ frames for it in a tap that is off in a call of the service.
 
 ## Seeing and trying the modem
 
-`rustmodemctl diag <line>` prints the modem of a line's call. The manager
+`rustmodem-ctl diag <line>` prints the modem of a line's call. The manager
 shows the same, live, in View, Line diagnostics.
 
-`rustmodemctl selftest <a> <b>`, and Tools, Loopback self-test in the
+`rustmodem-ctl selftest <a> <b>`, and Tools, Loopback self-test in the
 manager, join the modems of two idle lines with nothing between them: the
 first calls the second, and each sends the other 64 KiB. The test says
 whether the modems of this service work with the settings of those two

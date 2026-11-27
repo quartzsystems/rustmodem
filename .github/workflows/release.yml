@@ -73,7 +73,7 @@ jobs:
           mkdir -p "dist/$name"
           cp target/release/rustmodem-svc.exe "dist/$name/"
           cp target/release/rustmodem-manager.exe "dist/$name/"
-          cp target/release/rustmodemctl.exe "dist/$name/"
+          cp target/release/rustmodem-ctl.exe "dist/$name/"
           cp docs/rustmodem.sample.toml "dist/$name/"
           cp LICENSE README.md CHANGELOG.md "dist/$name/"
           cp -r docs "dist/$name/docs"

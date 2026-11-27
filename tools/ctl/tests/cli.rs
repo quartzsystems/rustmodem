@@ -2,7 +2,7 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! `rustmodemctl.exe` as a program: its arguments and its exit codes.
+//! `rustmodem-ctl.exe` as a program: its arguments and its exit codes.
 //!
 //! The commands themselves are tested against the control server inside the
 //! crate. The service's pipe is open to Administrators only, so the program
@@ -11,7 +11,7 @@
 use std::process::{Command, Output};
 
 fn ctl(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rustmodemctl"))
+    Command::new(env!("CARGO_BIN_EXE_rustmodem-ctl"))
         .args(args)
         .output()
         .unwrap()
@@ -43,7 +43,7 @@ fn help_and_version() {
     assert!(version.status.success());
     assert_eq!(
         text(&version.stdout).trim(),
-        format!("rustmodemctl {}", env!("CARGO_PKG_VERSION"))
+        format!("rustmodem-ctl {}", env!("CARGO_PKG_VERSION"))
     );
 }
 
@@ -86,7 +86,7 @@ fn a_service_that_is_not_there_exits_with_2() {
 #[cfg(windows)]
 #[test]
 fn the_program_carries_its_version_information_icon_and_manifest() {
-    let program = std::fs::read(env!("CARGO_BIN_EXE_rustmodemctl")).unwrap();
+    let program = std::fs::read(env!("CARGO_BIN_EXE_rustmodem-ctl")).unwrap();
     let has = |needle: &[u8]| program.windows(needle.len()).any(|window| window == needle);
     let utf16 =
         |text: &str| -> Vec<u8> { text.encode_utf16().flat_map(u16::to_le_bytes).collect() };
@@ -95,7 +95,7 @@ fn the_program_carries_its_version_information_icon_and_manifest() {
         "VS_VERSION_INFO",
         "Quartz Systems",
         "rustmodem command-line client",
-        "rustmodemctl.exe",
+        "rustmodem-ctl.exe",
         "Copyright (C) 2026 Quartz Systems",
         file_version.as_str(),
     ] {

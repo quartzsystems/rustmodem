@@ -7,7 +7,7 @@
 //!
 //! [`blocking`] gives a client's end to code that reads and writes as
 //! `std::io` does, on a thread that is not one of the runtime's:
-//! `rustmodemctl` is such a client, and its tests use it.
+//! `rustmodem-ctl` is such a client, and its tests use it.
 
 use std::io::{self, Read, Write};
 use std::time::Duration;

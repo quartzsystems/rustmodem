@@ -1476,9 +1476,9 @@ service fills in.
 | `RMD0028` | Hunt group name &1 at line &2 is already used at line &3. | Two hunt groups have the same name. Routes name a group by its name, so every group needs its own. | Give one of the hunt groups a different name and try again. |
 | `RMD0029` | Pilot number &1 at line &2 is already used at line &3. | Two hunt groups have the same pilot number. A call to the number can go to one group only. | Give one of the hunt groups a different pilot number and try again. |
 | `RMD0030` | Route &1 at line &2 has target &3, which does not exist. | A route sends its calls to a line or to a hunt group that the configuration has. | Correct the target, or add the line or the hunt group, and try again. |
-| `RMD0032` | Hunt group &1 is not in the configuration. | A change was asked for to a hunt group that the configuration does not have. | List the hunt groups with: rustmodemctl groups |
+| `RMD0032` | Hunt group &1 is not in the configuration. | A change was asked for to a hunt group that the configuration does not have. | List the hunt groups with: rustmodem-ctl groups |
 | `RMD0033` | Hunt group &1 is already in the configuration. | A hunt group was to be added, or renamed, with a name that another hunt group has. | Choose a name that is not in use, or change the group that has it. |
-| `RMD0034` | There is no route at position &1: the configuration has &2 routes. | A route is named by its position in the list, from 0. The routes may have been changed since they were listed. | List the routes again with: rustmodemctl routes |
+| `RMD0034` | There is no route at position &1: the configuration has &2 routes. | A route is named by its position in the list, from 0. The routes may have been changed since they were listed. | List the routes again with: rustmodem-ctl routes |
 | `RMD0035` | The registration of line &1 is not complete. | A line that registers to a PBX needs the server, the user and the password. One of them was not given and the line has none. | Give the server, the user and the password together. |
 | `RMD1001` | Line &1 does not exist. | The request names a line id that the service does not have. | List the lines to see which ids exist, then repeat the request with one of them. |
 | `RMD1002` | Line &1 is disabled. | The request needs the line to be enabled. | Enable the line and repeat the request. |

@@ -14,8 +14,8 @@ Capture is on or off for a line. It is off when the service starts, and is
 not kept in the configuration.
 
 ```
-rustmodemctl capture on 3
-rustmodemctl capture off 3
+rustmodem-ctl capture on 3
+rustmodem-ctl capture off 3
 ```
 
 While it is on, each call on the line is written to a file of its own in
@@ -46,7 +46,7 @@ call with loss.
 ## Checking a capture
 
 ```
-rustmodemctl capture check line03-1800000000123.rmcap
+rustmodem-ctl capture check line03-1800000000123.rmcap
 ```
 
 ```
@@ -111,7 +111,7 @@ with 1.
 ## Listening to a capture
 
 ```
-rustmodemctl capture wav line03-1800000000123.rmcap call.wav
+rustmodem-ctl capture wav line03-1800000000123.rmcap call.wav
 ```
 
 This writes a two-channel WAV file at 8,000 samples a second, in the

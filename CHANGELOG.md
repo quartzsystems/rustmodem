@@ -52,7 +52,7 @@ answer dial-up calls with Routing and Remote Access, and
   window and compression each way. `CallRecord` gains `modem`, as it
   last was. `lines.diag` gains the constellation. `Stats` fills
   `retrains`, `protocols` and `compressions`.
-- **`rustmodemctl`.** `line`, `diag`, `calls` and `selftest` show the
+- **`rustmodem-ctl`.** `line`, `diag`, `calls` and `selftest` show the
   error control, the compression and the data link.
 - **Manager.** Rate cap and modulations has the five modulations, error
   control, compression and guard tone. Line diagnostics shows the
@@ -118,7 +118,7 @@ reference.
   `[modem]` in `config.get` and `config.set`, and `modem` in `lines.add`
   and `lines.edit`. `engine` may be `modem`, and is when it is left out of
   `lines.add`.
-- **`rustmodemctl`.** `diag <id>` and `selftest <a> <b>`; `line` shows the
+- **`rustmodem-ctl`.** `diag <id>` and `selftest <a> <b>`; `line` shows the
   modem's settings and the modem of a call.
 - **Manager.** Modem, Rate cap and modulations; View, Line diagnostics,
   with a scope of the demodulator's output; Tools, Loopback self-test. The
@@ -140,7 +140,7 @@ manual checklist of [docs/PHASE3.md](docs/PHASE3.md).
 
 The service's control plane runs on Tokio. Nothing the service does has
 changed: no control API message, no file format, no AT command. A
-`rustmodemctl` or a manager of 0.0.3 works against a service of 0.0.4. The
+`rustmodem-ctl` or a manager of 0.0.3 works against a service of 0.0.4. The
 runtime model and the record of the change are in
 [docs/RUNTIME.md](docs/RUNTIME.md).
 
@@ -163,7 +163,7 @@ runtime model and the record of the change are in
   event through a channel they never wait on, and the pool looks for the
   data of the calls every 10 ms while a call is up, where it looked every
   20 ms.
-- **Clients.** `rustmodemctl` and the manager are as they were, on the
+- **Clients.** `rustmodem-ctl` and the manager are as they were, on the
   blocking pipe client, and do not depend on Tokio.
 - **Checks.** `ci/pure.sh` fails the build if Tokio is in the dependency
   graph of a pure crate, of the media threads or of the manager. The Linux
@@ -199,7 +199,7 @@ The record of the phase is [docs/PHASE2.md](docs/PHASE2.md).
 - **Engines.** A line runs the null engine or the new echo engine, by
   `engine` in its table. `ATI4` names it.
 - **Call capture.** Every RTP packet of a line's calls written to a
-  `.rmcap` file, turned on a line at a time. `rustmodemctl capture check`
+  `.rmcap` file, turned on a line at a time. `rustmodem-ctl capture check`
   says what was lost, late, doubled and slipped and exits with 0 only for a
   clean call; `capture wav` writes the call as a two-channel G.711 WAV
   file. See [docs/CAPTURE.md](docs/CAPTURE.md).
@@ -212,7 +212,7 @@ The record of the phase is [docs/PHASE2.md](docs/PHASE2.md).
   their RTP statistics; the statistics carry RTP, jitter, loss, the
   processor time of the service and SIP in a line. Two events more,
   `sip.registration` and `sip.trace`, the second only for a client that
-  asks for it by name. `rustmodemctl` has `sip`, `reregister`, `groups`,
+  asks for it by name. `rustmodem-ctl` has `sip`, `reregister`, `groups`,
   `routes` and `capture`.
 - **Manager.** The SIP menu: Re-register, Trunk peers, Hunt groups, Routes
   and a SIP trace window. Tools, Call capture. The grid shows each line's
@@ -260,7 +260,7 @@ phase is [docs/PHASE1.md](docs/PHASE1.md).
   only a new pipe name waits for the service to start again.
   `service.info` says how the service is run and when it loaded its
   configuration; a line says what is bound to its port, and counts its AT
-  commands. `rustmodemctl` has `stats`, `ports` and `log`.
+  commands. `rustmodem-ctl` has `stats`, `ports` and `log`.
 - **Stored profiles.** `AT&W` stores the active profile, and `ATZ`, a reset
   and a restart of the service bring it back. Profiles are kept in
   `profiles.toml` beside the configuration file.
@@ -310,7 +310,7 @@ phase is [docs/PHASE0.md](docs/PHASE0.md).
   [docs/CONTROL_API.md](docs/CONTROL_API.md).
 - **Service.** `rustmodem-svc.exe`: a Windows service with a console mode,
   rotating log files and Event Log entries for start, stop and fatal errors.
-- **Client.** `rustmodemctl.exe`: lists lines and calls, answers, hangs up,
+- **Client.** `rustmodem-ctl.exe`: lists lines and calls, answers, hangs up,
   resets, enables and disables lines, reloads the configuration, and watches
   events.
 

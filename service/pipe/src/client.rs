@@ -6,7 +6,7 @@
 //!
 //! A pipe opened as an ordinary file does one thing at a time: a write
 //! waits for a read that is already waiting. That is enough for a client
-//! that asks and then listens, as `rustmodemctl` does. A client that
+//! that asks and then listens, as `rustmodem-ctl` does. A client that
 //! listens for events all the time and asks whenever its user does needs
 //! the handle opened for overlapped I/O, which is what [`PipeClient`] is.
 

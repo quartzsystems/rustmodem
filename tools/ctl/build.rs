@@ -2,7 +2,7 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! Gives rustmodemctl.exe its icon, its version information and its manifest. The
+//! Gives rustmodem-ctl.exe its icon, its version information and its manifest. The
 //! resource file is written by `glyph` and handed to the linker; no
 //! resource compiler is used.
 
@@ -13,7 +13,7 @@ fn main() {
     let version = std::env::var("CARGO_PKG_VERSION").expect("Cargo sets the package version");
     let info = VersionInfo::rustmodem(
         "rustmodem command-line client",
-        "rustmodemctl.exe",
+        "rustmodem-ctl.exe",
         &version,
     );
     let manifest = Manifest {

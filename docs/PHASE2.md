@@ -146,7 +146,7 @@ engine; `ATI4` names the engine.
   writer thread for the service empties the rings into `.rmcap` files. A
   full ring drops records, counts them and marks the hole in the file; a
   tick never waits. `docs/CAPTURE.md` has the format.
-- `rustmodemctl capture check` replays the received packets through the
+- `rustmodem-ctl capture check` replays the received packets through the
   same receiver and counts what happened, with the slips: points where the
   frames sent stopped matching the frames taken. `capture wav` writes a
   two-channel G.711 WAV file.
@@ -160,7 +160,7 @@ engine; `ATI4` names the engine.
 
 Twelve methods and two events, all additions to protocol 1; the list is in
 `CHANGELOG.md` and the reference is `docs/CONTROL_API.md`, generated and
-checked as before. `rustmodemctl` has `sip`, `reregister`, `groups`,
+checked as before. `rustmodem-ctl` has `sip`, `reregister`, `groups`,
 `routes`, `capture on|off` and the two capture file commands. The service
 builds the SIP router and the threaded runner when `sip.enabled` is true,
 and on stopping hangs up every call, gives up every registration, and
@@ -289,7 +289,7 @@ the documentation as described; say if any should change.
   removal of the registrations.
 - A capture file is `line<NN>-<start in Unix milliseconds>.rmcap`, and the
   ring between a media thread and the writer holds 2,048 records.
-- `rustmodemctl capture check` also exits with 1 when the capture itself
+- `rustmodem-ctl capture check` also exits with 1 when the capture itself
   has holes: what is counted around one cannot be trusted.
 
 **Telephony**
@@ -373,7 +373,7 @@ Phase 2 adds four crates, all of them the handoff's list, and nothing else.
 
 Criterion 12 was also run against the test peer, which is not what it asks
 for but is what could be done without a gateway: a ten-minute call to an
-echo line with capture on, checked as `rustmodemctl capture check` checks
+echo line with capture on, checked as `rustmodem-ctl capture check` checks
 it (`RM_CAPTURE_MINUTES=10 cargo test -p svc --test peer a_clean_call`).
 
 | Packet time | Received | Sent | Lost | Resync | Slips | Largest gap |
@@ -429,7 +429,7 @@ target = "group:dialup"
       per `docs/GATEWAYS.md`, and plug a telephone into its FXS port.
 - [ ] `rustmodem-svc --console C:\rustmodem\rustmodem.toml`. The log says
       `RMD5001: SIP is listening on 0.0.0.0:5060.`
-- [ ] `rustmodemctl sip` shows the listener, `10.10.20.11` as a trusted
+- [ ] `rustmodem-ctl sip` shows the listener, `10.10.20.11` as a trusted
       peer, and no registrations.
 - [ ] Open a terminal on the host side of line 1 (COM11 in phase 0's
       checklist). `AT` gets `OK`.
@@ -439,7 +439,7 @@ target = "group:dialup"
 - [ ] Hang the telephone up. The terminal shows `NO CARRIER`.
 - [ ] Call again, answer, and type `+++` and then `ATH`. The telephone's
       call ends.
-- [ ] `rustmodemctl calls --last 2` shows both calls.
+- [ ] `rustmodem-ctl calls --last 2` shows both calls.
 
 **9. Per-line.**
 
@@ -449,14 +449,14 @@ target = "group:dialup"
   register = { server = "10.10.20.5", user = "202", password = "..." }
   ```
 
-  and `rustmodemctl reload`.
-- [ ] `rustmodemctl sip` shows line 2 as `registered for ... s more`.
+  and `rustmodem-ctl reload`.
+- [ ] `rustmodem-ctl sip` shows line 2 as `registered for ... s more`.
 - [ ] The manager shows `202` in line 2's SIP column, and resting the
       pointer on the row says it is registered.
 - [ ] Call extension 202 from a telephone of the PBX. Line 2's terminal
       shows `RING`; line 1's shows nothing.
 - [ ] Stop the PBX, or give the line a wrong password, and
-      `rustmodemctl reregister 2`. `rustmodemctl sip` says why it failed,
+      `rustmodem-ctl reregister 2`. `rustmodem-ctl sip` says why it failed,
       and the manager's row has the red image.
 
 **10. Hunt group.**
@@ -464,7 +464,7 @@ target = "group:dialup"
 - [ ] With both lines idle, call 5551000 and answer on line 1.
 - [ ] Call 5551000 from a second telephone. Line 2 rings.
 - [ ] Answer it, and call 5551000 from a third. The caller hears busy.
-- [ ] `rustmodemctl stats` counts the third call as rejected.
+- [ ] `rustmodem-ctl stats` counts the third call as rejected.
 
 **11. Outbound.**
 
@@ -477,15 +477,15 @@ target = "group:dialup"
 
 **12. Sample-exact for 10 minutes.**
 
-- [ ] `rustmodemctl capture on 1`. The log says where the capture goes
+- [ ] `rustmodem-ctl capture on 1`. The log says where the capture goes
       when the call begins (`RMD6006`).
 - [ ] Call 5551000, answer on line 1, and leave the call up for ten
       minutes. Hang up.
-- [ ] `rustmodemctl capture check <file>`: Lost 0, Resync 0, Slips 0, and
+- [ ] `rustmodem-ctl capture check <file>`: Lost 0, Resync 0, Slips 0, and
       the exit code 0 (`echo %ERRORLEVEL%`).
 - [ ] Set `ptime_ms = 10` under `[media]`, and the same packet time on the
-      gateway; `rustmodemctl reload`; repeat. Record both reports here.
-- [ ] `rustmodemctl capture wav <file> call.wav` and listen to it: the
+      gateway; `rustmodem-ctl reload`; repeat. Record both reports here.
+- [ ] `rustmodem-ctl capture wav <file> call.wav` and listen to it: the
       caller on the left, the echo on the right.
 
 **13. Load.**
@@ -499,7 +499,7 @@ target = "group:dialup"
 
 - [ ] It passes, and the line it prints has the tick times: record the
       median, the 99th percentile and the longest in "Tick times" above.
-- [ ] No overruns: while a real call is up, `rustmodemctl line 1 --json`
+- [ ] No overruns: while a real call is up, `rustmodem-ctl line 1 --json`
       has `"overruns":0` in the call's `media`.
 
 **14. Windows Firewall.**

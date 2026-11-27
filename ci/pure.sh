@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.."
 pure="g711 dspkit tones chansim fsk v22 v8 engine v14 v42 v42bis at serial vcomapi vcomcore modeminf sdp rtp sip msg config ctlproto pool media telephony sippeer alloccount replay glyph model"
 # The manager and its wrappers over Win32.
 clients="win32 manager"
-# rustmodemctl itself. Its tests run the commands against the real control
+# rustmodem-ctl itself. Its tests run the commands against the real control
 # server, which is on Tokio, so only what the program is built from is
 # looked at.
 programs="ctl"

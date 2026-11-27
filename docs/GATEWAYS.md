@@ -32,8 +32,8 @@ After the gateway is set up, make a call with capture on for the line and
 check it (`docs/CAPTURE.md`):
 
 ```
-rustmodemctl capture on 1
-rustmodemctl capture check <file>
+rustmodem-ctl capture on 1
+rustmodem-ctl capture check <file>
 ```
 
 Lost, Late, Duplicate and Resync are the network's and the gateway's doing.

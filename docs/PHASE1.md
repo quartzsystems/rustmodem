@@ -51,7 +51,7 @@ by them; `docs/CONTROL_API.md` has a "Compatibility" section that says so.
   (`service/svc/src/ports.rs`) puts together the serial ports Windows has,
   the com0com pairs and the modem devices; putting them together is pure
   and tested, reading them is not (see "What needs Cody").
-- `rustmodemctl` has `stats`, `ports` and `log [--last N]`.
+- `rustmodem-ctl` has `stats`, `ports` and `log [--last N]`.
 
 ### 2. Stored profiles
 
@@ -88,7 +88,7 @@ seven line state images, each at 16, 20, 24, 32, 48 and 256 pixels. The
 crate writes `.ico` files and Windows `.res` files (icon, version
 information, manifest) with no resource compiler, for build scripts to hand
 to the linker. It has no dependencies; its PNG encoder is its own.
-`rustmodem-svc.exe`, `rustmodemctl.exe` and `rustmodem-manager.exe` all get
+`rustmodem-svc.exe`, `rustmodem-ctl.exe` and `rustmodem-manager.exe` all get
 their resources from it.
 
 ### 5. `ui/win32`

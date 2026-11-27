@@ -4,7 +4,7 @@
 
 [package]
 name = "ctl"
-description = "The rustmodemctl command-line client"
+description = "The rustmodem-ctl command-line client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -34,5 +34,5 @@ tokio.workspace = true
 workspace = true
 
 [[bin]]
-name = "rustmodemctl"
+name = "rustmodem-ctl"
 path = "src/main.rs"

@@ -112,7 +112,7 @@ impl Drop for Demo {
     }
 }
 
-/// A client that asks and waits for the answer, as `rustmodemctl` does.
+/// A client that asks and waits for the answer, as `rustmodem-ctl` does.
 struct Client {
     reader: BufReader<File>,
     writer: File,
