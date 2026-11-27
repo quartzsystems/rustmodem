@@ -429,3 +429,16 @@ fn editing_the_settings_refuses_an_invalid_result_and_changes_nothing() {
     assert_eq!(file.to_toml(), EXAMPLE);
     assert_eq!(file.config().service.log_level, LogLevel::Info);
 }
+
+#[test]
+fn a_line_may_be_on_a_rustmodem_port() {
+    let text = "[[line]]\nid = 1\nserial = { backend = \"vcom\", port = \"COM10\" }\n";
+    let file = ConfigFile::parse(text).unwrap();
+    let serial = &file.config().lines[0].serial;
+    assert_eq!(serial.backend, Backend::Vcom);
+    assert_eq!(serial.port, "COM10");
+    assert_eq!(Backend::Vcom.to_string(), "vcom");
+    assert_eq!(Backend::parse("vcom"), Some(Backend::Vcom));
+    // It is written back as it was read.
+    assert!(file.to_toml().contains("backend = \"vcom\""));
+}

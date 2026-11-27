@@ -24,8 +24,8 @@
 #   6000-6999  media
 #   7000-7999  modem
 #   8000-8999  link: error control and compression
-#
-# The rest is left for later phases.
+#   9000-9499  driver and ports
+#   9500-9999  setup
 
 # ---------------------------------------------------------------------------
 # 0001-0999: service and configuration
@@ -154,7 +154,7 @@ recovery = "Give one of the lines a different port and try again."
 severity = "error"
 vars = 2
 text = "Serial backend &1 at line &2 is not known."
-cause = "The backend named for the line is not one this version of rustmodem has. Known backends: com0com."
+cause = "The backend named for the line is not one this version of rustmodem has. Known backends: com0com and vcom."
 recovery = "Correct the backend name and try again."
 
 [RMD0019]
@@ -873,3 +873,28 @@ vars = 2
 text = "The error-corrected connection on line &1 ended, and the call with it: &2."
 cause = "LAPM's connection ended under the call. remote: the far end released it, as it does when its host hangs up. timed-out: the far end stopped answering, which is a line that no longer carries the signal. no-response and no-protocol: the far end said it had error control and did not go on with it. protocol and compression: the far end sent what V.42 or V.42bis does not allow. refused and local: the far end refused the connection, or this end released it."
 recovery = "remote needs nothing. For timed-out, look at the call's RTP statistics and the modem's diagnostics for a path that loses packets or changes the audio. For protocol and compression, capture a call and report it with the version of rustmodem and the make of the far modem."
+
+# ---------------------------------------------------------------------------
+# 9000-9499: driver and ports
+# ---------------------------------------------------------------------------
+
+[RMD9001]
+severity = "error"
+vars = 1
+text = "&1 is not a RustModem port."
+cause = "The line's serial backend is vcom, and there is no port of that name, or the port belongs to another driver. The service does not create ports: that needs an administrator, and is done by the setup program."
+recovery = "Create the port with rustmodem-setup port add --com followed by the number, or in RustModem Manager under Ports and drivers, or give the line the name of a port that rustmodem-setup port list shows. The service tries again by itself."
+
+[RMD9002]
+severity = "error"
+vars = 1
+text = "The service may not open RustModem port &1, or another program has its control side."
+cause = "The control side of a port is opened by the system, by an administrator or by the service's own account, and by one program at a time. The service is running under another account, or a second copy of the service or a test program has the port."
+recovery = "Stop whatever else has the port. If the service was installed by hand, install it with rustmodem-setup, which gives it its account. The service tries again by itself."
+
+[RMD9003]
+severity = "error"
+vars = 3
+text = "The driver of RustModem port &1 speaks version &2 of the control interface, and this service speaks version &3."
+cause = "The driver and the service are from different versions of RustModem, as after an upgrade that replaced one and not the other."
+recovery = "Run rustmodem-setup repair, which installs the driver and the service of one version."

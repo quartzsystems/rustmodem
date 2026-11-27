@@ -2,7 +2,7 @@
 // licensed under the terms of the MIT license which can be found in the
 // root directory of this project.
 
-//! The SerialBackend trait with the memory and com0com backends.
+//! The SerialBackend trait with the memory, com0com and vcom backends.
 //!
 //! A serial backend is the modem's side of a COM port: the DCE end. The
 //! host (Windows, RRAS, a terminal) is on the other side. Everything here
@@ -10,7 +10,8 @@
 //! [`SerialBackend::wait_handle`] to sleep until something happens.
 //!
 //! The trait and [`MemoryBackend`] are pure and build everywhere. The
-//! com0com backend is for Windows only.
+//! com0com backend, and the vcom backend, which is the modem's side of a
+//! RustModem virtual COM port, are for Windows only.
 
 #![deny(unsafe_code)]
 
@@ -18,6 +19,9 @@
 #[allow(unsafe_code)]
 mod com0com;
 mod memory;
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod vcom;
 
 use std::io;
 
@@ -27,6 +31,8 @@ pub use at::ModemSignals;
 #[cfg(windows)]
 pub use com0com::Com0comBackend;
 pub use memory::{MemoryBackend, MemoryHost, memory_pair};
+#[cfg(windows)]
+pub use vcom::VcomBackend;
 
 /// Something the host did to the port.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

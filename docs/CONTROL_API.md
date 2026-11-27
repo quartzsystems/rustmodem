@@ -1469,7 +1469,7 @@ service fills in.
 | `RMD0015` | Required key &1 is missing from the table at line &2. | The table must have the key and it has no default. | Add the key and try again. |
 | `RMD0016` | Line id &1 at line &2 is already used at line &3. | Two lines have the same id. Every line needs its own id. | Give one of the lines a different id and try again. |
 | `RMD0017` | Serial port &1 at line &2 is already used at line &3. | Two lines name the same serial port. A port can serve one line only. | Give one of the lines a different port and try again. |
-| `RMD0018` | Serial backend &1 at line &2 is not known. | The backend named for the line is not one this version of rustmodem has. Known backends: com0com. | Correct the backend name and try again. |
+| `RMD0018` | Serial backend &1 at line &2 is not known. | The backend named for the line is not one this version of rustmodem has. Known backends: com0com and vcom. | Correct the backend name and try again. |
 | `RMD0019` | Line &1 is not in the configuration. | The change names a line id that the configuration does not have. | List the lines to see which ids exist, then repeat the change with one of them. |
 | `RMD0020` | Line &1 is already in the configuration. | A line cannot be added with an id that the configuration already has. | Choose an id that is not in use, or edit the existing line. |
 | `RMD0027` | Hunt group &1 at line &2 names line &3, which does not exist. | A hunt group can only hold lines that the configuration has. | Add the line, or take it out of the hunt group, and try again. |

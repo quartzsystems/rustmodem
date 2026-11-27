@@ -61,6 +61,8 @@ pub enum Backend {
     /// One side of a com0com null-modem pair.
     #[default]
     Com0com,
+    /// A RustModem virtual COM port, of the driver in `driver/`.
+    Vcom,
 }
 
 impl Backend {
@@ -68,6 +70,7 @@ impl Backend {
     pub fn as_str(self) -> &'static str {
         match self {
             Backend::Com0com => "com0com",
+            Backend::Vcom => "vcom",
         }
     }
 
@@ -75,6 +78,7 @@ impl Backend {
     pub fn parse(text: &str) -> Option<Backend> {
         match text {
             "com0com" => Some(Backend::Com0com),
+            "vcom" => Some(Backend::Vcom),
             _ => None,
         }
     }

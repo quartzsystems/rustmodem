@@ -284,7 +284,7 @@ mod tests {
             // serial, from phase 1 the manager, from phase 2 telephony and
             // media, from phase 3 the modem, and from phase 4 the link.
             assert!(
-                (1..=8999).contains(&number),
+                (1..=9999).contains(&number),
                 "{} is outside the ranges in use",
                 entry.id
             );

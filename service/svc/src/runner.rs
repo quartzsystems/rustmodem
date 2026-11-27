@@ -20,7 +20,7 @@ use pool::{
     CallRouter, EventSink, InlineRunner, MediaRunner, Now, NullSwitch, Pool, PoolParts,
     SerialFactory,
 };
-use serial::{Com0comBackend, SerialBackend};
+use serial::{Com0comBackend, SerialBackend, VcomBackend};
 use svc::bridge::BridgedPorts;
 use svc::pooltask::{LINGER, PoolClock, PoolTask};
 use svc::shutdown::{Shutdown, Stopping};
@@ -52,6 +52,7 @@ impl SerialFactory for Ports {
     fn open(&mut self, line: &LineConfig) -> Result<Box<dyn SerialBackend>, Message> {
         match line.serial.backend {
             Backend::Com0com => Ok(Box::new(Com0comBackend::open(&line.serial.port)?)),
+            Backend::Vcom => Ok(Box::new(VcomBackend::open(&line.serial.port)?)),
         }
     }
 }
