@@ -10,20 +10,28 @@
 //! back the bytes it has demodulated. Every softmodem of the later phases
 //! implements [`ModemEngine`].
 //!
-//! There are two implementations so far, and neither is a modem.
-//! [`NullEngine`] frames the data bytes straight into the octet stream:
-//! two of them joined by a path that alters no octet carry data, and one
-//! altered octet shows as wrong data or a lost carrier. [`EchoEngine`]
-//! sends back what it receives, for trying a telephone path by ear.
+//! There are three implementations. [`Modem`] is the softmodem: it
+//! answers and originates at 300 bit/s, V.21 or Bell 103, with V.8.
+//! [`NullEngine`] is not a modem: it frames the data bytes straight into
+//! the octet stream, so that two of them joined by a path that alters no
+//! octet carry data, and one altered octet shows as wrong data or a lost
+//! carrier. [`EchoEngine`] sends back what it receives, for trying a
+//! telephone path by ear.
 
 #![forbid(unsafe_code)]
 
+mod diag;
 mod echo;
 mod info;
+mod modem;
 mod null;
 
+pub use diag::{Diagnostics, EngineState, SCOPE_SAMPLES, STATE_HISTORY, ScopeKind, StateChange};
 pub use echo::{ECHO_CARRIER, EchoEngine};
+pub use fsk::Standard;
+pub use g711::Law;
 pub use info::ConnectInfo;
+pub use modem::{CallSettings, Modem, ModemConfig};
 pub use null::{IDLE_OCTET, NullConfig, NullEngine, SILENCE_OCTET};
 
 /// The octets in a 20 ms tick at 8000 octets a second.
@@ -69,4 +77,19 @@ pub trait ModemEngine: Send {
 
     /// Stop. The engine sends silence until it is started again.
     fn hangup(&mut self);
+
+    /// Tells the engine the G.711 law of the call it is about to be
+    /// started on. An engine that does not look inside the octets takes
+    /// no notice.
+    fn set_law(&mut self, _law: Law) {}
+
+    /// Tells the engine the host's settings for the call it is about to
+    /// be started on. An engine that has nothing to set takes no notice.
+    fn set_call(&mut self, _call: &CallSettings) {}
+
+    /// The engine's snapshot of itself, if it has anything to show. It is
+    /// taken on the media thread every tick, so it allocates nothing.
+    fn diagnostics(&self) -> Option<Diagnostics> {
+        None
+    }
 }

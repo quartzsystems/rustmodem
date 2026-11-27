@@ -206,7 +206,14 @@ dependencies = [
 name = "engine"
 version = "0.0.4"
 dependencies = [
+ "alloccount",
+ "chansim",
+ "dspkit",
+ "fsk",
+ "g711",
  "proptest",
+ "tones",
+ "v8",
 ]
 
 [[package]]

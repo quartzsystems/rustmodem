@@ -91,6 +91,7 @@ dspkit = { path = "dsp/dspkit" }
 tones = { path = "dsp/tones" }
 chansim = { path = "dsp/chansim" }
 fsk = { path = "modem/fsk" }
+v8 = { path = "modem/v8" }
 alloccount = { path = "tools/alloccount" }
 engine = { path = "modem/engine" }
 at = { path = "dte/at" }
@@ -138,6 +139,9 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.v8]
+opt-level = 3
+
+[profile.dev.package.engine]
 opt-level = 3
 
 [profile.release]
