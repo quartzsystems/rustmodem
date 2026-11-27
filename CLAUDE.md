@@ -201,9 +201,12 @@ cannot panic, and `modem/engine/tests/alloc.rs` counts to keep it so.
 | 9 | Extensions |
 
 The record of each phase is in `docs/`: `docs/PHASE0.md`, `docs/PHASE1.md`,
-`docs/PHASE2.md`, `docs/PHASE3.md`. Phases 0 to 3 are built. After phase 2 the service's
-control plane was moved onto Tokio (0.0.4); `docs/RUNTIME.md` is the
-runtime model and the record of that.
+`docs/PHASE2.md`, `docs/PHASE3.md`, `docs/PHASE4.md`. Phases 0 to 4 are
+built, and phase 4 is the first release, 0.1.0: `.github/workflows/release.yml`
+makes its zip on a tag, `docs/INSTALL.md` is the install from it, and
+`docs/RRAS.md` is dial-up networking over the lines. After phase 2 the
+service's control plane was moved onto Tokio (0.0.4); `docs/RUNTIME.md` is
+the runtime model and the record of that.
 
 ## Running the manager
 

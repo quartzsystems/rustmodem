@@ -350,3 +350,55 @@ proptest! {
         prop_assert!(back.warnings().is_empty());
     }
 }
+
+/// The configuration a release carries, `docs/rustmodem.sample.toml`, is
+/// one the service takes, and where it says a value is the default, it
+/// is.
+#[test]
+fn the_sample_configuration_of_a_release_is_valid_and_shows_the_defaults() {
+    let sample = parse(include_str!("../../../docs/rustmodem.sample.toml"));
+    let plain = parse(LINE);
+    assert_eq!(sample.service, plain.service);
+    assert_eq!(sample.media, plain.media);
+    assert_eq!(sample.modem, plain.modem);
+    assert_eq!(sample.modem.modulations, ModulationName::ALL);
+    assert_eq!(
+        (
+            sample.modem.error_control,
+            sample.modem.compression,
+            sample.modem.guard_tone
+        ),
+        (ErrorControlName::Auto, true, GuardToneName::Off)
+    );
+    // Telephony is on, from one gateway, and for the rest as it comes.
+    assert!(sample.sip.enabled);
+    assert_eq!(sample.sip.trusted_peers.len(), 1);
+    assert_eq!(
+        (
+            sample.sip.listen,
+            &sample.sip.address,
+            &sample.sip.outbound_peer,
+            sample.sip.ring_timeout_s
+        ),
+        (
+            plain.sip.listen,
+            &plain.sip.address,
+            &plain.sip.outbound_peer,
+            plain.sip.ring_timeout_s
+        )
+    );
+    // Two modem lines that skip the commands they have not got, in one
+    // hunt group.
+    let ids: Vec<u16> = sample.lines.iter().map(|line| line.id).collect();
+    assert_eq!(ids, [1, 2]);
+    for line in &sample.lines {
+        assert_eq!(line.engine, EngineKind::Modem);
+        assert_eq!(line.unknown_command, config::UnknownCommand::Ok);
+        assert_eq!(line.auto_answer_rings, 0);
+        assert_eq!(line.modem, LineModem::default());
+    }
+    assert_eq!(sample.hunt_groups.len(), 1);
+    assert_eq!(sample.hunt_groups[0].lines, ids);
+    assert_eq!(sample.hunt_groups[0].strategy, config::Strategy::default());
+    assert!(sample.routes.is_empty());
+}

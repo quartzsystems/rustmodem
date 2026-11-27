@@ -178,31 +178,7 @@ impl Runner {
                 if !first {
                     return Err("config must be the first line".to_string());
                 }
-                let mut config = AtConfig::default();
-                for word in words {
-                    match word.split_once('=') {
-                        Some(("unknown_command", "ok")) => {
-                            config.unknown_command = UnknownCommand::Ok;
-                        }
-                        Some(("unknown_command", "error")) => {
-                            config.unknown_command = UnknownCommand::Error;
-                        }
-                        Some(("auto_answer_rings", value)) => {
-                            config.auto_answer_rings = number(value)?;
-                        }
-                        Some(("error_control", value)) => {
-                            config.error_control = engine::ErrorControl::ALL
-                                .into_iter()
-                                .find(|policy| policy.name() == value)
-                                .ok_or(format!("unknown policy: {value}"))?;
-                        }
-                        Some(("compression", value)) => {
-                            config.compression = number::<u8>(value)? != 0;
-                        }
-                        _ => return Err(format!("unknown setting: {word}")),
-                    }
-                }
-                *self = Runner::new(config);
+                *self = Runner::new(config(words)?);
             }
             "stored" => {
                 if self.touched {
@@ -378,6 +354,35 @@ impl Runner {
             None => Err(format!("no action, expected {wanted:?}")),
         }
     }
+}
+
+/// How a line is configured, from the words of a `config` line.
+pub fn config<'a>(words: impl Iterator<Item = &'a str>) -> Result<AtConfig, String> {
+    let mut config = AtConfig::default();
+    for word in words {
+        match word.split_once('=') {
+            Some(("unknown_command", "ok")) => {
+                config.unknown_command = UnknownCommand::Ok;
+            }
+            Some(("unknown_command", "error")) => {
+                config.unknown_command = UnknownCommand::Error;
+            }
+            Some(("auto_answer_rings", value)) => {
+                config.auto_answer_rings = number(value)?;
+            }
+            Some(("error_control", value)) => {
+                config.error_control = engine::ErrorControl::ALL
+                    .into_iter()
+                    .find(|policy| policy.name() == value)
+                    .ok_or(format!("unknown policy: {value}"))?;
+            }
+            Some(("compression", value)) => {
+                config.compression = number::<u8>(value)? != 0;
+            }
+            _ => return Err(format!("unknown setting: {word}")),
+        }
+    }
+    Ok(config)
 }
 
 fn number<T: std::str::FromStr>(text: &str) -> Result<T, String> {

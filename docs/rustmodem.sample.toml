@@ -1,0 +1,62 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+# A rustmodem configuration to start from: two lines on com0com pairs,
+# answering calls that a gateway sends over SIP to one number.
+#
+# Copy it to %ProgramData%\Quartz Systems\rustmodem\rustmodem.toml and
+# change the lines, the gateway's address and the number. docs\INSTALL.md
+# has the install, docs\COM0COM.md the ports, docs\TELEPHONY.md [sip] and
+# the tables after it, docs\MODEM.md [modem], and docs\RRAS.md dial-up
+# networking over the lines.
+#
+# In [service], [media] and [modem] every value shown is the default, and
+# the key may be left out. The lines marked CHANGE are examples.
+
+[service]
+log_level = "info"                  # "error", "warning", "info" or "debug"
+log_dir = ""                        # empty = the logs folder under %ProgramData%
+
+[sip]
+enabled = true                      # false, or no [sip], is no telephony
+listen = "0.0.0.0:5060"             # UDP
+address = ""                        # the address to advertise; empty = found
+trusted_peers = ["192.0.2.10"]      # CHANGE: the gateway. Nobody else is heard
+outbound_peer = ""                  # where ATD sends calls; empty = nowhere
+ring_timeout_s = 60
+
+[media]
+codecs = ["pcmu", "pcma"]           # in order of preference
+ptime_ms = 20
+rtp_ports = "20000-20999"
+
+[modem]
+# The modulations a line may use. Answering a caller that has no V.8, it
+# tries them in this order.
+modulations = ["v22bis", "v22", "bell212a", "v21", "bell103"]
+v8 = true
+tx_level_dbm0 = -12
+error_control = "auto"              # "auto": LAPM if the caller has it;
+                                    # "required": LAPM or no call; "off"
+compression = true                  # V.42bis, where there is LAPM
+guard_tone = "off"                  # "off", "1800" or "550"
+
+# A line for each com0com pair: `port` is rustmodem's port of the pair, and
+# the host (RRAS, a terminal) has the other.
+[[line]]
+id = 1
+serial = { backend = "com0com", port = "CNCB0" }
+unknown_command = "ok"              # skip the commands this modem has not got
+
+[[line]]
+id = 2
+serial = { backend = "com0com", port = "CNCB1" }
+unknown_command = "ok"
+
+# The number the gateway sends, and the lines that answer it.
+[[hunt_group]]
+name = "dialin"
+pilot = "5551000"                   # CHANGE: the number called
+lines = [1, 2]
+strategy = "first-idle"             # "first-idle", "round-robin" or "least-recent"

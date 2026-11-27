@@ -1,0 +1,96 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+# A release: on a tag v<version>, the whole test suite, the release
+# binaries, and a zip of them with the sample configuration and the
+# documentation, attached to a GitHub release of that tag.
+# docs/INSTALL.md is the install from the zip.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release zip
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show
+      # The tag is the version, or there is no release.
+      - name: The tag is the version
+        shell: bash
+        run: |
+          ci/version.sh
+          version=$(tr -d ' \r\n' < VERSION)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "the tag is $GITHUB_REF_NAME and VERSION has $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Licence headers
+        shell: bash
+        run: ci/headers.sh
+      - name: No Tokio in the pure crates
+        shell: bash
+        run: ci/pure.sh
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: Deny
+        run: cargo deny check
+      - name: Test
+        run: cargo test --workspace
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: target/screenshots/
+          if-no-files-found: warn
+      - name: Release build
+        run: cargo build --release -p svc -p ctl -p manager
+      # The three programs, the sample configuration, the licence, the
+      # read-me and the documentation, in a folder named for the version.
+      - name: Zip
+        shell: bash
+        run: |
+          name="rustmodem-$VERSION-x86_64-windows"
+          mkdir -p "dist/$name"
+          cp target/release/rustmodem-svc.exe "dist/$name/"
+          cp target/release/rustmodem-manager.exe "dist/$name/"
+          cp target/release/rustmodemctl.exe "dist/$name/"
+          cp docs/rustmodem.sample.toml "dist/$name/"
+          cp LICENSE README.md CHANGELOG.md "dist/$name/"
+          cp -r docs "dist/$name/docs"
+          cd dist
+          7z a -tzip "$name.zip" "$name"
+          echo "ZIP=dist/$name.zip" >> "$GITHUB_ENV"
+      - name: Upload the zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-zip
+          path: ${{ env.ZIP }}
+          if-no-files-found: error
+      - name: GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$ZIP" \
+            --title "rustmodem $VERSION" \
+            --notes "See CHANGELOG.md for what this version changes, and docs/INSTALL.md in the zip for how to install it."

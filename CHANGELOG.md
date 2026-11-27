@@ -3,6 +3,81 @@
 All notable changes to rustmodem are recorded here. Versions follow the
 `VERSION` file.
 
+## 0.1.0 (phase 4: V.22bis and V.42, the first release)
+
+A modem that dial-up networking can use: 2400 and 1200 bit/s, with error
+control and compression. The record of the phase is
+[docs/PHASE4.md](docs/PHASE4.md); [docs/RRAS.md](docs/RRAS.md) is how to
+answer dial-up calls with Routing and Remote Access, and
+[docs/INSTALL.md](docs/INSTALL.md) the install from a release.
+
+- **V.22bis, V.22 and Bell 212A.** 2400 and 1200 bit/s at 600 baud
+  (`modem/v22`): the modulator and demodulator, the handshake of V.22bis
+  with its fallback to 1200 bit/s, and the retrain. Under it, new blocks
+  in `dsp/dspkit`: the scrambler, pulse shaping, timing and carrier
+  recovery, an adaptive equaliser and a slicer. V.8 offers and chooses
+  the new modulations; a caller with no V.8 is answered with each
+  modulation's own sequence in turn.
+- **Error control and compression.** At 1200 and 2400 bit/s the call has
+  a data link between the modem and the host: V.14 start-stop characters
+  (`link/v14`), the detection phase, HDLC framing and LAPM of V.42
+  (`link/v42`), and V.42bis (`link/v42bis`). With LAPM, data lost on the
+  line is sent again and what the host is given is what the far end's
+  host sent; a call that loses one packet in a hundred for ten minutes
+  loses no data. Selective reject, the 32-bit check sequence, MNP and
+  V.44 are not here.
+- **Settings.** `[modem]`, and a line's `modem` table, gain
+  `error_control` (`auto`, `required`, `off`), `compression` and
+  `guard_tone` (`off`, `1800`, `550`), and `modulations` takes `v22bis`,
+  `v22` and `bell212a`. **The default `modulations` is now all five, the
+  fastest first, with error control `auto` and compression on:** a
+  configuration that names none gets a modem that connects at 2400 bit/s
+  where it connected at 300. `[modem] modulations = ["v21", "bell103"]`
+  is the modem of 0.0.5.
+- **AT commands.** `+ES` and `+DS` in their V.250 forms, and the older
+  commands hosts send, `\N0` to `\N5`, `%C0` to `%C3`, `&Q0`, `&Q5`,
+  `&Q6`, `S36`, `S46` and `S48`, mapped to them. `+MS` has the carriers
+  `V22B`, `V22` and `B212A`, and its factory value is `V22B,1,0,0,0,0`.
+  `+MR`, `+ER`, `+DR` and `+ILRR` turn on the reports `+MCR:`, `+MRR:`,
+  `+ER:`, `+DR:` and `+ILRR:` before `CONNECT`. `+ICF` sets the
+  character format: 8N1, 7E1 or 7O1. CTS holds the host off when it
+  sends faster than the line carries. **A stored profile of 0.0.5 whose
+  `+ES` or `+MS` is no longer in range is left out when the service
+  starts**, with RMD0026, and the line starts from its factory settings.
+- **Control API.** Additive; the protocol is still 1. The modem's
+  settings gain `error_control`, `compression` and `guard_tone` wherever
+  they are reported and set. `CallInfo.modem` gains the receiver's
+  signal-to-noise ratio, equaliser error and timing offset, and `link`:
+  the data link's stage, frames, frames sent again, frames in error,
+  window and compression each way. `CallRecord` gains `modem`, as it
+  last was. `lines.diag` gains the constellation. `Stats` fills
+  `retrains`, `protocols` and `compressions`.
+- **`rustmodemctl`.** `line`, `diag`, `calls` and `selftest` show the
+  error control, the compression and the data link.
+- **Manager.** Rate cap and modulations has the five modulations, error
+  control, compression and guard tone. Line diagnostics shows the
+  constellation with its ideal points, the receiver's figures and a
+  group for the data link. The grid's Err column adds the link's frame
+  errors and frames sent again to the RTP's errors, and "Error
+  correction" in the negotiation panel is the share of calls with LAPM.
+  Call history has columns for the protocol, the compression and the
+  retrains.
+- **Replay.** `rustmodem-replay` says what the data link did, with what
+  the XID frames agreed, and `--frames` prints every frame of LAPM both
+  ways. The corpus has a capture for each of the new ways a call can go.
+- **Messages.** The range 8000 to 8999 is the data link's: RMD8001 and
+  RMD8002.
+- **Release.** A workflow builds a zip of the three programs, a sample
+  configuration and the documentation on a tag `v*`.
+- **Tests.** Bit error rates of both constellations against theory;
+  every pairing of the five modulations at both ends; every
+  error-control policy against every kind of far end; 1 MiB each way in
+  every case that connects; LAPM under loss, duplication and corruption;
+  V.42bis round trips with the two dictionaries compared at every step;
+  the same calls over SIP and RTP on loopback; a sixth of the soak's
+  calls at 2400 bit/s with LAPM and V.42bis. Fuzz targets `v22_demod`,
+  `hdlc_deframe`, `lapm_frames`, `v42bis_decode` and `v42bis_roundtrip`.
+
 ## 0.0.5 (phase 3: 300 bit/s)
 
 The first modem. A line whose engine is `modem`, which is now the default,
