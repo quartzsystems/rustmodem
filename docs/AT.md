@@ -109,7 +109,11 @@ reports 1.
 | `I`, `I0` | Print the product code, `rustmodem` | 6.1.3 |
 | `I3` | Print `rustmodem <version>` | |
 | `I4` | Print the capability line, `SOFT MODEM,V.250,+MS,+ES,+DS`. It starts with the name of the line's engine: `SOFT` for the modem, `NULL` for a line with `engine = "null"` and `ECHO` for one with `engine = "echo"` | |
-| `I1`, `I2`, `I5`..`I9` | Nothing; `OK`. Above 9 is an error | |
+| `I1` | Print `000`: a modem with a ROM prints its checksum, and this one has none | |
+| `I5` | Print the manufacturer, `Quartz Systems` | |
+| `I6` | Print the model, `RustModem Softmodem` | |
+| `I7` | Print the model and the version, `RustModem Softmodem <version>` | |
+| `I2`, `I8`, `I9` | Nothing; `OK`. Above 9 is an error | |
 | `L0`..`L3` | Speaker volume. Stored, no effect | 6.3.13 |
 | `M0`..`M3` | Speaker mode. Stored, no effect | 6.3.14 |
 | `O`, `O0` | Return from online command mode to data, with `CONNECT`. `ERROR` if there is no connection. Ends the line | 6.3.7 |
@@ -137,6 +141,30 @@ reports 1.
 
 A known command with a number outside its range is always an error, whatever
 `unknown_command` says.
+
+### Identification
+
+What Windows sends a modem to find out what it is: when it installs one,
+and when Query Modem is pressed on the Diagnostics page of the modem's
+properties. Windows' own list is `ATQ0V1E0`, `AT+GMM`, `AT+FCLASS=?`,
+`AT#CLS=?`, `AT+GCI?`, `AT+GCI=?` and `ATI1` to `ATI7`; the other four are
+V.250's and are here because a host may ask. None of them is answered
+`ERROR`, whatever the line does with commands it does not know.
+
+| Command | Behaviour | Clause |
+|---|---|---|
+| `+GMI` | Print the manufacturer, `Quartz Systems` | 6.1.4 |
+| `+GMM` | Print the model, `RustModem Softmodem`. It is the name the modem has in Windows | 6.1.5 |
+| `+GMR` | Print the version of rustmodem | 6.1.6 |
+| `+GSN` | Print the serial number, `00000000`: a modem made of software has none | 6.1.7 |
+| `+GCAP` | Print `+GCAP: +MS,+ES,+DS`: the modem has modulation control, error control and compression, and no fax or voice | 6.1.9 |
+| `+GMI=?` and the same of the other four | `OK` | 5.4.3 |
+| `+FCLASS=?`, `+FCLASS?` | Print `0`: the one service class is data | T.31 8.2 |
+| `+FCLASS=0` | `OK`. Any other class is `ERROR` | T.31 8.2 |
+| `#CLS=?`, `#CLS?`, `#CLS=0` | As `+FCLASS`: the command older modems had for it. Any other class is `ERROR` | |
+| `+GCI?` | Print the country of installation, a T.35 code in two hexadecimal digits: `+GCI: B5` until it is set | 6.1.10 |
+| `+GCI=<code>` | Set it. Kept until the service restarts, and read back; nothing the modem does differs by country | 6.1.10 |
+| `+GCI=?` | Print `+GCI: (00-FF)` | 6.1.10 |
 
 ### Dial
 

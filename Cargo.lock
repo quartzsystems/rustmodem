@@ -398,6 +398,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "modeminf"
+version = "0.1.0"
+dependencies = [
+ "at",
+ "engine",
+]
+
+[[package]]
 name = "msg"
 version = "0.1.0"
 dependencies = [

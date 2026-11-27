@@ -1,0 +1,22 @@
+# Copyright (C), 2026 Quartz Systems. Some rights reserved. This work is
+# licensed under the terms of the MIT license which can be found in the
+# root directory of this project.
+
+[package]
+name = "modeminf"
+description = "The modem INF of RustModem Softmodem, generated from what the modem answers (pure)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+# A member of the rustmodem workspace, as vcomcore is: it needs the AT
+# interpreter and the engine, to be held to what they say, and no WDK.
+workspace = "../.."
+
+[dependencies]
+at.workspace = true
+engine.workspace = true
+
+[lints]
+workspace = true

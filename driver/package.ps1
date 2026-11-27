@@ -2,8 +2,8 @@
 # licensed under the terms of the MIT license which can be found in the
 # root directory of this project.
 
-# Builds the driver and makes its package: the DLL, the INF stamped with
-# the version, and the catalog. Signs the DLL and the catalog if a
+# Builds the driver and makes its package: the DLL, the port's INF and the
+# modem's, each stamped with the version, and the catalog of all three. Signs the DLL and the catalog if a
 # certificate is named. Needs a Windows Driver Kit and LLVM; docs/DRIVER.md
 # says how to get them.
 #
@@ -59,17 +59,28 @@ if (Test-Path $Out) { Remove-Item $Out -Recurse -Force }
 New-Item -ItemType Directory $Out | Out-Null
 Copy-Item (Join-Path $built 'rmvcom.dll') $Out
 Copy-Item (Join-Path $PSScriptRoot 'vcom\rmvcom.inx') (Join-Path $Out 'rmvcom.inf')
+# The modem's INF is generated from what the modem answers.
+Push-Location $root
+try {
+    Invoke-Tool 'cargo' @('run', '--locked', '--quiet', '-p', 'modeminf', '--', (Join-Path $Out 'rmmodem.inf'))
+} finally {
+    Pop-Location
+}
 
 # The architecture, the framework's version, today's date and the
 # driver's version, which is the product's with a fourth part.
-Invoke-Tool (Find-KitTool 'stampinf.exe') @(
-    '-f', (Join-Path $Out 'rmvcom.inf'), '-a', 'amd64', '-u', '2.33.0', '-d', '*', '-v', "$version.0")
+foreach ($inf in 'rmvcom.inf', 'rmmodem.inf') {
+    Invoke-Tool (Find-KitTool 'stampinf.exe') @(
+        '-f', (Join-Path $Out $inf), '-a', 'amd64', '-u', '2.33.0', '-d', '*', '-v', "$version.0")
+}
 
 # Windows Server 2022 and 2025, Windows 11 21H2 and 24H2.
 Invoke-Tool (Find-KitTool 'inf2cat.exe') @(
     "/driver:$Out", '/os:ServerFE_X64,Server2025_X64,10_CO_X64,10_GE_X64', '/uselocaltime')
 
-Invoke-Tool (Find-KitTool 'infverif.exe') @('/v', '/u', (Join-Path $Out 'rmvcom.inf'))
+foreach ($inf in 'rmvcom.inf', 'rmmodem.inf') {
+    Invoke-Tool (Find-KitTool 'infverif.exe') @('/v', '/u', (Join-Path $Out $inf))
+}
 
 if ($Thumbprint) {
     Invoke-Tool (Find-KitTool 'signtool.exe') @(

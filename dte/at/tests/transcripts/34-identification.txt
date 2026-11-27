@@ -10,4 +10,6 @@
 > ATI0I3I4\r
 < \r\nrustmodem\r\n\r\nrustmodem ${VERSION}\r\n\r\nNULL MODEM,V.250,+MS,+ES,+DS\r\n\r\nOK\r\n
 > ATI7\r
+< \r\nRustModem Softmodem ${VERSION}\r\n\r\nOK\r\n
+> ATI2\r
 < \r\nOK\r\n

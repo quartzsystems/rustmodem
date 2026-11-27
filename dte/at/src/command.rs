@@ -16,6 +16,18 @@ use crate::{Action, HangupCause, Output, Profile, ResultCode, Trace, UnknownComm
 /// What `I0` reports: the product code.
 const PRODUCT_CODE: &str = "rustmodem";
 
+/// The manufacturer and the model, which `+GMI` and `+GMM` report and
+/// which the modem's INF names the modem by.
+pub const MANUFACTURER: &str = "Quartz Systems";
+pub const MODEL: &str = "RustModem Softmodem";
+
+/// What `+GSN` reports. A modem made of software has no serial number.
+const SERIAL_NUMBER: &str = "00000000";
+
+/// What `+GCAP` reports: the commands of V.250 this modem has for
+/// modulation, error control and compression (V.250 clause 6.1.9).
+const CAPABILITY_LIST: &str = "+GCAP: +MS,+ES,+DS";
+
 /// What `I4` reports after the name of the line's engine: the rest of
 /// the capability line.
 const CAPABILITIES: &str = "MODEM,V.250,+MS,+ES,+DS";
@@ -180,6 +192,26 @@ impl AtInterpreter {
                     self.info(&[&line], out);
                     Next::Continue
                 }
+                // The numbers Windows asks for when it queries a modem,
+                // each with something to show for it. A modem with a ROM
+                // gives its checksum to I1; this one has none.
+                Some(1) => {
+                    self.info(&["000"], out);
+                    Next::Continue
+                }
+                Some(5) => {
+                    self.info(&[MANUFACTURER], out);
+                    Next::Continue
+                }
+                Some(6) => {
+                    self.info(&[MODEL], out);
+                    Next::Continue
+                }
+                Some(7) => {
+                    let line = format!("{MODEL} {}", env!("CARGO_PKG_VERSION"));
+                    self.info(&[&line], out);
+                    Next::Continue
+                }
                 Some(_) => Next::Continue,
                 None => Next::Fail,
             },
@@ -254,8 +286,12 @@ impl AtInterpreter {
             // these characters take one more letter; by convention those
             // that start with # take a whole word.
             b'#' => {
-                cursor.until(|b| !b.is_ascii_alphabetic());
-                self.skip_unknown(cursor)
+                let name = cursor.until(|b| !b.is_ascii_alphabetic());
+                if name == b"CLS" {
+                    self.class_command(cursor, out)
+                } else {
+                    self.skip_unknown(cursor)
+                }
             }
             // \N, error control, and %C, compression: the commands that
             // modems had for them before V.250, which hosts still send.
@@ -285,6 +321,30 @@ impl AtInterpreter {
                 self.skip_unknown(cursor)
             }
             _ => self.skip_unknown(cursor),
+        }
+    }
+
+    /// `#CLS`, the service class command of modems older than `+FCLASS`,
+    /// which Windows sends when it queries a modem. The one class is 0,
+    /// data: `#CLS=?` and `#CLS?` print it, `#CLS=0` is accepted, and any
+    /// other class is an error whatever the line does with commands it
+    /// does not know, because this one it knows.
+    fn class_command(&mut self, cursor: &mut Cursor<'_>, out: &mut Vec<Output>) -> Next {
+        match cursor.next() {
+            Some(b'?') => {
+                self.info(&["0"], out);
+                Next::Continue
+            }
+            Some(b'=') if cursor.peek() == Some(b'?') => {
+                cursor.next();
+                self.info(&["0"], out);
+                Next::Continue
+            }
+            Some(b'=') => match cursor.number() {
+                Some(0) | None => Next::Continue,
+                Some(_) => Next::Fail,
+            },
+            _ => Next::Fail,
         }
     }
 
@@ -577,6 +637,76 @@ impl AtInterpreter {
                     Next::Continue
                 }
                 Form::Set(_) | Form::Action => Next::Fail,
+            };
+        }
+        // V.250 clauses 6.1.4 to 6.1.9: identification. Each is an action
+        // that prints one line, and its test form is `OK` alone.
+        let identity = match name {
+            b"GMI" => Some(MANUFACTURER.to_string()),
+            b"GMM" => Some(MODEL.to_string()),
+            b"GMR" => Some(env!("CARGO_PKG_VERSION").to_string()),
+            b"GSN" => Some(SERIAL_NUMBER.to_string()),
+            b"GCAP" => Some(CAPABILITY_LIST.to_string()),
+            _ => None,
+        };
+        if let Some(text) = identity {
+            if !junk.is_empty() {
+                return Next::Fail;
+            }
+            return match form {
+                Form::Action => {
+                    self.info(&[&text], out);
+                    Next::Continue
+                }
+                Form::Test => Next::Continue,
+                Form::Set(_) | Form::Read => Next::Fail,
+            };
+        }
+        // T.31 clause 8.2: the service class. There is one, 0, data.
+        if name == b"FCLASS" {
+            if !junk.is_empty() {
+                return Next::Fail;
+            }
+            return match form {
+                Form::Read | Form::Test => {
+                    self.info(&["0"], out);
+                    Next::Continue
+                }
+                Form::Set(b"" | b"0") => Next::Continue,
+                Form::Set(_) | Form::Action => Next::Fail,
+            };
+        }
+        // V.250 clause 6.1.10: the country of installation, a T.35 code
+        // in two hexadecimal digits. Windows sets it from its own
+        // location. Kept and read back; nothing here differs by country.
+        if name == b"GCI" {
+            if !junk.is_empty() {
+                return Next::Fail;
+            }
+            return match form {
+                Form::Read => {
+                    let line = format!("+GCI: {:02X}", self.country);
+                    self.info(&[&line], out);
+                    Next::Continue
+                }
+                Form::Test => {
+                    self.info(&["+GCI: (00-FF)"], out);
+                    Next::Continue
+                }
+                Form::Set(value) => {
+                    let code = std::str::from_utf8(value)
+                        .ok()
+                        .filter(|text| !text.is_empty() && text.len() <= 2)
+                        .and_then(|text| u8::from_str_radix(text, 16).ok());
+                    match code {
+                        Some(code) => {
+                            self.country = code;
+                            Next::Continue
+                        }
+                        None => Next::Fail,
+                    }
+                }
+                Form::Action => Next::Fail,
             };
         }
         // The factory values of +ES and +DS are the line's.

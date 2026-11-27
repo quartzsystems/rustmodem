@@ -71,6 +71,9 @@ pub struct AtInterpreter {
     held: Vec<u8>,
     /// The signals last reported.
     signals: ModemSignals,
+    /// The country of installation, which `+GCI` sets and reads: a T.35
+    /// code. It starts as B5, the United States, as modems sold there do.
+    pub(crate) country: u8,
 }
 
 /// A profile as it is stored: S1 counts the rings of a call in progress,
@@ -113,6 +116,7 @@ impl AtInterpreter {
             connect: None,
             held: Vec::new(),
             signals: ModemSignals::default(),
+            country: 0xB5,
         };
         interpreter.signals = interpreter.wanted_signals();
         interpreter

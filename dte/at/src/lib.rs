@@ -19,6 +19,7 @@ mod command;
 mod interp;
 mod profile;
 
+pub use command::{MANUFACTURER, MODEL};
 pub use engine::ConnectInfo;
 pub use interp::AtInterpreter;
 pub use profile::{

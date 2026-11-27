@@ -27,6 +27,7 @@ members = [
     # in the workspace of driver/, which needs a WDK.
     "driver/vcomapi",
     "driver/vcomcore",
+    "driver/modeminf",
     # VoIP: the telephone side.
     "voip/sdp",
     "voip/rtp",

@@ -5,7 +5,7 @@
 > ATS0=2Y0S0=3\r
 < \r\nERROR\r\n
 ! s 0=2
-> AT+FCLASS=0\r
+> AT+VCID=1\r
 < \r\nERROR\r\n
 > ATS95=47\r
 < \r\nERROR\r\n

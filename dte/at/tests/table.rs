@@ -146,9 +146,86 @@ $ONLINE_COMMAND
 < \\r\\nrustmodem ${VERSION}\\r\\n\\r\\nOK\\r\\n
 > ATI4\\r
 < \\r\\nNULL MODEM,V.250,+MS,+ES,+DS\\r\\n\\r\\nOK\\r\\n
-> ATI1I2I5I6I7I8I9\\r
+> ATI1\\r
+< \\r\\n000\\r\\n\\r\\nOK\\r\\n
+> ATI5\\r
+< \\r\\nQuartz Systems\\r\\n\\r\\nOK\\r\\n
+> ATI6\\r
+< \\r\\nRustModem Softmodem\\r\\n\\r\\nOK\\r\\n
+> ATI7\\r
+< \\r\\nRustModem Softmodem ${VERSION}\\r\\n\\r\\nOK\\r\\n
+> ATI2I8I9\\r
 < \\r\\nOK\\r\\n
 > ATI10\\r
+< \\r\\nERROR\\r\\n
+",
+    },
+    Row {
+        row: "+GMI +GMM +GMR +GSN +GCAP",
+        script: "\
+> AT+GMI\\r
+< \\r\\nQuartz Systems\\r\\n\\r\\nOK\\r\\n
+> AT+GMM\\r
+< \\r\\nRustModem Softmodem\\r\\n\\r\\nOK\\r\\n
+> AT+GMR\\r
+< \\r\\n${VERSION}\\r\\n\\r\\nOK\\r\\n
+> AT+GSN\\r
+< \\r\\n00000000\\r\\n\\r\\nOK\\r\\n
+> AT+GCAP\\r
+< \\r\\n+GCAP: +MS,+ES,+DS\\r\\n\\r\\nOK\\r\\n
+> AT+GMI;+GMM\\r
+< \\r\\nQuartz Systems\\r\\n\\r\\nRustModem Softmodem\\r\\n\\r\\nOK\\r\\n
+> AT+GMI=?;+GMM=?;+GMR=?;+GSN=?;+GCAP=?\\r
+< \\r\\nOK\\r\\n
+> AT+GMI?\\r
+< \\r\\nERROR\\r\\n
+> AT+GMM=1\\r
+< \\r\\nERROR\\r\\n
+",
+    },
+    Row {
+        row: "+FCLASS #CLS",
+        script: "\
+> AT+FCLASS=?\\r
+< \\r\\n0\\r\\n\\r\\nOK\\r\\n
+> AT+FCLASS?\\r
+< \\r\\n0\\r\\n\\r\\nOK\\r\\n
+> AT+FCLASS=0\\r
+< \\r\\nOK\\r\\n
+> AT+FCLASS=1\\r
+< \\r\\nERROR\\r\\n
+> AT+FCLASS=8\\r
+< \\r\\nERROR\\r\\n
+> AT#CLS=?\\r
+< \\r\\n0\\r\\n\\r\\nOK\\r\\n
+> AT#CLS?\\r
+< \\r\\n0\\r\\n\\r\\nOK\\r\\n
+> AT#CLS=0\\r
+< \\r\\nOK\\r\\n
+> AT#CLS=8\\r
+< \\r\\nERROR\\r\\n
+",
+    },
+    Row {
+        row: "+GCI",
+        script: "\
+> AT+GCI?\\r
+< \\r\\n+GCI: B5\\r\\n\\r\\nOK\\r\\n
+> AT+GCI=?\\r
+< \\r\\n+GCI: (00-FF)\\r\\n\\r\\nOK\\r\\n
+> AT+GCI=b4\\r
+< \\r\\nOK\\r\\n
+> AT+GCI?\\r
+< \\r\\n+GCI: B4\\r\\n\\r\\nOK\\r\\n
+> AT+GCI=0\\r
+< \\r\\nOK\\r\\n
+> AT+GCI?\\r
+< \\r\\n+GCI: 00\\r\\n\\r\\nOK\\r\\n
+> AT+GCI=100\\r
+< \\r\\nERROR\\r\\n
+> AT+GCI=ZZ\\r
+< \\r\\nERROR\\r\\n
+> AT+GCI\\r
 < \\r\\nERROR\\r\\n
 ",
     },
@@ -603,7 +680,7 @@ $ONLINE_COMMAND
 < \\r\\nOK\\r\\n
 > AT&Q5&S0&\\r
 < \\r\\nOK\\r\\n
-> AT+FCLASS=0;+GMI;+IPR?\\r
+> AT+VCID=1;+VLS?;+IPR?\\r
 < \\r\\nOK\\r\\n
 > ATS30=0S95=47\\r
 < \\r\\nOK\\r\\n
@@ -630,7 +707,9 @@ const UNKNOWN_IS_ERROR: &[Row] = &[Row {
 < \\r\\nERROR\\r\\n
 > AT&S0\\r
 < \\r\\nERROR\\r\\n
-> AT+FCLASS=0\\r
+> AT+VCID=1\\r
+< \\r\\nERROR\\r\\n
+> AT#CID=1\\r
 < \\r\\nERROR\\r\\n
 > ATS30=0\\r
 < \\r\\nERROR\\r\\n

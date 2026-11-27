@@ -1,0 +1,47 @@
+# What Windows sends when a modem is queried (Modem properties,
+# Diagnostics, Query Modem), from the list Microsoft documents and the
+# commands in modemui.dll of Windows 11 build 26100, in the order of the
+# list. Each gets an answer and none gets ERROR, on a line that refuses
+# commands it does not know.
+#
+# NEEDS-CODY: this is the documented set, not a log. Criterion 10 of
+# docs/PHASE5.md replaces it with the lines of a real Query Modem.
+@ config unknown_command=error
+> ATQ0V1E0\r
+< ATQ0V1E0\r\r\nOK\r\n
+> AT+GMM\r
+< \r\nRustModem Softmodem\r\n\r\nOK\r\n
+> AT+FCLASS=?\r
+< \r\n0\r\n\r\nOK\r\n
+> AT#CLS=?\r
+< \r\n0\r\n\r\nOK\r\n
+> AT+GCI?\r
+< \r\n+GCI: B5\r\n\r\nOK\r\n
+> AT+GCI=?\r
+< \r\n+GCI: (00-FF)\r\n\r\nOK\r\n
+> ATI1\r
+< \r\n000\r\n\r\nOK\r\n
+> ATI2\r
+< \r\nOK\r\n
+> ATI3\r
+< \r\nrustmodem ${VERSION}\r\n\r\nOK\r\n
+> ATI4\r
+< \r\nNULL MODEM,V.250,+MS,+ES,+DS\r\n\r\nOK\r\n
+> ATI5\r
+< \r\nQuartz Systems\r\n\r\nOK\r\n
+> ATI6\r
+< \r\nRustModem Softmodem\r\n\r\nOK\r\n
+> ATI7\r
+< \r\nRustModem Softmodem ${VERSION}\r\n\r\nOK\r\n
+# And the four of V.250 that the list does not have.
+> AT+GMI\r
+< \r\nQuartz Systems\r\n\r\nOK\r\n
+> AT+GMR\r
+< \r\n${VERSION}\r\n\r\nOK\r\n
+> AT+GSN\r
+< \r\n00000000\r\n\r\nOK\r\n
+> AT+GCAP\r
+< \r\n+GCAP: +MS,+ES,+DS\r\n\r\nOK\r\n
+# Windows sets the country to its own location.
+> AT+GCI=B5\r
+< \r\nOK\r\n
